@@ -495,12 +495,18 @@ class Picker:
         self.autos = None
         self.ai = 0                   # sélection dans l'écran automatisations
         self._autos_flat = []         # automatisations sélectionnables (rempli par draw_autos)
+        self.confirm_del = None       # auto en attente de confirmation de suppression
         threading.Thread(target=self._autos_worker, daemon=True).start()
         # Mise à jour de la config : la machine est-elle en retard sur le git d'où
         # vient sa config dev ? Si oui → bouton « mettre à jour » en tête des actions.
         self.update_available = False
         self.git_checking = True
         threading.Thread(target=self._git_check, daemon=True).start()
+        # self.live est capturé une fois ci-dessus ; on le rafraîchit qq sec après
+        # l'ouverture pour corriger la race « je reviens à l'accueil juste après
+        # avoir quitté une session » (zellij la liste encore un instant → ● faux).
+        self.local_refreshing = True
+        threading.Thread(target=self._local_worker, daemon=True).start()
         self.infos_data = None        # écran « infos » : rempli en fond à l'ouverture
         curses.curs_set(0)
         curses.use_default_colors()
@@ -549,6 +555,20 @@ class Picker:
         self.mode = "infos"
         self.infos_data = None
         threading.Thread(target=self._gather_infos, daemon=True).start()
+
+    def _local_worker(self):
+        # self.live (sessions zellij vivantes → marqueurs « ● en cours ») est figé
+        # à l'ouverture. En revenant à l'accueil juste après avoir quitté une
+        # session, zellij peut encore la lister une fraction de seconde → marqueur
+        # faux. On rafraîchit ~8 s pour que l'accueil se corrige tout seul.
+        for _ in range(8):
+            if self.rc_stop.wait(1):
+                break
+            try:
+                self.live = live_sessions()
+            except Exception:
+                pass
+        self.local_refreshing = False
 
     def _gather_infos(self):
         head = ""
@@ -616,29 +636,54 @@ class Picker:
         with self.rc_lock:
             self.autos = res
 
-    def _reactivate_auto(self, a):
-        """État arrêté → actif : (re)démarre le timer systemd --user, local ou via ssh, puis
-        rafraîchit l'écran. Le timer reprend son planning ; il lui faudra un espace ouvert
-        (accès Claude) pour s'exécuter vraiment — c'est l'autre axe."""
-        unit = "%s.timer" % a["name"]
-        self.msg = "réactivation de %s…" % a["name"]
+    def _auto_systemctl(self, a, shell_cmd, working, done):
+        """Joue une commande systemctl --user sur la machine de l'auto (local ou ssh),
+        affiche un message, puis rafraîchit l'écran autos. `shell_cmd` = la commande
+        shell complète (sans le wrapper ssh). `working`/`done` = messages."""
+        self.msg = working
         try:
             if a["machine"] == "local":
-                r = subprocess.run(["systemctl", "--user", "start", unit],
-                                   capture_output=True, text=True, timeout=8)
+                r = subprocess.run(["bash", "-lc", shell_cmd],
+                                   capture_output=True, text=True, timeout=10)
             else:
                 r = subprocess.run(
                     ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes",
                      "-o", "ControlPath=~/.ssh/dev-cm-%C", a["machine"],
-                     'XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user start ' + unit],
-                    capture_output=True, text=True, timeout=12)
-            self.msg = ("%s réactivée" % a["name"]) if r.returncode == 0 \
+                     'XDG_RUNTIME_DIR=/run/user/$(id -u) ' + shell_cmd],
+                    capture_output=True, text=True, timeout=14)
+            self.msg = done if r.returncode == 0 \
                 else ("échec : %s" % (r.stderr.strip().splitlines()[-1] if r.stderr.strip() else "?"))
         except Exception as e:
-            self.msg = "échec réactivation %s : %s" % (a["name"], e)
+            self.msg = "échec : %s" % e
         with self.rc_lock:
             self.autos = None
         threading.Thread(target=self._autos_worker, daemon=True).start()
+
+    def _reactivate_auto(self, a):
+        """État arrêté → actif : (re)démarre le timer. Il reprend son planning ; il lui
+        faudra un espace ouvert (accès Claude) pour s'exécuter vraiment — l'autre axe."""
+        u = "%s.timer" % a["name"]
+        self._auto_systemctl(a, "systemctl --user start " + u,
+                             "réactivation de %s…" % a["name"], "%s réactivée" % a["name"])
+
+    def _stop_auto(self, a):
+        """État actif → arrêté : stoppe le timer (économise des tokens, plus aucune exécution).
+        On la relance d'un ↵ quand on veut."""
+        if a["state"] not in ("active", "running"):
+            self.msg = "%s est déjà arrêtée" % a["name"]; return
+        u = "%s.timer" % a["name"]
+        self._auto_systemctl(a, "systemctl --user stop " + u,
+                             "arrêt de %s…" % a["name"], "%s arrêtée" % a["name"])
+
+    def _delete_auto(self, a):
+        """Supprime l'automatisation À TOUT JAMAIS : désactive+stoppe le timer, retire les
+        units systemd (timer+service) et recharge le daemon. Le prompt feeds/<nom>.prompt
+        reste dans le repo (versionné) — on ne touche pas au dépôt git d'ici."""
+        n = a["name"]
+        cmd = ("systemctl --user disable --now %s.timer 2>/dev/null; "
+               "rm -f ~/.config/systemd/user/%s.timer ~/.config/systemd/user/%s.service; "
+               "systemctl --user daemon-reload") % (n, n, n)
+        self._auto_systemctl(a, cmd, "suppression de %s…" % n, "%s supprimée" % n)
 
     # --- construction des lignes affichées -------------------------------
     def left_rows(self):
@@ -916,7 +961,7 @@ class Picker:
     def draw_infos(self):
         self.scr.erase()
         H, W = self.scr.getmaxyx()
-        back = " ‹ Retour (Esc) "
+        back = "[ ‹ Retour ]"
         self.scr.addnstr(0, 2, back, W - 4, self.CYAN | curses.A_REVERSE | curses.A_BOLD)
         tx = 2 + len(back) + 2
         title = "INFOS"
@@ -979,8 +1024,10 @@ class Picker:
     def draw_autos(self):
         self.scr.erase()
         H, W = self.scr.getmaxyx()
-        back = " ‹ Retour (Esc) "
-        self.scr.addnstr(0, 2, back, W - 4, self.CYAN | curses.A_REVERSE | curses.A_BOLD)
+        bfoc = (self.ai == -1)                    # bouton Retour focalisé ?
+        back = "[ ‹ Retour ]"
+        battr = (self.CYAN | curses.A_REVERSE | curses.A_BOLD) if bfoc else (self.CYAN | curses.A_BOLD)
+        self.scr.addnstr(0, 2, back, W - 4, battr)
         tx = 2 + len(back) + 2
         title = "AUTOMATISATIONS"
         if tx + len(title) < W - 2:
@@ -989,9 +1036,14 @@ class Picker:
             self.scr.addnstr(1, 2, "─" * (W - 4), W - 4, curses.A_DIM)
         except curses.error:
             pass
+        hint = "↵ relancer · s arrêter · e ajuster · d supprimer"
+        try:
+            self.scr.addnstr(2, 2, hint, W - 4, curses.A_DIM)
+        except curses.error:
+            pass
         with self.rc_lock:
             autos = self.autos
-        y = [3]
+        y = [4]
         def line(text, attr=0, col=2):
             if 0 <= y[0] < H - 1 and W - col - 1 > 0:
                 try:
@@ -1015,14 +1067,17 @@ class Picker:
         if autos is None:
             line("chargement…", curses.A_DIM)
         elif not autos:
+            self.ai = -1                  # seul élément navigable : le bouton Retour
             line("(aucune automatisation)", curses.A_DIM)
             line("", 0)
             line("Une automatisation = un timer systemd --user thedev (ex. la veille du matin)", curses.A_DIM)
             line("qui dépose une mission dans un espace ouvert. Elle ne tourne que si cet", curses.A_DIM)
             line("espace est ouvert/détaché.", curses.A_DIM)
         else:
-            if self.ai >= len([a for a in autos]):
-                self.ai = 0
+            if self.ai >= len(autos):     # clamp dans [-1 (Retour) .. n-1]
+                self.ai = len(autos) - 1
+            if self.ai < -1:
+                self.ai = -1
             bym = {}
             for a in autos:
                 bym.setdefault(a["machine"], []).append(a)
@@ -1054,12 +1109,11 @@ class Picker:
                             self.scr.chgat(y[0] - 1, 2, W - 4, curses.A_REVERSE)
                         except curses.error:
                             pass
-                    # les 2 paramètres, explicites
-                    att_txt = ("accès Claude" if acces else "pas d'accès") if actif else "—"
-                    att_col = self.GREEN if (actif and acces) else (self.YEL if actif else curses.A_DIM)
+                    # les 2 paramètres : état {actif/arrêté} · accès Claude {ok/ko}
                     seg_line([("        état : ", curses.A_DIM),
                               ("actif" if actif else "arrêté", self.GREEN if actif else self.RED),
-                              ("    attachement : ", curses.A_DIM), (att_txt, att_col)])
+                              ("    accès Claude : ", curses.A_DIM),
+                              ("ok" if acces else "ko", self.GREEN if acces else self.RED)])
                     det = "prochain %s" % a["next"]
                     if a["last"] and a["last"] != "—":
                         det += "   ·   dernier %s" % a["last"]
@@ -1246,7 +1300,7 @@ class Picker:
             self.draw()
             # getch non bloquant tant qu'il y a qqch à rafraîchir (liste RC live,
             # check git en fond, ou écran infos en cours de chargement) ; sinon bloque.
-            poll = bool(self.rc_hosts) or self.git_checking or (self.mode == "infos" and self.infos_data is None) or (self.mode == "autos" and self.autos is None)
+            poll = bool(self.rc_hosts) or self.git_checking or self.local_refreshing or (self.mode == "infos" and self.infos_data is None) or (self.mode == "autos" and self.autos is None)
             self.scr.timeout(400 if poll else -1)
             try:
                 ch = self.scr.getch()
@@ -1277,13 +1331,28 @@ class Picker:
                 continue
             if self.mode == "autos":                # écran automatisations : navigable
                 n = len(self._autos_flat)
+                if n == 0:
+                    self.ai = -1                    # vide/chargement : focus sur le bouton Retour
+                if self.confirm_del is not None:    # confirmation de suppression en attente
+                    a = self.confirm_del
+                    self.confirm_del = None
+                    if ch in (ord("y"), ord("Y"), ord("o"), ord("O")):
+                        self._delete_auto(a)
+                    else:
+                        self.msg = "suppression annulée"
+                    continue
                 if ch == 27:
                     self.mode = "sessions"; self.focus = "left"
                     self.li = self.ri = 0; self.loff = 0
-                elif ch == curses.KEY_UP and n:
-                    self.ai = (self.ai - 1) % n
-                elif ch == curses.KEY_DOWN and n:
-                    self.ai = (self.ai + 1) % n
+                elif ch == curses.KEY_UP:
+                    self.ai = self.ai - 1
+                    if self.ai < -1: self.ai = n - 1
+                elif ch == curses.KEY_DOWN:
+                    self.ai = self.ai + 1
+                    if self.ai > n - 1: self.ai = -1
+                elif ch in (curses.KEY_ENTER, 10, 13) and self.ai == -1:
+                    self.mode = "sessions"; self.focus = "left"   # bouton Retour
+                    self.li = self.ri = 0; self.loff = 0
                 elif ch in (curses.KEY_ENTER, 10, 13) and 0 <= self.ai < n:
                     a = self._autos_flat[self.ai]
                     if a["state"] not in ("active", "running"):   # arrêté → réactiver le timer
@@ -1296,9 +1365,18 @@ class Picker:
                             self.decision = ("NEW", cwd); return
                         else:
                             self.decision = ("SERVER", a["machine"], cwd); return
+                elif ch in (ord("s"), ord("S")) and 0 <= self.ai < n:   # arrêter (économiser des tokens)
+                    self._stop_auto(self._autos_flat[self.ai])
+                elif ch in (ord("e"), ord("E")) and 0 <= self.ai < n:   # ajuster (Claude édite le prompt)
+                    a = self._autos_flat[self.ai]
+                    self.decision = ("ADJUST", a["machine"], a["name"]); return
+                elif ch in (ord("d"), ord("D")) and 0 <= self.ai < n:   # supprimer (à tout jamais)
+                    a = self._autos_flat[self.ai]
+                    self.confirm_del = a
+                    self.msg = "supprimer « %s » à tout jamais ? y = oui, autre = non" % a["name"]
                 continue
-            if self.mode == "infos":                # écran infos : Esc revient
-                if ch == 27:
+            if self.mode == "infos":                # écran infos : bouton Retour (↵) ou Esc
+                if ch in (27, curses.KEY_ENTER, 10, 13):
                     self.mode = "sessions"; self.focus = "left"
                     self.li = self.ri = 0; self.loff = 0
                 continue
