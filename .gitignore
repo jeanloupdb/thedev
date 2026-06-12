@@ -1,0 +1,4 @@
+# Config user-specific : chacun la sienne, jamais commitée
+thedev-machines
+claude/vps-context/
+*.bak.*

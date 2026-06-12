@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# @thedev liens pousse un dossier local vers une machine (rsync, respecte gitignore)
+# ship — pousse un dossier local vers une machine distante (rsync sur SSH).
+# Brique élémentaire réutilisable : déployer, sauvegarder, partager un build…
+#
+#   ship <machine> [src] [dest]
+#     machine : alias SSH (jlax, indice, …) — cf. ~/.ssh/config
+#     src     : dossier local à envoyer        (défaut : .)
+#     dest    : chemin distant                 (défaut : ~/projects/<nom-de-src>)
+#
+#   ship list                  # machines SSH connues (alias ~/.ssh/config)
+#
+# Comportement : rsync -az --delete, et RESPECTE le .gitignore du projet
+# (filtre dir-merge) → pas de node_modules / .next / .env envoyés. .git est
+# toujours exclu. Idempotent : relancer ne renvoie que les fichiers changés.
+# Affiche en sortie le chemin distant (réutilisable par un appel suivant).
+
+set -u
+SSH_OPTS="-o ConnectTimeout=10"
+
+die()  { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; exit 1; }
+ok()   { printf '\033[1;32m✓\033[0m %s\n' "$*"; }
+info() { printf '\033[1;34m▸\033[0m %s\n' "$*"; }
+
+cmd_list() {
+  info "machines SSH connues :"
+  grep -E '^Host ' "$HOME/.ssh/config" 2>/dev/null | awk '{for(i=2;i<=NF;i++) print "  • "$i}'
+}
+
+case "${1:-}" in
+  ''|-h|--help) grep -E '^#( |$)' "$0" | sed -E 's/^# ?//'; exit 0 ;;
+  list)         cmd_list; exit 0 ;;
+esac
+
+machine="$1"; shift
+src="${1:-.}"; [ "${1:-}" ] && shift || true
+src="${src%/}"                                   # retire un / final éventuel
+[ -d "$src" ] || die "source introuvable : $src"
+name="$(basename "$(cd "$src" && pwd -P)")"
+dest="${1:-\$HOME/projects/$name}"               # ~ résolu côté distant
+
+command -v rsync >/dev/null || die "rsync absent en local"
+
+# Le nœud distant doit exister + avoir rsync ; on crée le dossier parent.
+info "vers $machine:$dest"
+ssh $SSH_OPTS "$machine" "command -v rsync >/dev/null || exit 9; mkdir -p \"$dest\"" \
+  || die "machine injoignable, sans rsync, ou dest non créable ($machine)"
+
+# --filter dir-merge : applique le .gitignore de chaque dossier traversé.
+rsync -az --delete \
+  --exclude='.git/' \
+  --filter=':- .gitignore' \
+  -e "ssh $SSH_OPTS" \
+  "$src/" "$machine:$dest/" \
+  || die "rsync a échoué"
+
+# Renvoie le chemin distant absolu résolu (utile pour chaîner crun/tsnode).
+remote="$(ssh $SSH_OPTS "$machine" "cd \"$dest\" && pwd -P" 2>/dev/null)"
+ok "envoyé : $machine:${remote:-$dest}"
+printf '%s\n' "${remote:-$dest}"

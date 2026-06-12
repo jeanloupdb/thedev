@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# @thedev session pane shell perso de my space (badge VPS)
+# shell-pane — pane shell perso de la page « my space ». Se comporte comme un
+# shell zellij normal ; en plus, sur un serveur distant, le titre du pane devient
+# le marqueur VPS rouge (🔴 <label>) au lieu de « shell » — le 🔴 porte la
+# couleur, zellij ne colore pas le texte des titres de pane. No-op en local.
+if [ -f "$HOME/.config/dev-vps" ] && [ -n "${ZELLIJ_PANE_ID:-}" ]; then
+  vps_label="🔴 $(cat "$HOME/.config/dev-vps")"
+  zellij action rename-pane -p "$ZELLIJ_PANE_ID" "$vps_label" 2>/dev/null
+  # re-pose différée : un rename au spawn du layout peut être avalé (storm)
+  ( sleep 3; zellij action rename-pane -p "$ZELLIJ_PANE_ID" "$vps_label" 2>/dev/null ) &
+fi
+
+exec "${SHELL:-/bin/bash}"

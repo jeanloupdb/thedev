@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# @thedev liens-deprecated commande claude one-shot distante (DEPRECATED: claude -p = pool credits, prefere mission)
+# cremote — envoie un AGENT Claude one-shot sur un serveur distant (headless),
+# avec la sortie visible dans un pane crun (sandbox, Alt+2).
+#
+#   cremote <host>[:<dir>] "<mission>"        # ex: cremote jlax:~/excalidash "vérifie les conteneurs"
+#   cremote <host> "<mission>"                # dir = $HOME du serveur
+#
+# - L'agent tourne SUR le serveur (claude -p, --dangerously-skip-permissions),
+#   dans le dossier demandé ; il meurt à la fin de sa mission (one-shot).
+# - Pour une session interactive/durable sur le serveur → `srv` (zellij + dev).
+# - Pour piloter depuis le tél/web → Remote Control (sessions dev serveur).
+#
+# Le pane crun garde la sortie (relisible via `crun logs <name>`).
+
+set -u
+die() { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; exit 1; }
+
+target="${1:-}"; shift 2>/dev/null || true
+mission="${*:-}"
+[ -n "$target" ] && [ -n "$mission" ] || die 'usage: cremote <host>[:<dir>] "<mission>"'
+
+host="${target%%:*}"
+dir="${target#*:}"; [ "$dir" = "$target" ] && dir=""
+
+# nom de pane stable : agent-<host>[-<basename dir>]
+name="agent-$host"
+[ -n "$dir" ] && name="$name-$(basename "$dir" | tr -cd 'a-zA-Z0-9_-')"
+
+# quoting sûr : la mission passe en argument à un bash -lc distant
+q_mission=$(printf '%q' "$mission")
+q_dir=$(printf '%q' "${dir:-\$HOME}")
+remote_cmd="cd $q_dir && claude -p $q_mission --dangerously-skip-permissions"
+
+if command -v crun >/dev/null 2>&1 && [ -n "${ZELLIJ:-}" ]; then
+  exec crun "$name" -- ssh -t "$host" "bash -lc $(printf '%q' "$remote_cmd")"
+else
+  # hors zellij : exécution directe (sortie inline)
+  exec ssh -t "$host" "bash -lc $(printf '%q' "$remote_cmd")"
+fi

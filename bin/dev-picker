@@ -1,0 +1,1086 @@
+#!/usr/bin/env python3
+# @thedev picker selecteur de machine/projet au lancement (fzf, multi-serveurs)
+"""dev-picker — sélecteur de session/dossier à deux panneaux (TUI maison).
+
+Panneau gauche = liste (sessions ou dossiers), panneau droit = actions.
+←/→ changent de panneau, ↑/↓ naviguent, Entrée valide, tape pour filtrer,
+Esc revient/quitte. Les en-têtes de section ne sont pas sélectionnables.
+
+N'exécute rien lui-même : imprime une décision sur stdout que `dev` applique :
+    NEW\t<cwd>
+    RESUME\t<cwd>\t<id>
+    UPDATE          (bouton « mettre à jour dev » → git pull côté dev())
+(rien + code ≠0 si annulé).
+"""
+import curses
+import glob
+import json
+import os
+import re
+import subprocess
+import sys
+import threading
+
+PROJECTS = os.path.expanduser("~/.claude/projects")
+
+
+def vps_label():
+    """Label du serveur distant (contenu de ~/.config/dev-vps). Vide en local."""
+    try:
+        with open(os.path.expanduser("~/.config/dev-vps")) as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def live_sessions():
+    """Noms des sessions zellij vivantes (pour marquer '● en cours')."""
+    try:
+        out = subprocess.run(
+            ["zellij", "list-sessions", "--no-formatting"],
+            capture_output=True, text=True, timeout=2,
+        ).stdout
+    except Exception:
+        return set()
+    names = set()
+    for line in out.splitlines():
+        if "EXITED" in line or not line.strip():
+            continue
+        names.add(line.split()[0])
+    return names
+
+
+def fetch_remote_claudes(host):
+    """SSH : lit ~/.cache/dev-claudes d'un serveur → sessions de dev ouvertes et
+    leurs panes Claude. Comme les sessions serveur sont auto-remote-control, ce
+    sont les « remote controls dispo ». Renvoie {"sessions":[{name,cwd,panes,
+    busy}]} ou {"error":"…"}. (TSV id⇥cwd⇥role⇥nom_pane⇥session⇥started⇥ended ;
+    ended==0 → Claude encore ouvert.) Un pane est « busy » (en train de répondre)
+    si son sid a un marqueur frais dans ~/.cache/dev-claude-busy (posé par le
+    hook sur UserPromptSubmit, retiré sur Stop). ControlMaster → re-fetch rapides
+    pour le rafraîchissement live."""
+    sep, sep2 = "@@@BUSY@@@", "@@@RC@@@"
+    # 3 sections (sep/sep2) : registre · marqueurs busy · cwd des process claude
+    # RÉELLEMENT en remote control (leur argv contient --remote-control). Ce 3e bloc
+    # détecte le RC en LIVE → marche aussi pour les sessions déjà ouvertes, sans
+    # relancer (le champ 'rc' du registre, lui, ne couvre que les sessions récentes).
+    remote = ("cat ~/.cache/dev-claudes 2>/dev/null; echo %s; "
+              "find ~/.cache/dev-claude-busy -type f -mmin -30 -printf '%%f\\n' 2>/dev/null; "
+              "echo %s; "
+              "for p in $(pgrep -f remote-control 2>/dev/null); do readlink /proc/$p/cwd 2>/dev/null; done; "
+              "true"   # exit 0 garanti si SSH a pu se connecter → returncode ≠0 ⟺ VRAI échec de connexion
+              ) % (sep, sep2)
+    try:
+        proc = subprocess.run(
+            ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes",
+             "-o", "ControlMaster=auto", "-o", "ControlPath=~/.ssh/dev-cm-%C",
+             "-o", "ControlPersist=30s", host, remote],
+            capture_output=True, text=True, timeout=12)
+    except subprocess.TimeoutExpired:
+        return {"error": "injoignable (timeout)"}
+    except Exception:
+        return {"error": "injoignable"}
+    if proc.returncode != 0:
+        # ssh n'a pas pu se connecter (box down, refus, auth…). Sans ce test on ne
+        # lisait que .stdout (vide) → l'hôte passait pour « 0 session » et disparaissait
+        # silencieusement. On classe la cause pour un retour clair à l'utilisateur.
+        e = (proc.stderr or "").lower()
+        if "timed out" in e or "timeout" in e:                    reason = "injoignable (timeout)"
+        elif "refused" in e:                                      reason = "injoignable (refusé)"
+        elif "permission denied" in e or "publickey" in e:        reason = "auth refusée"
+        elif "could not resolve" in e or "name or service" in e:  reason = "hôte introuvable"
+        else:                                                     reason = "injoignable"
+        return {"error": reason}
+    out = proc.stdout
+    reg, _, rest = out.partition(sep)
+    busy_raw, _, rc_raw = rest.partition(sep2)
+    busy = {x.strip() for x in busy_raw.splitlines() if x.strip()}
+    rc_cwds = {x.strip().rstrip("/") for x in rc_raw.splitlines() if x.strip()}
+    groups, order = {}, []
+    for line in reg.splitlines():
+        p = line.split("\t")
+        if len(p) < 7 or not p[0] or p[6].strip() != "0":
+            continue
+        cwd = p[1]
+        g = groups.get(cwd)
+        if not g:
+            g = {"name": os.path.basename(cwd.rstrip("/")) or cwd, "cwd": cwd, "panes": []}
+            groups[cwd] = g
+            order.append(cwd)
+        g["panes"].append({"name": p[3] or "(claude)", "role": p[2], "busy": p[0] in busy,
+                           "rc": (len(p) > 7 and p[7].strip() == "1")})
+    for g in groups.values():
+        g["panes"].sort(key=lambda x: x["role"] != "main")   # main d'abord
+        g["busy"] = any(pn["busy"] for pn in g["panes"])
+        # « remote » si un pane est marqué rc (registre) OU si un process claude en RC
+        # tourne dans ce cwd (détection live → couvre les sessions déjà ouvertes).
+        g["remote"] = any(pn["rc"] for pn in g["panes"]) or g["cwd"].rstrip("/") in rc_cwds
+    return {"sessions": [groups[c] for c in order]}
+
+
+# ----------------------------------------------------------------------------
+# Écran « infos » : contexte/version, état live, santé système, abonnement +
+# usage Claude. Toutes les données sont LOCALES (la machine où tourne le picker).
+# ----------------------------------------------------------------------------
+def _read_file(path):
+    try:
+        with open(os.path.expanduser(path)) as f:
+            return f.read()
+    except Exception:
+        return ""
+
+
+def _read_json(path):
+    try:
+        return json.loads(_read_file(path) or "{}")
+    except Exception:
+        return {}
+
+
+def gather_infos(vps, update_available, head):
+    import socket
+    import time
+    info = {}
+
+    # --- Contexte & version ---
+    hostname = (subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip()
+                if True else "") or socket.gethostname()
+    try:
+        ip = subprocess.run(["hostname", "-I"], capture_output=True, text=True,
+                            timeout=2).stdout.split()
+        ip = ip[0] if ip else ""
+    except Exception:
+        ip = ""
+    maj = "mise à jour dispo (⟳)" if update_available else "à jour"
+    info["Contexte & version"] = [
+        "hôte : %s" % (("VPS · " + vps) if vps else "local"),
+        "machine : %s%s" % (hostname, ("  ·  " + ip) if ip else ""),
+        "config : %s  (%s)" % (head or "?", maj),
+    ]
+
+    # --- État live ---
+    claudes = [p for p in (l.split("\t") for l in _read_file("~/.cache/dev-claudes").splitlines())
+               if len(p) >= 7 and p[0] and p[6].strip() == "0"]
+    busy = 0
+    try:
+        now = time.time()
+        bd = os.path.expanduser("~/.cache/dev-claude-busy")
+        busy = sum(1 for fn in os.listdir(bd) if now - os.path.getmtime(os.path.join(bd, fn)) < 1800)
+    except Exception:
+        pass
+    agents = [l for l in _read_file("~/.cache/claude-agents").splitlines() if l.strip()]
+    daemon = _read_json("~/.claude/daemon-auth-status.json")
+    workers = (_read_json("~/.claude/daemon/roster.json").get("workers") or {})
+    rc = {"auth_required": "auth requise (à appairer)", "": "inactif",
+          "ready": "prêt", "active": "actif"}.get(daemon.get("status", ""), daemon.get("status") or "inactif")
+    info["État live"] = [
+        "sessions zellij : %d" % len(live_sessions()),
+        "Claude ouverts : %d%s" % (len(claudes), ("  (%d en cours)" % busy) if busy else ""),
+        "agents crun : %d" % len(agents),
+        "remote control : %s%s" % (rc, ("  ·  %d exposée(s)" % len(workers)) if isinstance(workers, dict) and workers else ""),
+    ]
+
+    # --- Santé système ---
+    health = []
+    import shutil
+    for mnt in ("/", "/data"):
+        if mnt != "/" and not os.path.isdir(mnt):
+            continue
+        try:
+            du = shutil.disk_usage(mnt)
+            health.append("disque %s : %.0f Go libres / %.0f Go  (%.0f%% util.)"
+                          % (mnt, du.free / 1e9, du.total / 1e9, 100 * du.used / du.total))
+        except Exception:
+            pass
+    try:
+        mem = {}
+        for line in _read_file("/proc/meminfo").splitlines():
+            k, _, v = line.partition(":")
+            mem[k] = int(v.split()[0]) if v.split() else 0
+        tot, avail = mem.get("MemTotal", 0) / 1e6, mem.get("MemAvailable", 0) / 1e6
+        if tot:
+            health.append("RAM : %.1f / %.1f Go util.  (%.0f%%)" % (tot - avail, tot, 100 * (tot - avail) / tot))
+    except Exception:
+        pass
+    try:
+        la = _read_file("/proc/loadavg").split()[:3]
+        up = float(_read_file("/proc/uptime").split()[0])
+        d, h, m = int(up // 86400), int(up % 86400 // 3600), int(up % 3600 // 60)
+        health.append("charge : %s  ·  uptime : %s%dh%02d" % (" ".join(la), ("%dj " % d) if d else "", h, m))
+    except Exception:
+        pass
+    info["Santé système"] = health
+
+    # --- Abonnement Claude (~/.claude.json) ---
+    conf = _read_json("~/.claude.json")
+    acc = conf.get("oauthAccount", {})
+    sub = []
+    if acc:
+        plan = {"claude_max": "Max", "claude_pro": "Pro", "claude_team": "Team"}.get(
+            acc.get("organizationType", ""), acc.get("organizationType", "") or "?")
+        tier = acc.get("organizationRateLimitTier", "")
+        mult = next((x for x in ("20x", "5x") if x in tier), "")
+        sub.append("plan : Claude %s%s" % (plan, (" " + mult) if mult else ""))
+        if acc.get("organizationName"):
+            sub.append("compte : %s" % acc["organizationName"])
+        end = (conf.get("cachedGrowthBookFeatures", {})
+                   .get("tengu_saffron_lattice", {}).get("planLimitsEndDate", ""))
+        if end:
+            sub.append("limites du plan jusqu'au %s" % end[:10])
+    else:
+        sub.append("(pas de compte Claude détecté)")
+    info["Abonnement Claude"] = sub
+
+    # --- Usage Claude (~/.claude/stats-cache.json) ---
+    # NB : stats-cache n'est PAS recalculé en continu par Claude — il peut dater
+    # de plusieurs jours/semaines. On affiche donc la VRAIE période enregistrée +
+    # la date du cache (pas un trompeur « 7 derniers jours »).
+    stats = _read_json("~/.claude/stats-cache.json")
+    days = [d for d in (stats.get("dailyActivity") or []) if d.get("date")]
+    usage = []
+    if days:
+        usage.append("%d jours enregistrés (%s → %s)" % (len(days), days[0]["date"], days[-1]["date"]))
+        usage.append("%d messages · %d sessions · %d appels d'outils" % (
+            sum(d.get("messageCount", 0) for d in days),
+            sum(d.get("sessionCount", 0) for d in days),
+            sum(d.get("toolCallCount", 0) for d in days)))
+        lc = stats.get("lastComputedDate", "")
+        usage.append("cache local du %s · /usage dans Claude pour le live"
+                     % (lc[:10] if lc else "?"))
+    else:
+        usage.append("(pas de stats locales — /usage dans Claude pour le live)")
+    info["Usage Claude"] = usage
+
+    return info
+
+
+# ----------------------------------------------------------------------------
+# Données
+# ----------------------------------------------------------------------------
+def escape(path):
+    return re.sub(r"[^a-zA-Z0-9]", "-", path)
+
+
+def flatten(content):
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(
+            it.get("text", "") for it in content
+            if isinstance(it, dict) and it.get("type") == "text"
+        )
+    return ""
+
+
+def session_info(path):
+    """Extrait (cwd, titre, mtime) sans lire tout le fichier (têtes/queues)."""
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            head = f.read(65536)
+            f.seek(max(0, size - 131072))
+            tail = f.read()
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return None
+    cwd = ""
+    m = re.search(rb'"cwd":"([^"]*)"', head)
+    if m:
+        cwd = m.group(1).decode("utf-8", "replace")
+    title = ""
+    for line in tail.split(b"\n"):
+        if b'"type":"ai-title"' in line:
+            try:
+                title = json.loads(line).get("aiTitle", "") or title
+            except Exception:
+                pass
+    first = ""
+    for line in head.split(b"\n"):
+        if b'"type":"user"' in line:
+            try:
+                t = flatten(json.loads(line).get("message", {}).get("content"))
+            except Exception:
+                continue
+            if t and not t.lstrip().startswith("<command-"):
+                first = t
+                break
+    if not title:
+        title = re.sub(r"\s+", " ", first).strip()[:60] or "(session)"
+    return cwd, re.sub(r"\s+", " ", title).strip(), mtime
+
+
+def fmt_date(mtime):
+    import time
+    return time.strftime("%d %b", time.localtime(mtime))
+
+
+def short(path):
+    home = os.path.expanduser("~")
+    return "~" + path[len(home):] if path.startswith(home) else path
+
+
+def fuzzy(query, text):
+    """Score de correspondance floue (plus grand = meilleur), ou None si pas de
+    correspondance. Sous-chaîne contiguë > début de mot > sous-séquence."""
+    if not query:
+        return 0
+    q, t = query.lower(), text.lower()
+    idx = t.find(q)
+    if idx != -1:                                   # sous-chaîne contiguë
+        s = 1000 - idx
+        if idx == 0 or not t[idx - 1].isalnum():
+            s += 500                                # bonus début de mot
+        return s
+    pos, last, gaps = 0, -2, 0                        # sinon sous-séquence
+    for ch in q:
+        nxt = t.find(ch, pos)
+        if nxt == -1:
+            return None
+        if nxt != last + 1:
+            gaps += 1
+        last, pos = nxt, nxt + 1
+    return 200 - gaps
+
+
+def load_workspaces():
+    """Historique des ESPACES de dev = un dossier (realpath) où on a déjà
+    travaillé. Dérivé des transcripts mais agrégé au niveau DOSSIER, pas
+    conversation : une entrée par dossier, dédupliquée par realpath (le symlink
+    ~/jlal_perso ↔ /data/jlal_perso ne crée donc plus de doublon). On retient
+    l'id de la DERNIÈRE conversation du dossier pour la reprise : un RESUME
+    relance le layout dev et reprend cette conversation (ou attache si la
+    session zellij tourne encore). Une session fermée — même de force — reste
+    ainsi retrouvable tant que son dossier a un transcript."""
+    groups = {}
+    for path in glob.glob(os.path.join(PROJECTS, "*", "*.jsonl")):
+        info = session_info(path)
+        if not info:
+            continue
+        cwd, _title, mtime = info
+        if not cwd:
+            continue
+        try:
+            real = os.path.realpath(cwd)
+        except OSError:
+            real = cwd
+        sid = os.path.basename(path)[:-6]
+        g = groups.get(real)
+        if not g:
+            groups[real] = {"cwd": real, "name": os.path.basename(real),
+                            "id": sid, "mtime": mtime}
+        elif mtime > g["mtime"]:
+            g["mtime"], g["id"] = mtime, sid
+    return list(groups.values())
+
+
+def list_dirs(path):
+    out = []
+    try:
+        with os.scandir(path) as it:
+            for e in it:
+                if e.name.startswith("."):
+                    continue
+                try:
+                    if e.is_dir(follow_symlinks=True):
+                        out.append((e.path, e.name, e.stat(follow_symlinks=True).st_mtime))
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    out.sort(key=lambda t: t[2], reverse=True)
+    return out
+
+
+def count_files(path):
+    n = 0
+    try:
+        with os.scandir(path) as it:
+            for e in it:
+                if e.name.startswith("."):
+                    continue
+                try:
+                    if not e.is_dir(follow_symlinks=True):
+                        n += 1
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return n
+
+
+# ----------------------------------------------------------------------------
+# TUI
+# ----------------------------------------------------------------------------
+class Picker:
+    def __init__(self, scr, cur_dir):
+        self.scr = scr
+        self.cur_dir = cur_dir
+        self.ws = load_workspaces()   # espaces de dev (un par dossier, dédup realpath)
+        self.live = live_sessions()   # sessions zellij vivantes (basename du cwd)
+        self.vps = vps_label()        # non-vide si on tourne sur un serveur distant
+        self.mode = "sessions"        # 'sessions' | 'browser'
+        self.focus = "left"           # 'left' | 'right'
+        self.filt = ""
+        self.bdir = cur_dir
+        self.li = 0                   # index sélection gauche (dans selectables)
+        self.ri = 0
+        self.loff = 0                 # scroll gauche
+        self.decision = None          # ("NEW", cwd) | ("RESUME", cwd, id)
+        self.msg = ""
+        self.show_all = False         # "voir plus" : déplie toutes les sessions
+        self.CAP = 10                 # sessions affichées par section avant "voir plus"
+        self.creating = False         # saisie inline du nom de sous-dossier
+        self.newname = ""
+        # « remote control dispo » : sessions de dev des serveurs + leurs panes
+        # Claude, chargées en arrière-plan (SSH) pour ne pas bloquer l'affichage.
+        # Rien quand on est déjà sur un serveur (self.vps).
+        self.rc_hosts = [] if self.vps else ["jlax", "indice"]
+        self.rc_data = {h: {"loading": True} for h in self.rc_hosts}
+        self.rc_lock = threading.Lock()
+        self.rc_loading = bool(self.rc_hosts)
+        self.rc_stop = threading.Event()   # arrête le polling à la fermeture du picker
+        if self.rc_hosts:
+            threading.Thread(target=self._rc_worker, daemon=True).start()
+        # Mise à jour de la config : la machine est-elle en retard sur le git d'où
+        # vient sa config dev ? Si oui → bouton « mettre à jour » en tête des actions.
+        self.update_available = False
+        self.git_checking = True
+        threading.Thread(target=self._git_check, daemon=True).start()
+        self.infos_data = None        # écran « infos » : rempli en fond à l'ouverture
+        curses.curs_set(0)
+        curses.use_default_colors()
+        for i, fg in enumerate((curses.COLOR_GREEN, curses.COLOR_CYAN,
+                                curses.COLOR_MAGENTA, curses.COLOR_YELLOW,
+                                curses.COLOR_BLUE, curses.COLOR_RED), 1):
+            curses.init_pair(i, fg, -1)
+        (self.GREEN, self.CYAN, self.MAG, self.YEL,
+         self.BLUE, self.RED) = (curses.color_pair(i) for i in range(1, 7))
+        # palette stable par projet (tags [projet] colorés différemment)
+        self.PALETTE = [self.CYAN, self.MAG, self.YEL, self.BLUE, self.RED, self.GREEN]
+
+    def pcolor(self, name):
+        return self.PALETTE[sum(name.encode("utf-8")) % len(self.PALETTE)]
+
+    def split_live(self):
+        """Sépare les espaces en (ouverts ●, récents). Un espace est ouvert si
+        une session zellij vivante porte son nom (basename). Si deux dossiers
+        partagent un basename qui matche une session vivante (rare), un seul
+        tourne réellement → on garde le plus récent en ●, l'autre retombe en
+        récent : zéro doublon dans « ouverts »."""
+        live_by_name, rest = {}, []
+        for w in self.ws:
+            if w["name"] in self.live:
+                cur = live_by_name.get(w["name"])
+                if cur is None:
+                    live_by_name[w["name"]] = w
+                elif w["mtime"] > cur["mtime"]:
+                    live_by_name[w["name"]] = w
+                    rest.append(cur)
+                else:
+                    rest.append(w)
+            else:
+                rest.append(w)
+        live = sorted(live_by_name.values(), key=lambda x: -x["mtime"])
+        rest.sort(key=lambda x: -x["mtime"])
+        return live, rest
+
+    def enter_infos(self):
+        self.mode = "infos"
+        self.infos_data = None
+        threading.Thread(target=self._gather_infos, daemon=True).start()
+
+    def _gather_infos(self):
+        head = ""
+        try:
+            repo = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+            if os.path.isdir(os.path.join(repo, ".git")):
+                head = subprocess.run(["git", "-C", repo, "rev-parse", "--short", "HEAD"],
+                                      capture_output=True, text=True, timeout=5).stdout.strip()
+        except Exception:
+            pass
+        d = gather_infos(self.vps, self.update_available, head)
+        with self.rc_lock:
+            self.infos_data = d
+
+    def _git_check(self):
+        """En fond : la config (repo git d'où vient thedev) est-elle EN RETARD sur
+        origin/main ? On ne montre le bouton QUE s'il manque des commits distants
+        en local. Être EN AVANCE (commits locaux pas encore poussés — cas normal
+        sur la machine où on édite la config) ne déclenche RIEN. No-op hors clone git."""
+        try:
+            repo = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+            if os.path.isdir(os.path.join(repo, ".git")):
+                # fetch silencieux (met à jour FETCH_HEAD sans toucher le worktree)
+                subprocess.run(["git", "-C", repo, "fetch", "-q", "origin", "main"],
+                               capture_output=True, text=True, timeout=20)
+                # nb de commits présents en distant mais ABSENTS en local (= retard)
+                behind = subprocess.run(
+                    ["git", "-C", repo, "rev-list", "--count", "HEAD..FETCH_HEAD"],
+                    capture_output=True, text=True, timeout=8).stdout.strip()
+                if behind.isdigit() and int(behind) > 0:
+                    self.update_available = True
+        except Exception:
+            pass
+        finally:
+            self.git_checking = False
+
+    def _rc_worker(self):
+        """Un thread de rafraîchissement PAR hôte, interrogés EN PARALLÈLE : un VPS
+        lent ou injoignable ne retarde plus l'apparition ni le refresh des autres
+        (avant, le fetch séquentiel faisait attendre indice derrière un jlax down
+        ~6 s). Chaque hôte met à jour sa propre entrée dès que son fetch revient,
+        puis reboucle ~4 s. S'arrête quand le picker se ferme (rc_stop)."""
+        def host_loop(h):
+            while not self.rc_stop.is_set():
+                d = fetch_remote_claudes(h)
+                with self.rc_lock:
+                    self.rc_data[h] = d
+                    self.rc_loading = False
+                self.rc_stop.wait(4)   # prochain refresh de CET hôte (ou arrêt immédiat)
+        threads = [threading.Thread(target=host_loop, args=(h,), daemon=True)
+                   for h in self.rc_hosts]
+        for t in threads:
+            t.start()
+        self.rc_stop.wait()   # le worker attend l'arrêt ; les threads par hôte font le travail
+
+    # --- construction des lignes affichées -------------------------------
+    def left_rows(self):
+        rows = []
+        f = self.filt
+        if self.mode == "sessions":
+            def rank(lst):
+                if not f:
+                    return lst
+                scored = []
+                for w in lst:
+                    s = fuzzy(f, w["name"])
+                    if s is not None:
+                        scored.append((s, w))
+                scored.sort(key=lambda x: -x[0])
+                return [w for _, w in scored]
+            # Un espace = un dossier. Ouverts ● = session zellij vivante (rejoint
+            # par attach) ; récents = fermés (même de force), relancés + repris.
+            live, rest = self.split_live()
+            live, rest = rank(live), rank(rest)
+            lim = 10 ** 9 if (self.show_all or f) else self.CAP
+            if live:
+                rows.append({"kind": "header", "text": "espaces ouverts ●"})
+                for w in live:
+                    rows.append({"kind": "ws", "w": w, "live": True})
+            if rest:
+                rows.append({"kind": "header", "text": "espaces récents"})
+                for w in rest[:lim]:
+                    rows.append({"kind": "ws", "w": w, "live": False})
+                if len(rest) > lim:
+                    rows.append({"kind": "more", "n": len(rest) - lim})
+            if not rows:
+                rows.append({"kind": "header", "text": "(aucun espace thedev)"})
+        else:
+            if not f:
+                rows.append({"kind": "dir", "path": os.path.dirname(self.bdir), "name": ".."})
+                for path, name, _ in list_dirs(self.bdir):
+                    rows.append({"kind": "dir", "path": path, "name": name})
+            else:
+                scored = []
+                for path, name, _ in list_dirs(self.bdir):
+                    s = fuzzy(f, name)
+                    if s is not None:
+                        scored.append((s, path, name))
+                scored.sort(key=lambda x: -x[0])
+                for _, path, name in scored:
+                    rows.append({"kind": "dir", "path": path, "name": name})
+                if not scored:
+                    rows.append({"kind": "header", "text": "(aucun dossier pour « %s »)" % f})
+        return rows
+
+    def right_rows(self):
+        if self.mode == "sessions":
+            rows = []
+            # En tête si la config locale est en retard sur son git d'origine
+            # (détecté en fond par _git_check ; clic → git pull côté dev()).
+            if self.update_available:
+                rows.append({"kind": "act", "id": "update_dev", "text": "⟳ mettre à jour thedev"})
+            # Sur un serveur : bouton pour revenir au laptop (= quitter le picker
+            # distant → la session SSH se termine → on retombe sur le picker local).
+            if self.vps:
+                rows.append({"kind": "act", "id": "quit_vps", "text": "← quitter le VPS"})
+            rows.append({"kind": "act", "id": "new_here",
+                         "text": "Nouvelle session ici · %s" % self.cur_dir})
+            rows.append({"kind": "act", "id": "browse", "text": "Nouvelle session ailleurs"})
+            # Déjà sur un serveur distant → ne pas proposer de sauter (SSH) vers un autre.
+            if not self.vps:
+                # Chaque serveur est annoté de son état (connu en fond par _rc_worker) :
+                # une croix + « injoignable » (gris) prévient AVANT le clic qu'un saut
+                # SSH échouera. L'erreur vit sur la row (rendu segmenté), pas dans le texte.
+                with self.rc_lock:
+                    states = {h: self.rc_data.get(h, {}) for h in self.rc_hosts}
+                for h in self.rc_hosts:
+                    d = states.get(h, {})
+                    rows.append({"kind": "act", "id": "server:%s" % h,
+                                 "text": "Serveur distant · %s" % h,
+                                 "err": d.get("error")})
+            # Sous les boutons : remote controls dispo (sessions serveur + panes).
+            # On n'affiche un hôte que s'il a des sessions (ou est en chargement /
+            # injoignable) — pas de ligne « (aucune session) » ni d'en-tête vide.
+            if self.rc_hosts:
+                rc_rows = []
+                with self.rc_lock:
+                    for h in self.rc_hosts:
+                        d = self.rc_data.get(h, {})
+                        if d.get("loading"):
+                            rc_rows.append({"kind": "rcinfo", "text": "%s · chargement…" % h})
+                        elif d.get("error"):
+                            pass   # injoignable déjà affiché sur le bouton « Serveur distant · <h> » → pas de doublon ici
+                        elif d.get("sessions"):
+                            for s in d["sessions"]:
+                                rc_rows.append({"kind": "rcsess", "host": h, "name": s["name"],
+                                                "cwd": s["cwd"], "nclaude": len(s["panes"]),
+                                                "remote": s.get("remote")})
+                        # aucune session → rien pour cet hôte
+                if rc_rows:
+                    rows.append({"kind": "rcgap"})   # simple ligne vide (remplace l'ancien titre)
+                    rows.extend(rc_rows)
+            # épinglé tout en bas du panneau (footer) : écran d'infos pratiques
+            rows.append({"kind": "act", "id": "infos", "text": "ⓘ infos", "footer": True})
+            return rows
+        rows = [
+            {"kind": "act", "id": "start_here", "text": "démarrer ici · %s" % self.bdir},
+            {"kind": "act", "id": "mksub", "text": "créer un dossier"},
+        ]
+        if self.creating:
+            rows.append({"kind": "input", "text": self.newname})
+        # Espace de dev déjà existant dans ce dossier → une seule reprise
+        # (dernière conversation), cohérent avec la vue par dossier.
+        real = os.path.realpath(self.bdir)
+        w = next((x for x in self.ws if x["cwd"] == real), None)
+        if w:
+            rows.append({"kind": "header", "text": "reprendre"})
+            rows.append({"kind": "ws", "w": w, "live": w["name"] in self.live})
+        return rows
+
+    @staticmethod
+    def selectable_idx(rows):
+        return [i for i, r in enumerate(rows) if r["kind"] in ("ws", "dir", "act", "more", "rcsess")]
+
+    # --- rendu -----------------------------------------------------------
+    def draw_panel(self, win, title, rows, sel_pos, focused, off):
+        h, w = win.getmaxyx()
+        win.erase()
+        win.attrset(self.CYAN if focused else curses.A_DIM)
+        win.box()
+        win.attrset(0)
+        # en-tête aéré : titre en évidence + filet, puis une ligne vide.
+        win.addnstr(1, 2, title, w - 4, (self.CYAN | curses.A_BOLD) if focused else (curses.A_BOLD | curses.A_DIM))
+        try:
+            win.addnstr(2, 2, "─" * (w - 4), w - 4, curses.A_DIM)
+        except curses.error:
+            pass
+        TOP = 4                         # ligne 3 laissée vide (aération)
+        # Dernière ligne marquée "footer" → épinglée tout en bas du panneau
+        # (ex. bouton « infos »), juste au-dessus de la bordure. Le reste défile.
+        footer = rows[-1] if (rows and rows[-1].get("footer")) else None
+        body = rows[:-1] if footer else rows
+        foot_line = h - 2
+        inner = (h - TOP - 2) if footer else (h - TOP - 1)
+        sels = self.selectable_idx(rows)          # indices dans `rows` complet
+        cur_row = sels[sel_pos] if sels and 0 <= sel_pos < len(sels) else -1
+        footer_idx = len(rows) - 1 if footer else -1
+
+        def paint(yy, row, is_sel):
+            x = 2
+            for text, attr in self.render_row(row, is_sel):
+                avail = (w - 2) - x
+                if avail <= 0:
+                    break
+                try:
+                    win.addnstr(yy, x, text, avail, attr)
+                except curses.error:
+                    pass
+                x += len(text)
+            if is_sel:                            # surbrillance pleine largeur
+                try:
+                    win.chgat(yy, 1, w - 2, curses.A_REVERSE)
+                except curses.error:
+                    pass
+
+        # corps défilant (le footer n'entre pas dans le scroll)
+        if 0 <= cur_row < len(body):
+            if cur_row < off:
+                off = cur_row
+            elif cur_row >= off + inner:
+                off = cur_row - inner + 1
+        while off > 0 and body[off - 1]["kind"] == "header":
+            off -= 1
+        y = TOP
+        for i in range(off, min(len(body), off + inner)):
+            paint(y, body[i], i == cur_row and focused)
+            y += 1
+        if footer:                                # toujours sur la dernière ligne
+            paint(foot_line, footer, cur_row == footer_idx and focused)
+        win.noutrefresh()
+        return off
+
+    def render_row(self, r, is_sel):
+        """Retourne une liste de segments [(texte, attr), …]."""
+        if r["kind"] == "header":
+            return [(r["text"], self.CYAN | curses.A_BOLD)]
+        if r["kind"] == "rcgap":      # ligne vide de séparation (remplace l'ancien titre)
+            return [("", 0)]
+        if r["kind"] == "rcinfo":     # état (chargement / injoignable)
+            return [("  " + r["text"], curses.A_DIM)]
+        if r["kind"] == "rcsess":     # « ● <vps>.remote.<espace> (<n claude>) » — point vert = session distante vivante ;
+            p = "▸ " if is_sel else "  "   # « remote » en gris, présent UNIQUEMENT si la session est vraiment en remote control
+            segs = [(p, 0), ("● ", self.GREEN | curses.A_BOLD), ("%s." % r["host"], 0)]
+            if r.get("remote"):
+                segs += [("remote", curses.A_DIM), (".", 0)]
+            segs += [(r["name"], 0), ("  (%d)" % r.get("nclaude", 0), curses.A_DIM)]
+            return segs
+        if r["kind"] == "input":
+            return [("    ▸ " + r.get("text", "") + "▏", self.GREEN | curses.A_BOLD)]
+        p = "▸ " if is_sel else "  "
+        if r["kind"] == "more":
+            return [(p + "voir plus… (%d de plus)" % r.get("n", 0),
+                     curses.A_REVERSE if is_sel else curses.A_DIM)]
+        if r["kind"] == "act":
+            if r.get("id") == "update_dev":   # mise à jour dispo : jaune, bien visible
+                return [(p + r["text"], self.YEL | curses.A_BOLD)]
+            segs = [(p + r["text"], self.GREEN)]
+            if r.get("err"):                  # serveur injoignable : croix + raison en gris
+                segs += [("  ✗ ", curses.A_DIM), (r["err"], curses.A_DIM)]
+            return segs
+        if r["kind"] == "dir":
+            return [(p + r["name"], self.CYAN)]
+        # ws : un espace de dev (dossier). ● si la session zellij tourne.
+        #   ● 08 Jun  diakhrisma   (vivant : nom en cyan gras)
+        #     06 Jun  gus_project  (fermé : nom coloré par projet)
+        w = r["w"]
+        live = r.get("live")
+        segs = [(p, 0),
+                (("● ", self.GREEN) if live else ("  ", 0)),
+                (fmt_date(w["mtime"]) + "  ", curses.A_DIM)]
+        if self.vps:                  # sur un VPS : ces sessions sont « remote » (préfixe gris)
+            segs.append(("remote.", curses.A_DIM))
+        segs.append((w["name"], (self.CYAN | curses.A_BOLD) if live else self.pcolor(w["name"])))
+        return segs
+
+    def header_line(self):
+        if self.mode == "sessions":
+            base = "thedev · ←/→ panneau · ↑↓ naviguer · ↵ valider · Esc quitter"
+            if self.live:   # ● = session vivante : ↵ rejoint, ^R ferme & relance
+                base += " · sur une ● : ↵ rejoindre · ^R relancer"
+            if self.filt:
+                base = "filtre: %s_   (Esc efface)" % self.filt
+            return base
+        nf = count_files(self.bdir)
+        nd = len(list_dirs(self.bdir))
+        return "%s · %d dossiers · %d fichiers" % (self.bdir, nd, nf)
+
+    def draw_status(self, H, W):
+        """Ligne du bas = barre de statut : où on opère (VPS distant ou local),
+        puis le message transitoire éventuel (création de dossier, hint Ctrl-R…)."""
+        col = 2
+        if self.vps:   # serveur distant : badge rouge bien visible
+            badge = " VPS · %s " % self.vps
+            self.scr.addnstr(H - 1, col, badge, max(0, W - col - 1),
+                             self.RED | curses.A_BOLD | curses.A_REVERSE)
+            col += len(badge) + 1
+        else:          # machine locale
+            tag = " local "
+            self.scr.addnstr(H - 1, col, tag, max(0, W - col - 1),
+                             curses.A_DIM | curses.A_REVERSE)
+            col += len(tag) + 1
+        if self.msg:
+            self.scr.addnstr(H - 1, col, self.msg, max(0, W - col - 1), self.YEL)
+
+    def draw_infos(self):
+        self.scr.erase()
+        H, W = self.scr.getmaxyx()
+        self.scr.addnstr(0, 2, "INFOS", W - 4, self.CYAN | curses.A_BOLD)
+        hint = "Esc retour"
+        if W - 2 - len(hint) > 12:
+            self.scr.addnstr(0, W - 2 - len(hint), hint, len(hint), curses.A_DIM)
+        try:
+            self.scr.addnstr(1, 2, "─" * (W - 4), W - 4, curses.A_DIM)
+        except curses.error:
+            pass
+        with self.rc_lock:
+            data = self.infos_data
+        y = [3]
+        def line(text, attr=0, col=2):
+            if 0 <= y[0] < H - 1 and W - col - 1 > 0:
+                try:
+                    self.scr.addnstr(y[0], col, text, W - col - 1, attr)
+                except curses.error:
+                    pass
+            y[0] += 1
+        if data is None:
+            line("chargement…", curses.A_DIM)
+        else:
+            for sec in ("Contexte & version", "État live", "Santé système",
+                        "Abonnement Claude", "Usage Claude"):
+                rows = data.get(sec)
+                if not rows or y[0] >= H - 2:
+                    continue
+                line(sec, self.CYAN | curses.A_BOLD)
+                for ln in rows:
+                    if y[0] >= H - 1:
+                        break
+                    line("  " + ln, curses.A_DIM)
+                y[0] += 1
+        self.draw_status(H, W)
+        self.scr.noutrefresh()
+        curses.doupdate()
+
+    def draw(self):
+        if self.mode == "infos":
+            self.draw_infos()
+            return
+        self.scr.erase()
+        H, W = self.scr.getmaxyx()
+        self.scr.addnstr(0, 2, self.header_line(), max(0, W - 4), curses.A_DIM)
+        self.draw_status(H, W)         # ligne du bas : hôte en cours (VPS / local) + msg
+        self.scr.noutrefresh()
+        top, bot = 1, H - 1
+        lw = (W * 6) // 10
+        lrows, rrows = self.left_rows(), self.right_rows()
+        lwin = curses.newwin(bot - top, lw - 1, top, 1)
+        rwin = curses.newwin(bot - top, W - lw - 1, top, lw)
+        ltitle = "  ESPACES" if self.mode == "sessions" else "  DOSSIERS"
+        self.loff = self.draw_panel(lwin, ltitle, lrows, self.li, self.focus == "left", self.loff)
+        self.draw_panel(rwin, "  ACTIONS", rrows, self.ri, self.focus == "right", 0)
+        curses.doupdate()
+
+    # --- navigation ------------------------------------------------------
+    def clamp(self):
+        if self.mode == "infos":
+            return
+        ln = len(self.selectable_idx(self.left_rows()))
+        rn = len(self.selectable_idx(self.right_rows()))
+        self.li = max(0, min(self.li, ln - 1)) if ln else 0
+        self.ri = max(0, min(self.ri, rn - 1)) if rn else 0
+
+    def move(self, d):
+        if self.focus == "left":
+            rows = self.left_rows()
+            sels = self.selectable_idx(rows)
+            if not sels:
+                return
+            ni = (self.li + d) % len(sels)
+            if rows[sels[ni]]["kind"] == "more":
+                # atteindre "voir plus" en défilant déplie et continue sur les sessions
+                self.show_all = True
+                sels = self.selectable_idx(self.left_rows())
+                self.li = min(ni, len(sels) - 1) if sels else 0
+            else:
+                self.li = ni
+        else:
+            n = len(self.selectable_idx(self.right_rows()))
+            if n:
+                self.ri = (self.ri + d) % n
+
+    def left_item(self):
+        rows = self.left_rows()
+        sels = self.selectable_idx(rows)
+        return rows[sels[self.li]] if sels and self.li < len(sels) else None
+
+    def right_item(self):
+        rows = self.right_rows()
+        sels = self.selectable_idx(rows)
+        return rows[sels[self.ri]] if sels and self.ri < len(sels) else None
+
+    # --- actions ---------------------------------------------------------
+    def session_running(self, rr):
+        return bool(rr.get("cwd")) and os.path.basename(rr["cwd"]) in self.live
+
+    def decide_session(self, rr):
+        """Ouvrir une session (Entrée) → toujours RESUME, jamais destructif.
+        _dev_launch transforme ça en `zellij attach` si la session est vivante
+        (cas typique : reconnexion SSH sur une session détachée → on REJOINT
+        sans rien écraser), sinon recrée le layout + reprend la conversation.
+        « Fermer & relancer » (RECREATE) est sur Ctrl-R — voir focused_session()
+        — pour ne jamais tuer par réflexe une session ● qu'on voulait rejoindre."""
+        self.decision = ("RESUME", rr["cwd"], rr["id"])
+        return "quit"
+
+    def focused_session(self):
+        """L'espace ● sous le curseur (panneau actif), ou None. Sert à Ctrl-R
+        (fermer & relancer). Renvoie un dict {cwd, id, name, mtime}."""
+        it = self.left_item() if self.focus == "left" else self.right_item()
+        if it and it.get("kind") == "ws":
+            return it["w"]
+        return None
+
+    def activate_left(self):
+        it = self.left_item()
+        if not it:
+            return
+        if it["kind"] == "more":
+            self.show_all = True
+            return
+        if it["kind"] == "ws":
+            return self.decide_session(it["w"])
+        if it["kind"] == "dir":
+            self.bdir = it["path"]
+            self.filt = ""          # réinitialise la recherche dans le nouveau dossier
+            self.li = 0
+            self.loff = 0
+
+    def activate_right(self):
+        it = self.right_item()
+        if not it:
+            return
+        if it["kind"] == "ws":
+            return self.decide_session(it["w"])
+        if it["kind"] == "rcsess":   # session distante : s'y connecter direct (srv <cwd>)
+            self.decision = ("SERVER", it["host"], it["cwd"])
+            return "quit"
+        aid = it.get("id")
+        if aid == "infos":           # écran d'infos pratiques (Esc pour revenir)
+            self.enter_infos()
+            return
+        if aid == "update_dev":      # met à jour la config (git pull) côté dev()
+            self.decision = ("UPDATE",)
+            return "quit"
+        if aid == "quit_vps":        # quitte le picker SANS décision → retour au laptop
+            self.decision = None
+            return "quit"
+        if aid == "new_here":
+            self.decision = ("NEW", self.cur_dir)
+            return "quit"
+        if aid and aid.startswith("server:"):
+            self.decision = ("SERVER", aid.split(":", 1)[1])
+            return "quit"
+        if aid == "browse":
+            self.mode = "browser"
+            self.bdir = self.cur_dir
+            self.focus = "left"
+            self.filt = ""
+            self.li = self.ri = 0
+            self.loff = 0
+        elif aid == "start_here":
+            self.decision = ("NEW", self.bdir)
+            return "quit"
+        elif aid == "mksub":
+            self.creating = True
+            self.newname = ""
+
+    def prompt(self, label):
+        curses.curs_set(1)
+        curses.echo()
+        H, W = self.scr.getmaxyx()
+        self.scr.move(H - 1, 0)
+        self.scr.clrtoeol()
+        self.scr.addnstr(H - 1, 2, label, W - 4, self.GREEN)
+        self.scr.refresh()
+        try:
+            s = self.scr.getstr(H - 1, 2 + len(label), 200).decode("utf-8", "replace")
+        except Exception:
+            s = ""
+        curses.noecho()
+        curses.curs_set(0)
+        return s.strip()
+
+    # --- boucle ----------------------------------------------------------
+    def run(self):
+        # Si des hôtes RC : getch non bloquant (timeout) pour afficher la liste dès
+        # qu'elle charge ET la rafraîchir en continu (statut « en cours » live).
+        while True:
+            self.clamp()
+            self.draw()
+            # getch non bloquant tant qu'il y a qqch à rafraîchir (liste RC live,
+            # check git en fond, ou écran infos en cours de chargement) ; sinon bloque.
+            poll = bool(self.rc_hosts) or self.git_checking or (self.mode == "infos" and self.infos_data is None)
+            self.scr.timeout(400 if poll else -1)
+            try:
+                ch = self.scr.getch()
+            except KeyboardInterrupt:
+                return
+            if ch == -1:                            # timeout : simple redraw
+                continue
+            if self.creating:                       # saisie inline du nom de dossier
+                if ch in (curses.KEY_ENTER, 10, 13):
+                    nm = self.newname.strip()
+                    if nm:
+                        newdir = os.path.join(self.bdir, nm)
+                        try:
+                            # Juste créer le dossier : on reste dans le picker, il
+                            # apparaît en haut de la liste (tri par mtime). Pas de
+                            # lancement de session — l'utilisateur choisit ensuite.
+                            os.makedirs(newdir, exist_ok=True)
+                            self.msg = "dossier créé : %s" % nm
+                        except OSError as e:
+                            self.msg = "échec : %s" % e
+                    self.creating = False; self.newname = ""
+                elif ch == 27:
+                    self.creating = False; self.newname = ""
+                elif ch in (curses.KEY_BACKSPACE, 127, 8):
+                    self.newname = self.newname[:-1]
+                elif 32 <= ch < 127:
+                    self.newname += chr(ch)
+                continue
+            if self.mode == "infos":                # écran infos : Esc revient
+                if ch == 27:
+                    self.mode = "sessions"; self.focus = "left"
+                    self.li = self.ri = 0; self.loff = 0
+                continue
+            self.msg = ""
+            if ch in (curses.KEY_UP,):
+                self.move(-1)
+            elif ch in (curses.KEY_DOWN,):
+                self.move(1)
+            elif ch == curses.KEY_LEFT:
+                self.focus = "left"
+            elif ch == curses.KEY_RIGHT:
+                self.focus = "right"
+            elif ch == 9:  # Tab → bascule focus
+                self.focus = "right" if self.focus == "left" else "left"
+            elif ch in (curses.KEY_ENTER, 10, 13):
+                if (self.activate_left() if self.focus == "left" else self.activate_right()) == "quit":
+                    return
+            elif ch == 18:  # Ctrl-R : fermer & relancer la session ● sous le curseur
+                rr = self.focused_session()
+                if rr and self.session_running(rr):
+                    self.decision = ("RECREATE", rr["cwd"], rr["id"])
+                    return
+                self.msg = "Ctrl-R = fermer & relancer : place-toi sur une session ● en cours"
+            elif ch == 27:  # Esc : efface le filtre, sinon revient aux sessions, sinon quitte
+                if self.filt:
+                    self.filt = ""; self.li = 0
+                elif self.mode == "browser":
+                    self.mode = "sessions"; self.focus = "left"; self.li = self.ri = 0; self.loff = 0
+                else:
+                    return
+            elif ch in (curses.KEY_BACKSPACE, 127, 8):
+                if self.filt:
+                    self.filt = self.filt[:-1]; self.li = 0
+            elif 32 <= ch < 127:
+                self.filt += chr(ch); self.li = 0
+
+
+def main():
+    cur_dir = os.path.realpath(sys.argv[1]) if len(sys.argv) > 1 else os.getcwd()
+    outfile = sys.argv[2] if len(sys.argv) > 2 else None
+    picker = [None]
+
+    def wrapped(scr):
+        p = Picker(scr, cur_dir)
+        picker[0] = p
+        p.run()
+        p.rc_stop.set()   # stoppe le polling RC en fond
+
+    # stdout peut être un pipe : curses doit utiliser le tty. wrapper() ouvre le
+    # terminal via initscr (qui lit /dev/tty) ; on écrit la décision à part.
+    curses.wrapper(wrapped)
+    dec = picker[0].decision if picker[0] else None
+    if not dec:
+        sys.exit(1)
+    line = "\t".join(dec) + "\n"
+    if outfile:
+        with open(outfile, "w", encoding="utf-8") as f:
+            f.write(line)
+    else:
+        sys.stdout.write(line)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# @thedev session pane git-centric (alias g/gs)
+# git-pane — dashboard git minimaliste au boot, puis shell git-centric.
+# Tu vois immédiatement : branche, ahead/behind, modifs, 5 derniers commits.
+# Commandes utiles : `g`/`gs` (refresh), `lg` (lazygit pour interagir).
+
+# Delay startup to avoid I/O storm when zellij spawns all panes at once
+sleep 2
+
+_self="$0"; case "$_self" in */*) ;; *) _self="$(command -v -- "$_self")" ;; esac
+THEDEV_ROOT="$(cd "$(dirname "$(readlink -f -- "$_self")")/.." && pwd)"
+GIT_FN="$THEDEV_ROOT/bash/git-functions.sh"
+[ -f "$GIT_FN" ] && . "$GIT_FN"
+
+# Dashboard initial
+if command -v git_status >/dev/null 2>&1; then
+  git_status
+else
+  echo "[git-pane] git-functions.sh introuvable."
+fi
+
+# Shell interactif avec les alias
+tmprc=$(mktemp)
+cat > "$tmprc" <<EOF
+[ -f ~/.bashrc ] && . ~/.bashrc
+[ -f "$GIT_FN" ] && . "$GIT_FN"
+PS1='\[\033[1;34m\][git]\[\033[0m\] \W\\\$ '
+rm -f "$tmprc"
+EOF
+
+exec bash --rcfile "$tmprc"

@@ -1,0 +1,15 @@
+themes {
+    muted {
+        fg "#808080"
+        bg "#1a1a1a"
+        black "#1a1a1a"
+        red "#8a6060"
+        green "#607a60"
+        yellow "#8a7a55"
+        blue "#607090"
+        magenta "#706070"
+        cyan "#607070"
+        white "#a0a0a0"
+        orange "#8a6a50"
+    }
+}

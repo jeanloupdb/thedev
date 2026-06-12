@@ -1,0 +1,361 @@
+#!/usr/bin/env bash
+# @thedev run lance et gere tout process long-running dans la sandbox (dedup, vivacite, crun alive)
+# crun — wrapper zellij pour piloter les panes de la sandbox (lancés par Claude ou toi).
+#
+# Usage:
+#   crun <name> -- <cmd>             # lance dans la sandbox par défaut
+#   crun --tab <tab> <name> -- <cmd> # tab spécifique (créée si absente)
+#   crun --floating <name> -- <cmd>  # pane flottant au lieu d'intégré
+#   crun list                        # liste les agents actifs
+#   crun kill <name>                 # tue un agent par nom
+#   crun cleanup                     # ferme les panes dont le process est mort
+#
+# Registre : ~/.cache/claude-agents (1 ligne par agent, format TSV)
+#   name<TAB>tab<TAB>pane_id<TAB>started_at<TAB>cmd
+
+set -u
+
+REGISTRY="$HOME/.cache/claude-agents"
+PID_DIR="$HOME/.cache/claude-agents-pids"
+DEFAULT_TAB="sandbox"
+HOME_TAB="code page"
+
+mkdir -p "$(dirname "$REGISTRY")" "$PID_DIR"
+touch "$REGISTRY"
+
+die()  { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; exit 1; }
+ok()   { printf '\033[1;32m✓\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m⚠\033[0m %s\n' "$*"; }
+info() { printf '\033[1;34m▸\033[0m %s\n' "$*"; }
+
+# Garde-fou session zellij — SAUF pour `alive` : vérifier qu'un PID tourne
+# (pidfile + kill -0) ne nécessite aucune session zellij, et c'est ce que
+# `thedev-status` appelle EN SSH (où $ZELLIJ est vide) pour la visu distante.
+case "${1:-}" in
+  alive) ;;
+  *) [ -n "${ZELLIJ:-}" ] || die "Pas dans une session zellij (\$ZELLIJ vide)." ;;
+esac
+
+# --- Registry helpers ---
+reg_lookup()  { awk -F'\t' -v n="$1" '$1 == n {print; exit}' "$REGISTRY"; }
+reg_remove()  { local t; t=$(mktemp); awk -F'\t' -v n="$1" '$1 != n' "$REGISTRY" > "$t"; mv "$t" "$REGISTRY"; }
+reg_add()     {
+  reg_remove "$1"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$(date -Iseconds)" "$4" >> "$REGISTRY"
+}
+
+# --- Zellij helpers ---
+current_tab() {
+  zellij action current-tab-info 2>/dev/null \
+    | awk -F: '/^name:|^Name:|name=/ {gsub(/.*[:=] */, ""); gsub(/ +$/, ""); print; exit}'
+}
+
+# Un client zellij est-il attaché ? Sans client (session headless : laptop
+# détaché, ou pilotage via Remote Control), `current-tab-info` renvoie
+# « No active tab found for current client » → aucun nom. Le focus zellij étant
+# PAR-CLIENT, `go-to-tab-name` est alors un no-op : impossible de cibler un
+# onglet de façon fiable. C'était la cause des doublons d'onglets + panes mal
+# placés (un crun lancé pendant que le laptop était éteint).
+client_attached() { current_tab | grep -q .; }
+
+# L'onglet existe-t-il ? Via `dump-layout`, qui marche MÊME sans client attaché
+# (contrairement à current-tab-info). Source de vérité fiable → on ne crée plus
+# de doublon en se fiant à un current_tab() vide.
+tab_exists() { zellij action dump-layout 2>/dev/null | grep -q "tab name=\"$1\""; }
+
+ensure_tab() {
+  local tab="$1"
+  if tab_exists "$tab"; then
+    zellij action go-to-tab-name "$tab" >/dev/null 2>&1   # focus (no-op si headless)
+    sleep 0.2
+  else
+    zellij action new-tab --name "$tab" >/dev/null 2>&1   # création (OK headless)
+    sleep 0.4
+  fi
+}
+
+# Client zellij FANTÔME éphémère. Le ciblage d'onglet exige un client attaché
+# (focus par-client). En headless (laptop détaché / Remote Control), on attache
+# un client via un pty détaché (`script`) le temps de placer le pane, puis on le
+# tue → crun se comporte comme s'il y avait un vrai client, sans laisser de
+# process. Requiert `script(1)` (util-linux). Renvoie 0 si un client est dispo.
+PHANTOM_PID=""
+ensure_client() {
+  command -v script >/dev/null 2>&1 || return 1
+  local sess="${ZELLIJ_SESSION_NAME:-}"
+  [ -n "$sess" ] || return 1
+  script -q -c "zellij attach $sess" /dev/null </dev/null >/dev/null 2>&1 &
+  PHANTOM_PID=$!
+  trap kill_phantom EXIT
+  local i
+  for i in $(seq 1 15); do          # attendre que le client soit enregistré
+    client_attached && return 0
+    sleep 0.3
+  done
+  client_attached
+}
+kill_phantom() {
+  [ -n "${PHANTOM_PID:-}" ] || return 0
+  pkill -P "$PHANTOM_PID" 2>/dev/null   # le zellij attach enfant
+  kill "$PHANTOM_PID" 2>/dev/null       # le script parent
+  PHANTOM_PID=""
+}
+
+# Agent considered alive if its stored PID is still running.
+# At launch we wrote `echo $$ > pidfile` in a bash that then exec'd the user
+# command — so $$ became the PID of the actual process (exec keeps the PID).
+# Reliable across npm/yarn/pnpm forks (where pgrep on the cmdline fails).
+#
+# Fallback for legacy registry entries without a pidfile : pgrep on the cmd.
+agent_alive() {
+  local name="$1"
+  local pidfile="$PID_DIR/$name.pid"
+  if [ -f "$pidfile" ]; then
+    local pid; pid=$(cat "$pidfile" 2>/dev/null)
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+    return
+  fi
+  # Legacy fallback : look up cmd from registry and pgrep on it (best effort)
+  local entry; entry=$(reg_lookup "$name") || return 1
+  local cmd; cmd=$(printf '%s' "$entry" | cut -f5)
+  [ -z "$cmd" ] && return 0  # truly unknown → assume alive (don't auto-cleanup)
+  pgrep -f -- "$cmd" >/dev/null 2>&1
+}
+
+# --- Commands ---
+
+cmd_run() {
+  local tab="$DEFAULT_TAB"
+  local floating=""
+  local name=""
+  local -a cmd_args=()
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --tab) tab="$2"; shift 2 ;;
+      --floating) floating="--floating"; shift ;;
+      --) shift; cmd_args=("$@"); break ;;
+      -*) die "Option inconnue : $1" ;;
+      *) [ -z "$name" ] && name="$1" || cmd_args+=("$1"); shift ;;
+    esac
+  done
+
+  [ -z "$name" ] && die "Usage: crun <name> -- <cmd>"
+  [ ${#cmd_args[@]} -eq 0 ] && die "Pas de commande spécifiée (ajoute -- <cmd>)"
+
+  # Anti-doublon : un AUTRE agent tourne déjà la même commande (typiquement une
+  # relance sous un nouveau nom → panes qui s'empilent). On prévient pour qu'on
+  # réutilise son nom ou qu'on le tue, au lieu d'accumuler.
+  local dup
+  dup=$(awk -F'\t' -v c="${cmd_args[*]}" -v n="$name" '$5==c && $1!=n {print $1; exit}' "$REGISTRY")
+  [ -n "$dup" ] && warn "doublon : l'agent '$dup' tourne déjà cette commande — réutilise ce nom ('crun $dup -- …') ou 'crun kill $dup' plutôt que d'empiler."
+
+  # Dedup : kill old if exists
+  if [ -n "$(reg_lookup "$name")" ]; then
+    warn "Agent '$name' existe déjà — remplacement…"
+    cmd_kill_silent "$name"
+    sleep 0.2
+  fi
+
+  local origin attached=1
+  if ! client_attached; then
+    # Session headless : on tente un client fantôme éphémère pour cibler l'onglet.
+    ensure_client && attached=1 || attached=0
+  fi
+  origin=$(current_tab)
+  [ -z "$origin" ] && origin="$HOME_TAB"
+
+  ensure_tab "$tab"
+
+  # Close welcome pane if present (single pane named "welcome" in agents tab)
+  close_welcome_if_present
+
+  # Wrap the command in a bash that :
+  #  1. prints the command itself (self-documenting pane)
+  #  2. writes $$ to a pidfile — this PID will be the final process's PID
+  #     because `exec` replaces the bash image while keeping the same PID.
+  #     This is the canonical way to track the process across npm/yarn/pnpm
+  #     forks (where pgrep on the original cmdline fails).
+  local pidfile="$PID_DIR/$name.pid"
+  rm -f "$pidfile"
+  local wrapper="printf '\033[1;34m\$ %s\033[0m\n\n' \"\$*\"
+echo \$\$ > '$pidfile'
+exec \"\$@\""
+
+  local run_out pane_id
+  if [ -n "$floating" ]; then
+    run_out=$(zellij run --name "claude-$name" --floating -- bash -c "$wrapper" -- "${cmd_args[@]}" 2>&1)
+  else
+    run_out=$(zellij run --name "claude-$name" -- bash -c "$wrapper" -- "${cmd_args[@]}" 2>&1)
+  fi
+  pane_id=$(printf '%s\n' "$run_out" | grep -oE 'terminal_[0-9]+' | head -1)
+  [ -z "$pane_id" ] && pane_id="unknown"
+
+  reg_add "$name" "$tab" "$pane_id" "${cmd_args[*]}"
+
+  if [ "$attached" != 0 ]; then
+    zellij action go-to-tab-name "$origin" 2>/dev/null || true
+    kill_phantom
+    ok "agent '$name' démarré dans tab '$tab' (pane $pane_id)"
+  else
+    # Fantôme indispo (script absent ?) : on ne peut pas cibler l'onglet headless.
+    kill_phantom
+    warn "session headless et client fantôme indisponible (script(1) absent ?) :"
+    warn "  le pane '$name' a été créé hors de l'onglet '$tab' — réorganise au réattachement."
+    info "agent '$name' démarré (pane $pane_id)"
+  fi
+  printf '   cmd: %s\n' "${cmd_args[*]}"
+}
+
+close_welcome_if_present() {
+  # Heuristic: if a pane named "claude-welcome" exists in the current tab, close it
+  if zellij action dump-layout 2>/dev/null | grep -q 'name="welcome"'; then
+    zellij action focus-pane-id welcome 2>/dev/null || true
+    # Better : we don't know its id, skip silently — the welcome pane will just stay
+    :
+  fi
+}
+
+cmd_list() {
+  if [ ! -s "$REGISTRY" ]; then
+    echo "Aucun agent enregistré."
+    return
+  fi
+  printf '%-20s %-10s %-12s %-15s %s\n' "NAME" "TAB" "PANE" "STARTED" "CMD"
+  printf '%-20s %-10s %-12s %-15s %s\n' "----" "---" "----" "-------" "---"
+  while IFS=$'\t' read -r name tab pane_id started cmd; do
+    local short="${started:11:5}"
+    local alive="●"
+    agent_alive "$name" || alive="○"
+    printf '%-20s %-10s %-12s %-15s %s\n' "$alive $name" "$tab" "$pane_id" "$short" "$cmd"
+  done < "$REGISTRY"
+}
+
+cmd_kill_silent() {
+  local name="$1"
+  local entry; entry=$(reg_lookup "$name")
+  [ -z "$entry" ] && return 0
+
+  local tab pane_id
+  tab=$(printf '%s' "$entry" | cut -f2)
+  pane_id=$(printf '%s' "$entry" | cut -f3)
+
+  # Garde-fou absolu : ne JAMAIS agir sur l'onglet protégé (claude / éditeur).
+  if [ "$tab" = "$HOME_TAB" ]; then
+    warn "refus : '$name' est enregistré dans l'onglet protégé '$HOME_TAB' — rien fermé."
+    reg_remove "$name"
+    return 0
+  fi
+
+  # 1) Tuer le PROCESSUS via son pidfile (correctness : marche à travers les forks
+  #    npm/yarn). 2) Fermer le PANE par son id avec `close-pane -p` — sûr pour
+  #    claude : son pane (page `code page`) est créé au démarrage du layout, jamais
+  #    fermé → son id n'est jamais réattribué, donc fermer un id d'agent ne peut
+  #    pas le viser. (L'ancien drame venait du close par *focus*, pas par id.)
+  local pidfile="$PID_DIR/$name.pid" pid=""
+  [ -f "$pidfile" ] && pid=$(cat "$pidfile" 2>/dev/null)
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+  fi
+  [ -n "$pane_id" ] && [ "$pane_id" != "unknown" ] && \
+    zellij action close-pane -p "$pane_id" >/dev/null 2>&1
+  rm -f "$pidfile"
+  reg_remove "$name"
+}
+
+cmd_kill() {
+  local name="${1:-}"
+  [ -z "$name" ] && die "Usage: crun kill <name>"
+  [ -z "$(reg_lookup "$name")" ] && die "Aucun agent nommé '$name'."
+  cmd_kill_silent "$name"
+  ok "agent '$name' tué."
+}
+
+cmd_cleanup() {
+  if [ ! -s "$REGISTRY" ]; then
+    echo "Rien à nettoyer."
+    return
+  fi
+  local closed=0
+  local entries; entries=$(cat "$REGISTRY")
+  while IFS=$'\t' read -r name tab pane_id started cmd; do
+    [ -z "$name" ] && continue
+    if ! agent_alive "$name"; then
+      info "fermé : $name (process introuvable)"
+      # Ferme aussi le pane mort (sauf onglet protégé) pour ne pas laisser de
+      # panes fantômes s'empiler sur la sandbox.
+      [ "$tab" != "$HOME_TAB" ] && [ -n "$pane_id" ] && [ "$pane_id" != "unknown" ] && \
+        zellij action close-pane -p "$pane_id" >/dev/null 2>&1
+      rm -f "$PID_DIR/$name.pid"
+      reg_remove "$name"
+      closed=$((closed+1))
+    fi
+  done <<< "$entries"
+
+  if [ "$closed" -eq 0 ]; then
+    ok "Tous les agents sont vivants."
+  else
+    ok "$closed agent(s) nettoyé(s)."
+  fi
+}
+
+# Lit l'écran du pane d'un agent (vivant OU mort : le pane reste ouvert avec sa
+# sortie). Sert à diagnostiquer un agent qui a échoué SANS le relancer à l'aveugle.
+cmd_logs() {
+  local name="${1:-}"
+  [ -z "$name" ] && die "Usage: crun logs <name>"
+  local entry; entry=$(reg_lookup "$name")
+  [ -z "$entry" ] && die "Aucun agent nommé '$name'."
+  local tab pane_id origin out
+  tab=$(printf '%s' "$entry" | cut -f2)
+  pane_id=$(printf '%s' "$entry" | cut -f3)
+  [ "$pane_id" = "unknown" ] && die "pane_id inconnu pour '$name'."
+  origin=$(current_tab)
+  out=$(mktemp)
+  zellij action go-to-tab-name "$tab"    >/dev/null 2>&1
+  zellij action focus-pane-id "$pane_id" >/dev/null 2>&1
+  sleep 0.2
+  zellij action dump-screen "$out"       >/dev/null 2>&1
+  [ -n "$origin" ] && zellij action go-to-tab-name "$origin" >/dev/null 2>&1
+  if [ -s "$out" ]; then
+    info "écran du pane $pane_id (agent '$name') :"
+    cat "$out"
+  else
+    warn "rien à lire (pane fermé/vide) — rejoue la commande inline avec 2>&1 pour voir l'erreur."
+  fi
+  rm -f "$out"
+}
+
+usage() {
+  cat <<'EOF'
+crun — gestion des panes de la sandbox (zellij)
+
+Usage:
+  crun <name> -- <cmd>              # lance dans la sandbox par défaut
+  crun --tab <tab> <name> -- <cmd>  # tab custom (créée si absente)
+  crun --floating <name> -- <cmd>   # pane flottant
+  crun list                         # liste les agents (● vivant, ○ mort)
+  crun logs <name>                  # lit l'écran d'un agent (diagnostiquer un mort)
+  crun kill <name>                  # tue un agent par nom
+  crun cleanup                      # ferme les panes morts
+
+Exemples:
+  crun dev-server -- npm run dev
+  crun --tab logs tail-app -- tail -f /var/log/app.log
+  crun --floating htop -- htop
+  crun list
+  crun logs dev-server
+  crun kill dev-server
+EOF
+}
+
+case "${1:-}" in
+  list)    cmd_list ;;
+  logs)    shift; cmd_logs "$@" ;;
+  kill)    shift; cmd_kill "$@" ;;
+  cleanup) cmd_cleanup ;;
+  alive)   shift; agent_alive "${1:-}" ;;   # exit 0 si l'agent <name> tourne encore
+  -h|--help) usage ;;
+  "") usage; exit 1 ;;
+  *) cmd_run "$@" ;;
+esac

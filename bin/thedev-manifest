@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# @thedev infra genere le manifest de thedev depuis les tags @thedev des scripts bin/
+# thedev-manifest — SOURCE DE VÉRITÉ unique de l'app thedev, dérivée des en-têtes.
+#
+# Chaque script thedev porte une ligne `# @thedev <categorie> <description>`.
+# Ce générateur les agrège → un manifest exhaustif qui sert DEUX usages :
+#   1. comprendre thedev (IA ou humain) : un point d'entrée dense, à jour tout seul.
+#   2. installer thedev (install-dev.sh) : `--scripts` = la clôture de bin/ exacte.
+#
+# Usage :
+#   thedev-manifest              # rend le manifest (markdown) sur stdout
+#   thedev-manifest --write      # (ré)écrit MANIFEST.md à la racine du repo
+#   thedev-manifest --scripts    # noms des scripts thedev (1/ligne) — pour install-dev
+#   thedev-manifest --check-deps # vérifie les apps externes requises, signale les absentes
+set -u
+SELF="$(readlink -f "$0")"
+REPO="$(cd "$(dirname "$SELF")/.." && pwd)"
+BIN="$REPO/bin"
+# Les apps vivent souvent dans ~/.local/bin ou /usr/local/bin, absents du PATH
+# d'un ssh non-interactif → sans ça, --check-deps crie de fausses alertes à distance.
+export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
+
+# Ordre d'affichage des catégories + libellé humain.
+CAT_ORDER="picker session naming registry run liens liens-deprecated expose infra"
+cat_label() {
+  case "$1" in
+    picker)            echo "Lancement (picker)";;
+    session)           echo "Session & panes";;
+    naming)            echo "Nommage";;
+    registry)          echo "Registre";;
+    run)               echo "Exécution (crun)";;
+    liens)             echo "Liens cross-machine";;
+    liens-deprecated)  echo "Liens — déprécié";;
+    expose)            echo "Exposition réseau";;
+    infra)             echo "Infra";;
+    *)                 echo "$1";;
+  esac
+}
+
+# Apps externes requises (curated : change rarement). cmd|paquet|portée|optionnel
+DEPS="
+zellij|zellij|core|0
+claude|claude CLI|core|0
+nvim|neovim|core|0
+python3|python3|core|0
+git|git|core|0
+jq|jq|core|0
+fzf|fzf (>=0.50)|core|0
+inotifywait|inotify-tools|core|0
+ssh|openssh-client|liens|0
+rsync|rsync|liens|0
+tailscale|tailscale|expose|1
+"
+
+# Émet, pour chaque script taggé : <categorie>\t<nom>\t<description>
+_rows() {
+  local f line cat desc name
+  for f in "$BIN"/*; do
+    [ -f "$f" ] || continue
+    line=$(grep -m1 '@thedev ' "$f" 2>/dev/null) || continue
+    line=${line#*@thedev }
+    cat=${line%% *}
+    desc=${line#* }
+    name=$(basename "$f")
+    printf '%s\t%s\t%s\n' "$cat" "$name" "$desc"
+  done
+}
+
+cmd_scripts() { _rows | cut -f2 | sort; }
+
+cmd_check_deps() {
+  local row cmd pkg scope opt miss=0
+  printf '%s\n' "Dépendances externes de thedev :"
+  while IFS='|' read -r cmd pkg scope opt; do
+    [ -n "$cmd" ] || continue
+    if command -v "$cmd" >/dev/null 2>&1; then
+      printf '  ● %-13s %s\n' "$cmd" "($scope)"
+    elif [ "$opt" = "1" ]; then
+      printf '  ○ %-13s %s — optionnel, absent\n' "$cmd" "($scope, $pkg)"
+    else
+      printf '  ✗ %-13s %s — MANQUANT (%s)\n' "$cmd" "($scope)" "$pkg"; miss=1
+    fi
+  done <<< "$(printf '%s\n' "$DEPS" | sed '/^$/d')"
+  [ "$miss" = 0 ] && echo "→ tout le nécessaire est présent." || echo "→ des dépendances manquent (cf. ✗)."
+  return "$miss"
+}
+
+cmd_render() {
+  local nscripts; nscripts=$(_rows | wc -l | tr -d ' ')
+  cat <<EOF
+# thedev — manifest
+
+> **Généré** par \`thedev-manifest\` depuis les tags \`# @thedev\` des scripts \`bin/\`.
+> Ne pas éditer à la main. Régénérer : \`thedev-manifest --write\`. ${nscripts} commandes.
+
+## Modèle mental
+
+**machine** → **espace** (1 projet × 1 machine, tous pairs) → **pages** (\`code page\` = nvim + stack de Claude · \`sandbox\` = territoire agents/cruns · \`my space\` = terminaux humains) → **panes**.
+Un **crun** = un pane long-running lancé dans la sandbox. Les espaces s'échangent des **missions** cross-machine (interactif, sur l'abonnement). Vocabulaire complet : \`NAMING.md\` · liens : \`plans/thedev-liens.md\`.
+
+## Commandes
+EOF
+  local cat name desc seen=""
+  for cat in $CAT_ORDER; do
+    _rows | awk -F'\t' -v c="$cat" '$1==c' | sort -t$'\t' -k2 | {
+      local first=1
+      while IFS=$'\t' read -r _c name desc; do
+        [ -n "$name" ] || continue
+        if [ "$first" = 1 ]; then printf '\n### %s\n' "$(cat_label "$cat")"; first=0; fi
+        printf -- '- **%s** — %s\n' "$name" "$desc"
+      done
+    }
+    seen="$seen $cat"
+  done
+  # catégories hors de l'ordre connu (filet de sécurité pour un futur tag)
+  _rows | awk -F'\t' -v known=" $CAT_ORDER " '{ if (index(known, " " $1 " ")==0) print }' | sort | {
+    local first=1
+    while IFS=$'\t' read -r cat name desc; do
+      if [ "$first" = 1 ]; then printf '\n### Autres\n'; first=0; fi
+      printf -- '- **%s** (%s) — %s\n' "$name" "$cat" "$desc"
+    done
+  }
+  cat <<'EOF'
+
+## Dépendances externes
+
+| Commande | Paquet | Portée | |
+|---|---|---|---|
+EOF
+  while IFS='|' read -r cmd pkg scope opt; do
+    [ -n "$cmd" ] || continue
+    local mark="requis"; [ "$opt" = "1" ] && mark="optionnel"
+    printf '| `%s` | %s | %s | %s |\n' "$cmd" "$pkg" "$scope" "$mark"
+  done <<< "$(printf '%s\n' "$DEPS" | sed '/^$/d')"
+  cat <<'EOF'
+
+## Installation
+
+- **Globale** (config perso complète) : `./install.sh [--with-deps] [--gnome] [--vps=<label>]`
+- **thedev seul** (sans toucher .bashrc/.claude perso) : `./install-dev.sh [--vps=<label>]`
+  — la liste des scripts installés est dérivée de ce manifest (`thedev-manifest --scripts`).
+- **Vérifier les dépendances** : `thedev-manifest --check-deps`
+EOF
+}
+
+case "${1:-}" in
+  --scripts)     cmd_scripts ;;
+  --check-deps)  cmd_check_deps ;;
+  --write)       cmd_render > "$REPO/MANIFEST.md" && echo "✓ $REPO/MANIFEST.md ($(_rows | wc -l | tr -d ' ') commandes)" ;;
+  ""|--render)   cmd_render ;;
+  -h|--help)     sed -n '2,18p' "$SELF" ;;
+  *) echo "usage: thedev-manifest [--render|--write|--scripts|--check-deps]" >&2; exit 1 ;;
+esac

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# @thedev session menu de fermeture propre de la session
+# dev-quit-menu — modal déclenché par Ctrl+Q dans zellij. Lancé en pane FLOTTANT
+# close_on_exit. d = détacher (session vivante), f = fermer (tuer), autre = annuler.
+
+# Résolution FIABLE du nom de session : dans un pane lancé par un keybind, la var
+# $ZELLIJ_SESSION_NAME peut être vide → fallback sur la session marquée (current).
+# CRITIQUE : sans ce fallback, `delete-session --force ""` (nom vide) pouvait
+# viser TOUTES les sessions au lieu de la courante.
+sess="${ZELLIJ_SESSION_NAME:-}"
+[ -z "$sess" ] && sess=$(zellij list-sessions --no-formatting 2>/dev/null | awk '/\(current\)/{print $1; exit}')
+
+R=$'\033[0m'; B=$'\033[1m'; D=$'\033[2m'; CY=$'\033[36m'
+G=$'\033[1;32m'; RED=$'\033[1;31m'
+GCHIP=$'\033[1;42;30m'   # puce fond vert, texte noir
+RCHIP=$'\033[1;41;37m'   # puce fond rouge, texte blanc
+
+clear
+printf '\n\n'
+printf '     %sQuitter%s  %s%s%s\n' "$B" "$R" "$CY" "$sess" "$R"
+printf '     %s───────────────────────────────%s\n\n' "$D" "$R"
+printf '      %s  d  %s   %sDÉTACHER%s   %sla session reste vivante%s\n\n' "$GCHIP" "$R" "$G" "$R" "$D" "$R"
+printf '      %s  f  %s   %sFERMER%s     %sla session est tuée%s\n\n' "$RCHIP" "$R" "$RED" "$R" "$D" "$R"
+printf '     %s───────────────────────────────%s\n' "$D" "$R"
+printf '      %séchap / autre touche  ·  annuler%s\n\n' "$D" "$R"
+
+read -rsn1 key
+case "$key" in
+  d|D) zellij action detach ;;
+  f|F)
+    # Garde-fou : ne JAMAIS lancer delete-session sans nom confirmé (sinon risque
+    # de tuer toutes les sessions). On ne ferme QUE la session courante, par nom.
+    if [ -n "$sess" ]; then
+      zellij delete-session --force "$sess"
+    else
+      printf '\n  %sSession introuvable — rien fermé (sécurité).%s\n' "$RED" "$R"; sleep 1.5
+    fi
+    ;;
+  *)   : ;;
+esac

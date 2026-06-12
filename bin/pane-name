@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# @thedev naming nomme et persiste le titre d'un pane Claude (prefixe VPS auto)
+# pane-name "<label>" — renomme le pane zellij courant ET persiste ce nom pour
+# la conversation Claude en cours, afin de le retrouver après avoir quitté puis
+# relancé (le hook SessionStart le ré-applique à la reprise).
+#
+# À utiliser à la place de `zellij action rename-pane` brut quand tu (Claude)
+# nommes ton propre pane « ◆ <sujet> ». Voir zellij-pane-prompt.md.
+
+# Assainit : le registre est du TSV (1 ligne par Claude) → tab/newline interdits
+# dans le label, sinon la ligne se corrompt.
+name=$(printf '%s' "$*" | tr '\t\n\r' '   ' | sed -e 's/  */ /g' -e 's/^ *//' -e 's/ *$//')
+[ -n "$name" ] || { echo "usage: pane-name <label>" >&2; exit 1; }
+
+# Sur un VPS : insère le repère [<vps>] automatiquement (« ◆ [indice] fix x »).
+# Claude n'a plus à penser au préfixe ; pas de doublon s'il l'a déjà mis.
+if [ -f "$HOME/.config/dev-vps" ]; then
+  vps=$(cat "$HOME/.config/dev-vps")
+  case "$name" in
+    *"[$vps]"*) ;;
+    "◆ "*) name="◆ [$vps] ${name#◆ }" ;;
+  esac
+fi
+
+[ -n "${ZELLIJ_PANE_ID:-}" ] && zellij action rename-pane -p "$ZELLIJ_PANE_ID" "$name" 2>/dev/null
+
+# Persiste le nom pour CETTE conversation (id exposé par Claude dans l'env).
+[ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && dev-claude-reg setname "$CLAUDE_CODE_SESSION_ID" "$name" 2>/dev/null
+
+exit 0

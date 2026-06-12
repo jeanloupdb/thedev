@@ -1,0 +1,36 @@
+layout {
+    default_tab_template {
+        children
+        pane size=1 borderless=true {
+            plugin location="zellij:tab-bar"
+        }
+    }
+
+    // Page 1 — code page : editor (nvim) | claude (stack des claudes) + barre ＋
+    tab name="code page" focus=true {
+        pane split_direction="vertical" {
+            pane size="20%" name="editor" command="/home/jlal/.local/bin/editor-pane" {
+                args "."
+            }
+            pane split_direction="horizontal" {
+                pane stacked=true {
+                    pane name="claude" command="/home/jlal/.local/bin/claude-pane" focus=true
+                }
+                pane size=1 borderless=true name="＋ claude" command="/home/jlal/.local/bin/aside-button"
+            }
+        }
+    }
+
+    // Page 2 — sandbox (territoire de Claude, peuplé via `crun`)
+    tab name="sandbox" {
+        pane name="welcome" command="/home/jlal/.local/bin/agents-welcome"
+    }
+
+    // Page 3 — my space : shell + git (terminaux perso, côte à côte)
+    tab name="my space" {
+        pane split_direction="vertical" {
+            pane name="shell" command="/home/jlal/.local/bin/shell-pane"
+            pane name="git" command="/home/jlal/.local/bin/git-pane"
+        }
+    }
+}

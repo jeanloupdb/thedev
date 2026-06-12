@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# @thedev liens board cross-machine compact (espaces ouverts, missions en cours, cruns)
+# thedev-status — tableau de bord cross-machine de thedev, pour l'orchestrateur.
+# Fan-out ssh sur chaque machine connue (+ local), digère l'état SUR PLACE et
+# n'en ramène qu'un résumé DENSE : but explicite = polluer un minimum le
+# contexte du Claude qui l'appelle. Read-only.
+#
+#   thedev-status        board compact (défaut) — 1 ligne/machine au repos
+#   thedev-status -v     verbeux : noms des cruns vivants en plus (pour TOI, pas pour l'orchestrateur)
+#   thedev-status __probe   interne : état machine-local compact (appelé via ssh)
+#
+# Sources : ~/.config/thedev-machines (1 hôte ssh par ligne, # = commentaire).
+# Toujours sonde la machine locale en plus. Une machine == soi (dev-vps) n'est
+# pas re-ssh'ée.
+set -u
+me="$(basename "$0")"
+MACHINES_FILE="$HOME/.config/thedev-machines"
+THEDEV="$HOME/.cache/thedev"
+selfname="$(cat "$HOME/.config/dev-vps" 2>/dev/null || echo local)"
+
+human_age() {  # secondes → "12m" / "3h" / "2j"
+  local s="$1"
+  if   [ "$s" -lt 3600 ];   then echo "$((s/60))m"
+  elif [ "$s" -lt 86400 ];  then echo "$((s/3600))h"
+  else echo "$((s/86400))j"; fi
+}
+
+# ── PROBE : tourne SUR une machine, émet des lignes taguées compactes ─────────
+#   S <open_csv> <n_miss> <n_alive> <n_dead>
+#   M <id> <age> <espace>          (1 par mission en cours)
+#   C <●|○> <name>                 (1 par crun)
+cmd_probe() {
+  local now; now=$(date +%s)
+  shopt -s nullglob
+
+  # espaces ouverts
+  local open=() f
+  for f in "$THEDEV"/links/*; do open+=("$(basename "$f")"); done
+  local open_csv="-"; [ "${#open[@]}" -gt 0 ] && open_csv=$(IFS=,; echo "${open[*]}")
+
+  # missions en cours : spaces/<esp>/work/<id>/ (pas encore déplacées en done/)
+  local n_miss=0 d id esp age
+  for d in "$THEDEV"/spaces/*/work/*/; do
+    [ -d "$d" ] || continue
+    id=$(basename "$d"); esp=$(basename "$(dirname "$(dirname "$d")")")
+    age=$(human_age $(( now - $(stat -c %Y "$d" 2>/dev/null || echo "$now") )))
+    printf 'M\t%s\t%s\t%s\n' "$id" "$age" "$esp"
+    n_miss=$((n_miss+1))
+  done
+
+  # cruns : registre crun + vivacité (crun alive)
+  # chemin absolu : le probe tourne en ssh non-interactif → crun pas dans le PATH
+  local crun="$HOME/.local/bin/crun" n_alive=0 n_dead=0 name mark
+  if [ -f "$HOME/.cache/claude-agents" ]; then
+    while IFS=$'\t' read -r name _; do
+      [ -n "$name" ] || continue
+      if "$crun" alive "$name" 2>/dev/null; then mark="●"; n_alive=$((n_alive+1)); else mark="○"; n_dead=$((n_dead+1)); fi
+      printf 'C\t%s\t%s\n' "$mark" "$name"
+    done < "$HOME/.cache/claude-agents"
+  fi
+
+  printf 'S\t%s\t%s\t%s\t%s\n' "$open_csv" "$n_miss" "$n_alive" "$n_dead"
+}
+
+# ── AGRÉGATEUR : formate le board à partir des lignes de probe ────────────────
+# $1 = nom machine, $2 = fichier sortie probe (vide/absent = injoignable)
+render_machine() {
+  local machine="$1" pf="$2" verbose="$3"
+  if [ ! -s "$pf" ]; then
+    printf '%-9s ✗ injoignable\n' "$machine"; return
+  fi
+  local S; S=$(grep '^S' "$pf" | head -1)
+  local open n_miss n_alive n_dead
+  open=$(printf '%s' "$S" | cut -f2); n_miss=$(printf '%s' "$S" | cut -f3)
+  n_alive=$(printf '%s' "$S" | cut -f4); n_dead=$(printf '%s' "$S" | cut -f5)
+
+  # repos total → une seule ligne sobre
+  if [ "$open" = "-" ] && [ "$n_miss" = "0" ] && [ "$n_alive" = "0" ] && [ "$n_dead" = "0" ]; then
+    printf '%-9s idle\n' "$machine"; return
+  fi
+  printf '%-9s esp:%-14s miss:%s  crun:●%s ○%s\n' "$machine" "$open" "$n_miss" "$n_alive" "$n_dead"
+
+  # détails toujours utiles : missions en cours + cruns MORTS (= un truc a cassé)
+  local id age esp m mk nm
+  while IFS=$'\t' read -r _ id age esp; do
+    [ -n "$id" ] && printf '            ↳ %s  (%s, %s)\n' "$id" "$esp" "$age"
+  done < <(grep '^M' "$pf")
+  while IFS=$'\t' read -r _ mk nm; do
+    [ "$mk" = "○" ] && printf '            ↳ ○ %s (mort)\n' "$nm"
+  done < <(grep '^C' "$pf")
+  # noms des cruns vivants : seulement en -v (sinon on pollue)
+  if [ "$verbose" = "1" ]; then
+    while IFS=$'\t' read -r _ mk nm; do
+      [ "$mk" = "●" ] && printf '            ↳ ● %s\n' "$nm"
+    done < <(grep '^C' "$pf")
+  fi
+}
+
+cmd_board() {
+  local verbose=0; [ "${1:-}" = "-v" ] && verbose=1
+  local machines=() m
+  # local d'abord
+  machines+=("$selfname")
+  if [ -f "$MACHINES_FILE" ]; then
+    while read -r m; do
+      m="${m%%#*}"; m=$(printf '%s' "$m" | tr -d '[:space:]')
+      [ -n "$m" ] || continue
+      [ "$m" = "$selfname" ] && continue   # ne pas re-ssh soi-même
+      machines+=("$m")
+    done < "$MACHINES_FILE"
+  fi
+
+  # fan-out parallèle (sondes indépendantes) → 1 fichier tmp par machine
+  local tmpd; tmpd=$(mktemp -d)
+  for m in "${machines[@]}"; do
+    if [ "$m" = "$selfname" ]; then
+      cmd_probe > "$tmpd/$m" 2>/dev/null &
+    else
+      # chemin absolu : ssh non-interactif n'a pas forcément ~/.local/bin au PATH
+      timeout 12 ssh -o ConnectTimeout=5 -o BatchMode=yes "$m" "\$HOME/.local/bin/$me __probe" > "$tmpd/$m" 2>/dev/null &
+    fi
+  done
+  wait
+
+  # rendu dans l'ordre de la liste
+  for m in "${machines[@]}"; do
+    render_machine "$m" "$tmpd/$m" "$verbose"
+  done
+  rm -rf "$tmpd"
+}
+
+case "${1:-}" in
+  __probe) cmd_probe ;;
+  -v)      cmd_board -v ;;
+  "")      cmd_board ;;
+  -h|--help) printf 'usage: %s [-v]\n  board cross-machine compact (defaut)\n  -v : + noms des cruns vivants\n' "$me" ;;
+  *)       printf 'usage: %s [-v]\n' "$me"; exit 1 ;;
+esac

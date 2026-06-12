@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# @thedev registry registre des Claude ouverts (resume + noms de pane persistants)
+# dev-claude-reg — registre des Claude d'un espace de dev, pour les retrouver
+# après avoir quitté (Ctrl+Q→fermer OU /exit) et les relancer via --resume avec
+# leur nom de pane persistant.
+#
+# Problème résolu : sur un quit, Claude intercepte le signal et déclenche
+# SessionEnd (reason "other") pour TOUS les Claude — même reason qu'un /exit
+# volontaire. On ne peut donc pas « supprimer sur SessionEnd » (ça effacerait
+# tout avant la relance). À la place on HORODATE la fin (ended), sans supprimer,
+# et à la relance on restaure la « cohorte du quit » : les asides dont la fin
+# tombe dans la même rafale que la fin la plus récente du dossier (≤ WINDOW),
+# ou qui n'ont jamais reçu de SessionEnd (ended=0, tués net). Un aside fermé
+# exprès bien avant le quit a un `ended` plus ancien → il n'est PAS restauré.
+#
+# Fichier TSV (~/.cache/dev-claudes), une ligne par Claude :
+#   id  cwd_realpath  role(main|aside)  nom_pane  session_zellij  started  ended  rc
+#   (ended = 0 tant que le Claude est ouvert ; sinon timestamp de SessionEnd)
+#   (rc = 1 si lancé en remote control — posé via CLAUDE_PANE_RC ; absent/0 sinon)
+#
+# Sous-commandes :
+#   upsert <id> <cwd> <role> <zsession> <nom_defaut>  (réouvre: ended=0, started=now, préserve nom)
+#   setname <id> <nom>
+#   markend <id>                                       (SessionEnd: ended=now, ne supprime pas)
+#   get <id>                                            (ligne brute d'une session)
+#   list <cwd>                                          (lignes brutes du dossier)
+#   restore <cwd> [window_s]                            (asides de la cohorte du quit à respawn)
+#   gc [jours]                                          (purge les lignes finies/ouvertes > N jours)
+
+REG="$HOME/.cache/dev-claudes"
+LOCK="$REG.lock"
+WINDOW_DEFAULT=45      # s : étalement max d'une rafale de SessionEnd au quit
+cmd="${1:-}"; shift 2>/dev/null || true
+
+case "$cmd" in
+  upsert|setname|markend|gc)
+    mkdir -p "$(dirname "$REG")"
+    exec 9>"$LOCK"; flock 9 2>/dev/null || true
+    touch "$REG"
+    ;;
+esac
+
+now() { date +%s; }
+
+case "$cmd" in
+  upsert)
+    id="$1"; cwd="$2"; role="$3"; zs="$4"; def="$5"
+    [ -n "$id" ] || exit 1
+    name=$(awk -F'\t' -v id="$id" '$1==id{print $4; exit}' "$REG")   # préserve le nom
+    [ -n "$name" ] || name="$def"
+    awk -F'\t' -v id="$id" '$1!=id' "$REG" > "$REG.tmp"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$cwd" "$role" "$name" "$zs" "$(now)" "0" "${CLAUDE_PANE_RC:-0}" >> "$REG.tmp"
+    mv "$REG.tmp" "$REG"
+    printf '%s' "$name"
+    ;;
+  setname)
+    id="$1"; nm="$2"
+    [ -n "$id" ] && [ -f "$REG" ] || exit 0
+    # nm passe par ENVIRON (pas -v) : -v interprète les backslashes → un label
+    # contenant `\t`/`\n` littéral corromprait le TSV.
+    NM="$nm" awk -F'\t' -v OFS='\t' -v id="$id" '$1==id{$4=ENVIRON["NM"]} {print}' "$REG" > "$REG.tmp" \
+      && mv "$REG.tmp" "$REG"
+    ;;
+  markend)
+    id="$1"
+    [ -n "$id" ] && [ -f "$REG" ] || exit 0
+    awk -F'\t' -v OFS='\t' -v id="$id" -v t="$(now)" '$1==id{$7=t} {print}' "$REG" > "$REG.tmp" \
+      && mv "$REG.tmp" "$REG"
+    ;;
+  get)
+    id="$1"
+    [ -n "$id" ] && [ -f "$REG" ] || exit 0
+    awk -F'\t' -v id="$id" '$1==id{print; exit}' "$REG"
+    ;;
+  list)
+    cwd="$1"
+    [ -f "$REG" ] || exit 0
+    awk -F'\t' -v c="$cwd" '$2==c{print}' "$REG"
+    ;;
+  restore)
+    cwd="$1"; win="${2:-$WINDOW_DEFAULT}"
+    [ -f "$REG" ] || exit 0
+    # asides de la cohorte du quit : ended==0 (tué net) OU ended dans la rafale
+    # de la fin la plus récente du dossier (ref = max ended).
+    # Borne anti-zombie sur ended==0 : un aside mort SANS SessionEnd (crash,
+    # kill-session, extinction) garde ended=0 pour toujours → sans borne il
+    # serait respawné à CHAQUE relance jusqu'au gc (14 j). On n'accepte ended==0
+    # que si started est récent (MAXAGE) — started est rafraîchi par upsert à
+    # chaque reprise, donc un aside légitime tué net est toujours dedans.
+    awk -F'\t' -v c="$cwd" -v w="$win" -v now="$(now)" -v maxage=172800 '
+      $2==c { rows[NR]=$0; if ($7+0 > ref) ref=$7+0 }
+      END {
+        for (i=1; i<=NR; i++) if (i in rows) {
+          n=split(rows[i], a, "\t")
+          if (a[3]=="aside" && ((a[7]+0==0 && a[6]+0 >= now-maxage) || a[7]+0 >= ref-w)) print rows[i]
+        }
+      }' "$REG"
+    ;;
+  gc)
+    days="${1:-30}"
+    [ -f "$REG" ] || exit 0
+    cutoff=$(( $(now) - days * 86400 ))
+    # purge: fini il y a longtemps, OU ouvert mais demarré il y a longtemps (stale)
+    awk -F'\t' -v cut="$cutoff" '($7+0>0 && $7+0>=cut) || ($7+0==0 && $6+0>=cut)' "$REG" > "$REG.tmp" \
+      && mv "$REG.tmp" "$REG"
+    ;;
+  *)
+    echo "usage: dev-claude-reg upsert|setname|markend|list|restore|gc …" >&2
+    exit 1
+    ;;
+esac

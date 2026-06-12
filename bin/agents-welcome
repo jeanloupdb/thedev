@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# @thedev session pane d'accueil de la sandbox (badge VPS)
+# agents-welcome — pane d'accueil pour la page `sandbox`.
+# Affiche un message statique et reste en bash interactif (le pane survit).
+# Quand crun lance un vrai agent, il pourrait fermer ce pane, mais simplest :
+# il reste, juste comme un panneau d'info.
+
+# Sur un serveur distant : le titre du pane devient le marqueur VPS rouge
+# (🔴 <label>) au lieu de « welcome » — le 🔴 porte la couleur, zellij ne
+# colore pas le texte des titres de pane. No-op en local.
+if [ -f "$HOME/.config/dev-vps" ] && [ -n "${ZELLIJ_PANE_ID:-}" ]; then
+  vps_label="🔴 $(cat "$HOME/.config/dev-vps")"
+  zellij action rename-pane -p "$ZELLIJ_PANE_ID" "$vps_label" 2>/dev/null
+  # re-pose différée : un rename au spawn du layout peut être avalé (storm)
+  ( sleep 3; zellij action rename-pane -p "$ZELLIJ_PANE_ID" "$vps_label" 2>/dev/null ) &
+fi
+
+cat <<'EOF'
+
+  ╭───────────────────────────────────────────────────────╮
+  │                                                       │
+  │   Sandbox de Claude                                   │
+  │                                                       │
+  │   Cet espace accueille les processes lancés par       │
+  │   Claude (serveurs, watchers, tests, sous-claudes,    │
+  │   …) via la commande `crun`.                          │
+  │                                                       │
+  │   Actuellement : vide.                                │
+  │                                                       │
+  │   Commandes utiles :                                  │
+  │     crun list                  # voir ce qui tourne   │
+  │     crun kill <name>           # arrêter un agent     │
+  │     crun cleanup               # fermer les morts     │
+  │                                                       │
+  │   Ce pane peut accueillir des commandes shell         │
+  │   normales si besoin.                                 │
+  │                                                       │
+  ╰───────────────────────────────────────────────────────╯
+
+EOF
+
+# Keep the pane alive with a normal interactive shell
+tmprc=$(mktemp)
+cat > "$tmprc" <<EOF
+[ -f ~/.bashrc ] && . ~/.bashrc
+PS1='\[\033[1;35m\][sandbox]\[\033[0m\] \W\$ '
+rm -f "$tmprc"
+EOF
+
+exec bash --rcfile "$tmprc"

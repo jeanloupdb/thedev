@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# @thedev session pane nvim de la code page (badge VPS)
+# Same as claude-pane but for nvim. Preloads `nvim <args>` in the fallback
+# shell's history so ↑ relaunches the editor.
+
+# Sur un serveur distant : le titre du pane devient le marqueur VPS rouge
+# (🔴 <label>) au lieu de « editor » — le 🔴 porte la couleur, zellij ne
+# colore pas le texte des titres de pane. No-op en local.
+# Re-pose différée : au spawn du layout tous les panes démarrent en même temps
+# et un rename trop précoce peut être avalé (même storm que le sleep 2 de
+# claude-pane) → on le rejoue une fois la poussière retombée.
+if [ -f "$HOME/.config/dev-vps" ] && [ -n "${ZELLIJ_PANE_ID:-}" ]; then
+  vps_label="🔴 $(cat "$HOME/.config/dev-vps")"
+  zellij action rename-pane -p "$ZELLIJ_PANE_ID" "$vps_label" 2>/dev/null
+  ( sleep 3; zellij action rename-pane -p "$ZELLIJ_PANE_ID" "$vps_label" 2>/dev/null ) &
+fi
+
+nvim "$@"
+
+CMD="nvim $*"
+tmprc=$(mktemp)
+cat > "$tmprc" <<EOF
+[ -f ~/.bashrc ] && . ~/.bashrc
+history -s "$CMD"
+rm -f "$tmprc"
+EOF
+
+exec bash --rcfile "$tmprc"

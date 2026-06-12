@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# @thedev session ouvre un Claude secondaire empile (aside) sans toucher la session
+# claude-aside — ouvre un Claude SUPPLÉMENTAIRE (numéroté : claude 2, claude 3…)
+# dans la stack du tab courant, sans toucher au Claude principal ni à sa session
+# (pas de `dev`, donc pas d'écrasement).
+#
+# À lancer depuis le pane `shell` :
+#   aside           # nouveau "claude N" empilé (arrière-plan ; plein écran au focus)
+#   aside -f        # version flottante (overlay) au lieu de la stack
+#   aside <dir>     # dans un autre dossier
+#
+# Pour FERMER un Claude secondaire : tape simplement /exit dedans → le pane se
+# ferme tout seul (close-on-exit). Aucun raccourci à retenir.
+#
+# Session NEUVE (CLAUDE_RESUME_ID forcé vide). Le nouveau pane est inséré dans la
+# stack et remonté au-dessus de shell/git (best-effort : zellij CLI ne permet pas
+# un placement exact garanti — ajuste MOVE_UP si l'ordre n'est pas bon).
+
+[ -n "${ZELLIJ:-}" ] || { echo "claude-aside : pas dans une session zellij." >&2; exit 1; }
+
+float=""
+dir="$(pwd -P)"
+resume=""        # --resume <id> : restaure un aside qui était ouvert (sinon session neuve)
+setname=""       # --name <nom>  : nom de pane imposé (restauration du « ◆ <sujet> »)
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -f|--floating) float="--floating" ;;
+    --resume)      resume="$2"; shift ;;
+    --name)        setname="$2"; shift ;;
+    *) [ -d "$1" ] && dir="$(cd "$1" && pwd -P)" ;;
+  esac
+  shift
+done
+
+if [ -n "$setname" ]; then
+  name="$setname"
+else
+  # Numéro : compte les panes déjà nommés "claude…" (le principal = "claude").
+  count=$(zellij action dump-layout 2>/dev/null | grep -cE 'name="claude')
+  [ "$count" -lt 1 ] 2>/dev/null && count=1
+  name="claude $((count + 1))"
+  # Sur un VPS distant : même repère que le Claude principal (« claude N [indice] »).
+  [ -f "$HOME/.config/dev-vps" ] && name="$name [$(cat "$HOME/.config/dev-vps")]"
+fi
+
+# CLAUDE_PANE_ONCE=1 + --close-on-exit : pas de keep-alive → le pane se ferme
+# tout seul quand tu quittes Claude (/exit). Rien à mémoriser pour fermer.
+# --resume <id> restaure la conversation d'un aside ouvert avant un « quitter ».
+# CLAUDE_PANE_NAME = nom de ce pane, transmis au hook SessionStart pour qu'il
+# l'enregistre comme défaut (sinon il écraserait « claude N » par « claude »).
+# printf %q : le nom vient du registre (« ◆ <sujet> » libre) et est réinjecté
+# dans un `bash -lc` — sans quoting strict, une apostrophe casse le respawn
+# (et un nom forgé pourrait injecter du shell).
+q_name=$(printf '%q' "$name")
+q_resume=$(printf '%q' "$resume")
+if [ -n "$resume" ]; then
+  WRAP="CLAUDE_PANE_NAME=$q_name CLAUDE_RESUME_ID=$q_resume CLAUDE_PANE_ONCE=1 exec claude-pane"
+else
+  WRAP="unset CLAUDE_RESUME_ID; CLAUDE_PANE_NAME=$q_name CLAUDE_PANE_ONCE=1 exec claude-pane"
+fi
+
+if [ -n "$float" ]; then
+  zellij run --floating --close-on-exit --name "$name" --cwd "$dir" -- bash -lc "$WRAP"
+  exit 0
+fi
+
+# S'empile dans la stack du pane focus (au-dessus de la barre ＋, qui est un pane
+# fixe à part). La barre étant structurellement sous la stack, le ＋ reste
+# toujours en dessous de tous les claudes — pas besoin de repositionner.
+zellij run --stacked --close-on-exit --name "$name" --cwd "$dir" -- bash -lc "$WRAP"

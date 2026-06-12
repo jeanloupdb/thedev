@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# @thedev infra heartbeat autonome (DORMANT, coupe 2026-06 pour cout)
+# heartbeat-run — battement de cœur proactif du serveur (inspiré d'OpenClaw).
+#
+# Un timer systemd --user lance ce script périodiquement. Il exécute un Claude
+# headless qui lit ~/HEARTBEAT.md (checklist : checks récurrents, inbox, rappels),
+# fait ce qui est dû, journalise, et n'émet « NOTIFY: <msg> » QUE si quelque
+# chose mérite l'attention de l'utilisateur → le script l'envoie sur Telegram.
+#
+#   heartbeat-run                   # un battement (défaut)
+#   heartbeat-run install [30min]   # crée + active le timer systemd --user
+#   heartbeat-run status            # état timer + dernier journal
+#   heartbeat-run off               # désactive le timer
+#
+# Config : ~/.config/heartbeat/heartbeat.env →
+#   TELEGRAM_BOT_TOKEN=…   TELEGRAM_CHAT_ID=…   (notification ; optionnel)
+#   HB_MODEL=haiku         (modèle du battement ; léger par défaut)
+# Données : ~/HEARTBEAT.md (checklist, par-machine) ;
+#           ~/.cache/heartbeat/{journal.md,last-run.log}.
+# Léger par design : fichiers markdown + cron + un claude -p. Pas de daemon.
+
+set -u
+CFG="$HOME/.config/heartbeat/heartbeat.env"
+HB_FILE="$HOME/HEARTBEAT.md"
+CACHE="$HOME/.cache/heartbeat"
+UNIT_DIR="$HOME/.config/systemd/user"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export PATH="$HOME/.local/bin:$PATH"
+
+[ -f "$CFG" ] && . "$CFG"
+HB_MODEL="${HB_MODEL:-haiku}"
+mkdir -p "$CACHE"
+
+die() { printf '✗ %s\n' "$*" >&2; exit 1; }
+
+notify() { # notify <texte> — best-effort, silencieux si pas de config telegram
+  [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_CHAT_ID:-}" ] || return 0
+  curl -sS -m 10 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+    --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+    --data-urlencode "text=🫀 jlax — $*" >/dev/null 2>&1
+}
+
+cmd_beat() {
+  [ -s "$HB_FILE" ] || exit 0          # pas de checklist → rien à faire
+  command -v claude >/dev/null || die "claude CLI introuvable"
+
+  # anti-chevauchement (battement précédent encore en cours)
+  exec 9>"$CACHE/.lock"
+  flock -n 9 || exit 0
+
+  MISSION="Tu es le HEARTBEAT de ce serveur (exécution automatique périodique, personne ne lit ta sortie en direct).
+1. Lis ~/HEARTBEAT.md.
+2. Fais UNIQUEMENT ce qui y est listé et dû maintenant (checks récurrents ; tâches de la section Inbox ; rappels dont la date est passée).
+3. Mets à jour ~/HEARTBEAT.md : retire/coche les tâches ponctuelles et rappels traités. NE MODIFIE PAS les checks récurrents.
+4. Ajoute UNE ligne au journal ~/.cache/heartbeat/journal.md : « - $(date -Iminutes) : <résumé très bref> ».
+5. Si — et seulement si — quelque chose mérite l'attention de l'utilisateur (anomalie détectée, action corrective faite, rappel échu, tâche d'inbox terminée), termine ta réponse par une ou plusieurs lignes commençant exactement par « NOTIFY: » suivies d'un message concis en français.
+Rien d'anormal et rien de dû → ne notifie pas. Ne lance aucune commande longue (>1 min). Ne touche à rien hors de ce que la checklist demande."
+
+  # Sous systemd --user, le manager peut avoir démarré AVANT un ajout de groupe
+  # (ex. docker) → ses services n'ont pas le groupe alors que l'utilisateur l'a.
+  # Dans ce cas on relance via `sg docker` (prend le groupe depuis /etc/group)
+  # pour que l'agent puisse parler au daemon docker. No-op ailleurs.
+  export HB_MISSION="$MISSION"
+  if ! id -nG | grep -qxw docker && getent group docker | grep -qw "$USER"; then
+    out=$(sg docker -c 'timeout 600 claude -p "$HB_MISSION" --model "'"$HB_MODEL"'" --dangerously-skip-permissions' 2>&1)
+  else
+    out=$(timeout 600 claude -p "$HB_MISSION" --model "$HB_MODEL" \
+            --dangerously-skip-permissions 2>&1)
+  fi
+  printf '%s\n' "$out" > "$CACHE/last-run.log"
+
+  # transport des notifications décidées par l'agent
+  printf '%s\n' "$out" | grep -E '^NOTIFY:' | sed 's/^NOTIFY: *//' | while IFS= read -r msg; do
+    [ -n "$msg" ] && notify "$msg"
+  done
+}
+
+cmd_install() {
+  local every="${1:-30min}"
+  mkdir -p "$UNIT_DIR"
+  cat > "$UNIT_DIR/heartbeat.service" <<EOF
+[Unit]
+Description=Heartbeat proactif (claude headless lit HEARTBEAT.md)
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/bin/heartbeat-run
+EOF
+  cat > "$UNIT_DIR/heartbeat.timer" <<EOF
+[Unit]
+Description=Heartbeat toutes les $every
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=$every
+RandomizedDelaySec=120
+Persistent=true
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl --user daemon-reload
+  systemctl --user enable --now heartbeat.timer
+  printf '✓ heartbeat.timer actif (toutes les %s)\n' "$every"
+}
+
+cmd_status() {
+  systemctl --user list-timers heartbeat.timer --no-pager 2>/dev/null | head -3
+  echo "--- journal (5 derniers battements) ---"
+  tail -5 "$CACHE/journal.md" 2>/dev/null || echo "(pas encore de journal)"
+}
+
+case "${1:-}" in
+  install) shift; cmd_install "$@" ;;
+  status)  cmd_status ;;
+  off)     systemctl --user disable --now heartbeat.timer && echo "✓ timer coupé" ;;
+  ""|now)  cmd_beat ;;
+  *) die "usage: heartbeat-run [now|install [30min]|status|off]" ;;
+esac

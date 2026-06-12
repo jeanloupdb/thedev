@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# @thedev session lance le Claude principal d'un pane (surcouche prompt, remote-control, auto-open liens)
+# Keep the zellij pane alive even if claude exits. On exit, drop into a
+# shell with the launch command preloaded in history — press ↑ to relaunch.
+#
+# Launches claude with:
+#   --dangerously-skip-permissions : no permission prompts (zellij dev pane is trusted)
+#   --append-system-prompt          : tells claude it can drive the zellij session
+#   CLAUDE_CODE_NO_FLICKER=1        : fullscreen rendering — input pinned at bottom,
+#                                     stable scrollback, mouse support
+#
+# Session selection happens UPSTREAM in the `dev` launcher (bash function),
+# which exports CLAUDE_RESUME_ID when resuming a chosen conversation. Here we
+# just honor it — no picker, to avoid doubling the selection.
+
+# Claude Code pose un titre de terminal (OSC) résumant la conversation. Dans un
+# pane zellij ça « fuit » dans le cadre (ex. « My focus and: ») à côté du nom du
+# pane → on le désactive (le nom du pane est géré par rename-pane/pane-name).
+export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
+
+# Delay startup to avoid I/O storm when zellij spawns all panes at once.
+# Les Claude secondaires (aside) sont lancés seuls à la demande → pas de storm,
+# ouverture directe.
+[ -z "${CLAUDE_PANE_ONCE:-}" ] && sleep 2
+
+# Repo thedev résolu depuis l'emplacement RÉEL de ce script (relocatable : marche
+# quel que soit l'endroit où thedev est cloné). $0 peut être un nom nu (exec
+# claude-pane) → on le résout via PATH avant readlink.
+_self="$0"; case "$_self" in */*) ;; *) _self="$(command -v -- "$_self")" ;; esac
+THEDEV_ROOT="$(cd "$(dirname "$(readlink -f -- "$_self")")/.." && pwd)"
+ZELLIJ_PROMPT_FILE="$THEDEV_ROOT/claude/zellij-pane-prompt.md"
+append=""
+[ -s "$ZELLIJ_PROMPT_FILE" ] && append="$(cat "$ZELLIJ_PROMPT_FILE")"
+
+# NB : l'identité de la machine (qui/où, serveur partagé, périmètre, pièges) n'est
+# PAS injectée ici en surcouche — elle vit nativement dans ~/.claude/CLAUDE.md du
+# serveur, que TOUTE session Claude lit (dev pane, heartbeat, gateway, claude -p…).
+# Voir claude/vps-context/<machine>.md (symlinké vers ~/.claude/CLAUDE.md).
+
+prompt_args=()
+[ -n "$append" ] && prompt_args=(--append-system-prompt "$append")
+
+# Resume the conversation picked in `dev`, if any.
+resume_args=()
+if [ -n "${CLAUDE_RESUME_ID:-}" ]; then
+  resume_args=(--resume "$CLAUDE_RESUME_ID")
+fi
+
+# Sur un VPS distant : ajoute le label au titre du pane (« claude [indice] »)
+# pour voir d'un coup d'œil qu'on n'est pas en local. rename-pane fixe le nom →
+# claude ne peut pas l'écraser via son titre OSC. (Les Claude secondaires sont
+# nommés par claude-aside, pas ici.)
+if [ -f "$HOME/.config/dev-vps" ] && [ -z "${CLAUDE_PANE_ONCE:-}" ] && [ -n "${ZELLIJ_PANE_ID:-}" ]; then
+  zellij action rename-pane -p "$ZELLIJ_PANE_ID" "claude [$(cat "$HOME/.config/dev-vps")]" 2>/dev/null
+fi
+
+# Restauration des Claude secondaires (asides) ouverts avant un « quitter » (kill).
+# Le launcher pose DEV_RESTORE=1 sur une reprise (pas sur une session NEUVE) ; on
+# relit le registre pour CE dossier et on respawn un aside --resume par claude
+# secondaire. Pane principal uniquement (pas en mode once), une seule fois.
+if [ "${DEV_RESTORE:-}" = "1" ] && [ -z "${CLAUDE_PANE_ONCE:-}" ] && command -v dev-claude-reg >/dev/null 2>&1; then
+  _real=$(realpath "$(pwd -P)" 2>/dev/null || pwd -P)
+  while IFS=$'\t' read -r _aid _acwd _arole _aname _azs _ast _aen; do
+    [ "$_arole" = "aside" ] && [ -n "$_aid" ] || continue
+    claude-aside --resume "$_aid" --name "$_aname" 2>/dev/null
+  done < <(dev-claude-reg restore "$_real" 2>/dev/null)
+fi
+unset DEV_RESTORE
+
+# Nom du pane transmis au hook SessionStart comme défaut (évite que le hook
+# écrase le nom). Pour un aside, claude-aside l'a déjà posé → on ne touche pas ;
+# pour le principal, c'est « claude » (ou « claude [vps] »).
+if [ -z "${CLAUDE_PANE_NAME:-}" ]; then
+  CLAUDE_PANE_NAME="claude"
+  [ -f "$HOME/.config/dev-vps" ] && CLAUDE_PANE_NAME="claude [$(cat "$HOME/.config/dev-vps")]"
+fi
+export CLAUDE_PANE_NAME
+
+# Sur un VPS distant : on démarre la session AVEC Remote Control activé, pour
+# pouvoir la piloter depuis claude.ai/code ou l'app mobile sans rien relancer.
+# Le nom exposé = le dossier de dev (l'hôte est ajouté par défaut en préfixe).
+# Pane principal seulement (pas les asides « once »). NB : il faut avoir appairé
+# l'appareil une fois (claude.ai/code ou app) pour que la session soit pilotable
+# — sinon la session interactive marche quand même, juste non exposée.
+rc_args=()
+# CLAUDE_PANE_RC : marqueur hérité par le hook SessionStart → dev-claude-reg, pour
+# que le registre sache si CE pane est RÉELLEMENT lancé en remote control (l'accueil
+# n'affiche « remote » que dans ce cas). 1 uniquement quand --remote-control est posé.
+export CLAUDE_PANE_RC=0
+if [ -f "$HOME/.config/dev-vps" ] && [ -z "${CLAUDE_PANE_ONCE:-}" ]; then
+  rc_args=(--remote-control "$(basename "$(pwd -P)")")
+  CLAUDE_PANE_RC=1
+fi
+
+# Sur VPS : auto-open des liens thedev — l'espace devient joignable par des missions
+# dès son démarrage (watcher dans la sandbox), sans avoir à taper `thedev-link open`.
+# Pane principal seulement. Délai pour laisser la session/sandbox se mettre en place.
+if [ -f "$HOME/.config/dev-vps" ] && [ -z "${CLAUDE_PANE_ONCE:-}" ] && command -v thedev-link >/dev/null 2>&1; then
+  ( sleep 6; thedev-link open >/dev/null 2>&1 ) &
+fi
+
+# Modèle imposé (ex. mission distante avec Model:) → --model. Vide = défaut de
+# la machine (réglage settings.json local).
+model_args=()
+[ -n "${CLAUDE_PANE_MODEL:-}" ] && model_args=(--model "$CLAUDE_PANE_MODEL")
+
+CLAUDE_CODE_NO_FLICKER=1 claude \
+  --dangerously-skip-permissions \
+  "${rc_args[@]}" \
+  "${model_args[@]}" \
+  "${prompt_args[@]}" \
+  "${resume_args[@]}" \
+  "$@"
+
+# Mode "once" (Claude secondaire via `aside`) : pas de keep-alive → le pane se
+# ferme dès que tu quittes Claude (/exit), combiné à `zellij run --close-on-exit`.
+[ -n "${CLAUDE_PANE_ONCE:-}" ] && exit 0
+
+CMD="CLAUDE_CODE_NO_FLICKER=1 claude --dangerously-skip-permissions $*"
+tmprc=$(mktemp)
+cat > "$tmprc" <<EOF
+[ -f ~/.bashrc ] && . ~/.bashrc
+history -s "$CMD"
+rm -f "$tmprc"
+EOF
+
+echo
+echo "[claude terminé — ↑ pour relancer]"
+exec bash --rcfile "$tmprc"

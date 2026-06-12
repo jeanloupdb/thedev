@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# @thedev expose expose un service local 127.0.0.1 en HTTPS public (Tailscale Funnel)
+# tsnode — expose un service local en HTTPS public via Tailscale Funnel,
+# avec UN nœud Tailscale dédié par service (archi « 1 nœud = 1 sous-domaine »,
+# chaque app à SA racine → pas de bricolage de sous-chemin qui casse les SPA).
+#
+#   tsnode <name> <port>     # crée/démarre le nœud <name> + funnel → port
+#                            # → https://<name>.<tailnet>.ts.net
+#   tsnode list              # nœuds gérés ici + leur funnel
+#   tsnode off <name>        # coupe le funnel (le nœud reste)
+#   tsnode rm <name>         # supprime nœud + service (logout + disable)
+#
+# 100% user-space (rootless, userspace-networking) : binaires ~/.local/bin,
+# state ~/.local/share/tailscale-<name>, service systemd --user (persistant via
+# linger). À la 1re création d'un nœud, tailscale affiche une URL de login à
+# ouvrir pour autoriser l'appareil dans le tailnet (1 fois par nœud).
+# Le nœud « principal » (statedir ~/.local/share/tailscale, hostname machine)
+# n'est pas géré par tsnode — il sert d'accès réseau général.
+
+set -u
+BIN="$HOME/.local/bin"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+
+die()  { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; exit 1; }
+ok()   { printf '\033[1;32m✓\033[0m %s\n' "$*"; }
+info() { printf '\033[1;34m▸\033[0m %s\n' "$*"; }
+
+[ -x "$BIN/tailscaled" ] || die "tailscaled absent de $BIN (voir mémoire tailscale-jlax-funnel / install)."
+
+sock_of()  { printf '%s' "$HOME/.local/share/tailscale-$1/tailscaled.sock"; }
+state_of() { printf '%s' "$HOME/.local/share/tailscale-$1"; }
+unit_of()  { printf 'tailscaled-%s.service' "$1"; }
+
+ts() { # ts <name> <args…> — CLI tailscale sur le socket du nœud <name>
+  local n="$1"; shift
+  "$BIN/tailscale" --socket="$(sock_of "$n")" "$@"
+}
+
+cmd_up() {
+  local name="${1:-}" port="${2:-}"
+  [ -n "$name" ] && [ -n "$port" ] || die "usage: tsnode <name> <port>"
+  case "$port" in (*[!0-9]*) die "port invalide : $port" ;; esac
+  local state; state=$(state_of "$name")
+  local unit;  unit=$(unit_of "$name")
+
+  if [ ! -f "$HOME/.config/systemd/user/$unit" ]; then
+    mkdir -p "$state" "$HOME/.config/systemd/user"
+    cat > "$HOME/.config/systemd/user/$unit" <<EOF
+[Unit]
+Description=tailscaled ($name, rootless)
+After=network-online.target
+Wants=network-online.target
+[Service]
+ExecStart=$BIN/tailscaled --tun=userspace-networking --statedir=$state --socket=$state/tailscaled.sock
+Restart=on-failure
+RestartSec=5
+[Install]
+WantedBy=default.target
+EOF
+    systemctl --user daemon-reload
+    info "service $unit créé"
+  fi
+  systemctl --user enable --now "$unit" >/dev/null 2>&1
+  ok "tailscaled ($name) actif"
+
+  # nœud déjà loggé ? sinon `up` affiche l'URL d'autorisation (interactif court)
+  if ! ts "$name" status >/dev/null 2>&1; then
+    info "autorisation du nœud requise — ouvre l'URL ci-dessous puis re-lance la même commande :"
+    timeout 25 "$BIN/tailscale" --socket="$(sock_of "$name")" up --hostname="$name" 2>&1 | grep -m1 -oE 'https://login\.tailscale\.com/[A-Za-z0-9/._-]+' || true
+    # up bloque jusqu'à l'auth : on retente le funnel quand même au cas où
+  fi
+
+  ts "$name" funnel --bg "$port" >/dev/null 2>&1 || die "funnel KO (nœud pas encore autorisé ? Funnel pas activé sur le tailnet ?)"
+  local dns; dns=$(ts "$name" status --json 2>/dev/null | grep -oE '"DNSName": *"[^"]*"' | head -1 | cut -d'"' -f4 | sed 's/\.$//')
+  ok "exposé : https://${dns:-$name.<tailnet>.ts.net}  →  127.0.0.1:$port"
+}
+
+cmd_list() {
+  local found=0
+  for d in "$HOME"/.local/share/tailscale-*; do
+    [ -d "$d" ] || continue
+    found=1
+    local n=${d##*/tailscale-}
+    local st; st=$(systemctl --user is-active "$(unit_of "$n")" 2>/dev/null)
+    printf '\033[1m%s\033[0m  (%s)\n' "$n" "$st"
+    ts "$n" funnel status 2>/dev/null | grep -E "https://|proxy" | sed 's/^/    /'
+  done
+  [ "$found" = 1 ] || echo "(aucun nœud tsnode — « tsnode <name> <port> » pour en créer un)"
+}
+
+cmd_off() {
+  local name="${1:-}"; [ -n "$name" ] || die "usage: tsnode off <name>"
+  ts "$name" funnel --https=443 off 2>/dev/null
+  ok "funnel coupé pour $name (nœud toujours up — « tsnode $name <port> » pour réexposer)"
+}
+
+cmd_rm() {
+  local name="${1:-}"; [ -n "$name" ] || die "usage: tsnode rm <name>"
+  ts "$name" logout 2>/dev/null
+  systemctl --user disable --now "$(unit_of "$name")" >/dev/null 2>&1
+  rm -f "$HOME/.config/systemd/user/$(unit_of "$name")"
+  systemctl --user daemon-reload
+  rm -rf "$(state_of "$name")"
+  ok "nœud $name supprimé (retire-le aussi de la console Tailscale si listé)"
+}
+
+case "${1:-}" in
+  list) cmd_list ;;
+  off)  shift; cmd_off "$@" ;;
+  rm)   shift; cmd_rm "$@" ;;
+  ""|-h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) cmd_up "$@" ;;
+esac

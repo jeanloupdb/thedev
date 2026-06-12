@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# @thedev session barre + pour ajouter un Claude aside a la stack
+# aside-button — barre "＋" fixe en bas de la colonne droite (toujours sous tous
+# les claudes). Tu y vas avec Alt+↓ ; Entrée ouvre un nouveau Claude qui rejoint
+# la stack au-dessus. La barre reste petite (pane à taille fixe, hors stack).
+
+g=$'\033[1;32m'; d=$'\033[2m'; r=$'\033[0m'
+while :; do
+  # 1 seule ligne : on réécrit en place (\r + efface jusqu'au bout), pas de \n
+  printf '\r\033[K %s＋ Nouveau Claude%s   %s[Entrée] ouvrir%s' "$g" "$r" "$d" "$r"
+  IFS= read -r line || { sleep 1; continue; }
+  case "$line" in
+    q|Q) : ;;
+    *)
+      # remonter dans la stack pour que le nouveau Claude s'y empile (pas dans la barre)
+      zellij action move-focus up 2>/dev/null
+      claude-aside
+      ;;
+  esac
+done
