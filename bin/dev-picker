@@ -59,17 +59,20 @@ def fetch_remote_claudes(host):
     si son sid a un marqueur frais dans ~/.cache/dev-claude-busy (posé par le
     hook sur UserPromptSubmit, retiré sur Stop). ControlMaster → re-fetch rapides
     pour le rafraîchissement live."""
-    sep, sep2 = "@@@BUSY@@@", "@@@RC@@@"
-    # 3 sections (sep/sep2) : registre · marqueurs busy · cwd des process claude
-    # RÉELLEMENT en remote control (leur argv contient --remote-control). Ce 3e bloc
-    # détecte le RC en LIVE → marche aussi pour les sessions déjà ouvertes, sans
-    # relancer (le champ 'rc' du registre, lui, ne couvre que les sessions récentes).
+    sep, sep2, sep3 = "@@@BUSY@@@", "@@@RC@@@", "@@@LIVE@@@"
+    # 4 sections : registre · marqueurs busy · cwd des process en remote-control
+    # (pour le flag « remote ») · cwd de TOUS les process claude VIVANTS. Ce 4e bloc
+    # est la VÉRITÉ TERRAIN du compte : un Claude mort n'a pas de process, donc fini
+    # les fantômes ended==0 (sessions tuées sans SessionEnd : kill, crash, reboot).
+    # pgrep -x claude ne voit que les process de l'utilisateur → OK même sous hidepid.
     remote = ("cat ~/.cache/dev-claudes 2>/dev/null; echo %s; "
               "find ~/.cache/dev-claude-busy -type f -mmin -30 -printf '%%f\\n' 2>/dev/null; "
               "echo %s; "
               "for p in $(pgrep -f remote-control 2>/dev/null); do readlink /proc/$p/cwd 2>/dev/null; done; "
+              "echo %s; "
+              "for p in $(pgrep -x claude 2>/dev/null); do readlink /proc/$p/cwd 2>/dev/null; done; "
               "true"   # exit 0 garanti si SSH a pu se connecter → returncode ≠0 ⟺ VRAI échec de connexion
-              ) % (sep, sep2)
+              ) % (sep, sep2, sep3)
     try:
         proc = subprocess.run(
             ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes",
@@ -93,9 +96,16 @@ def fetch_remote_claudes(host):
         return {"error": reason}
     out = proc.stdout
     reg, _, rest = out.partition(sep)
-    busy_raw, _, rc_raw = rest.partition(sep2)
+    busy_raw, _, rest2 = rest.partition(sep2)
+    rc_raw, _, live_raw = rest2.partition(sep3)
     busy = {x.strip() for x in busy_raw.splitlines() if x.strip()}
     rc_cwds = {x.strip().rstrip("/") for x in rc_raw.splitlines() if x.strip()}
+    # vérité terrain : nombre de process claude vivants par cwd
+    live_count = {}
+    for x in live_raw.splitlines():
+        c = x.strip().rstrip("/")
+        if c:
+            live_count[c] = live_count.get(c, 0) + 1
     groups, order = {}, []
     for line in reg.splitlines():
         p = line.split("\t")
@@ -108,14 +118,50 @@ def fetch_remote_claudes(host):
             groups[cwd] = g
             order.append(cwd)
         g["panes"].append({"name": p[3] or "(claude)", "role": p[2], "busy": p[0] in busy,
+                           "started": int(p[5]) if len(p) > 5 and p[5].strip().isdigit() else 0,
                            "rc": (len(p) > 7 and p[7].strip() == "1")})
-    for g in groups.values():
-        g["panes"].sort(key=lambda x: x["role"] != "main")   # main d'abord
+    sessions = []
+    for c in order:
+        g = groups[c]
+        n = live_count.get(c.rstrip("/"), 0)
+        if n <= 0:
+            continue   # aucun process claude vivant → espace mort (que des fantômes), on l'écarte
+        # garde les n entrées les plus RÉCENTES : les fantômes (ended==0 jamais nettoyés)
+        # sont forcément plus vieux que les sessions réellement vivantes.
+        g["panes"].sort(key=lambda x: x["started"], reverse=True)
+        g["panes"] = g["panes"][:n]
+        g["panes"].sort(key=lambda x: x["role"] != "main")   # main d'abord (affichage)
         g["busy"] = any(pn["busy"] for pn in g["panes"])
         # « remote » si un pane est marqué rc (registre) OU si un process claude en RC
         # tourne dans ce cwd (détection live → couvre les sessions déjà ouvertes).
-        g["remote"] = any(pn["rc"] for pn in g["panes"]) or g["cwd"].rstrip("/") in rc_cwds
-    return {"sessions": [groups[c] for c in order]}
+        g["remote"] = any(pn["rc"] for pn in g["panes"]) or c.rstrip("/") in rc_cwds
+        sessions.append(g)
+    return {"sessions": sessions}
+
+
+def fetch_autos(host):
+    """thedev-autos sur <host> ('local' = cette machine) → liste {state,name,next,last,machine}.
+    Une automatisation = un timer systemd --user thedev (cf. bin/thedev-autos). TSV en entrée."""
+    try:
+        if host == "local":
+            out = subprocess.run(["thedev-autos"], capture_output=True, text=True, timeout=8).stdout
+            label = "local"
+        else:
+            out = subprocess.run(
+                ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes",
+                 "-o", "ControlMaster=auto", "-o", "ControlPath=~/.ssh/dev-cm-%C",
+                 "-o", "ControlPersist=30s", host,
+                 'PATH="$HOME/.local/bin:$PATH" thedev-autos'],
+                capture_output=True, text=True, timeout=12).stdout
+            label = host
+    except Exception:
+        return []
+    autos = []
+    for line in out.splitlines():
+        p = line.split("\t")
+        if len(p) >= 4 and p[1]:
+            autos.append({"state": p[0], "name": p[1], "next": p[2], "last": p[3], "machine": label})
+    return autos
 
 
 # ----------------------------------------------------------------------------
@@ -174,13 +220,13 @@ def gather_infos(vps, update_available, head):
     rc = {"auth_required": "auth requise (à appairer)", "": "inactif",
           "ready": "prêt", "active": "actif"}.get(daemon.get("status", ""), daemon.get("status") or "inactif")
     info["État live"] = [
-        "sessions zellij : %d" % len(live_sessions()),
-        "Claude ouverts : %d%s" % (len(claudes), ("  (%d en cours)" % busy) if busy else ""),
-        "agents crun : %d" % len(agents),
+        "%d session(s)   ·   %d Claude%s   ·   %d crun" % (
+            len(live_sessions()), len(claudes), ("  (%d busy)" % busy) if busy else "", len(agents)),
         "remote control : %s%s" % (rc, ("  ·  %d exposée(s)" % len(workers)) if isinstance(workers, dict) and workers else ""),
     ]
 
     # --- Santé système ---
+    # Items « gauge » = (type, label, pct, détail) → barre visuelle dans draw_infos.
     health = []
     import shutil
     for mnt in ("/", "/data"):
@@ -188,8 +234,7 @@ def gather_infos(vps, update_available, head):
             continue
         try:
             du = shutil.disk_usage(mnt)
-            health.append("disque %s : %.0f Go libres / %.0f Go  (%.0f%% util.)"
-                          % (mnt, du.free / 1e9, du.total / 1e9, 100 * du.used / du.total))
+            health.append(("gauge", "disque %s" % mnt, 100 * du.used / du.total, "%.0f Go libres" % (du.free / 1e9)))
         except Exception:
             pass
     try:
@@ -199,14 +244,14 @@ def gather_infos(vps, update_available, head):
             mem[k] = int(v.split()[0]) if v.split() else 0
         tot, avail = mem.get("MemTotal", 0) / 1e6, mem.get("MemAvailable", 0) / 1e6
         if tot:
-            health.append("RAM : %.1f / %.1f Go util.  (%.0f%%)" % (tot - avail, tot, 100 * (tot - avail) / tot))
+            health.append(("gauge", "RAM", 100 * (tot - avail) / tot, "%.1f / %.1f Go" % (tot - avail, tot)))
     except Exception:
         pass
     try:
         la = _read_file("/proc/loadavg").split()[:3]
         up = float(_read_file("/proc/uptime").split()[0])
         d, h, m = int(up // 86400), int(up % 86400 // 3600), int(up % 3600 // 60)
-        health.append("charge : %s  ·  uptime : %s%dh%02d" % (" ".join(la), ("%dj " % d) if d else "", h, m))
+        health.append("charge %s   ·   up %s%dh%02d" % (" ".join(la), ("%dj " % d) if d else "", h, m))
     except Exception:
         pass
     info["Santé système"] = health
@@ -441,6 +486,9 @@ class Picker:
         self.rc_stop = threading.Event()   # arrête le polling à la fermeture du picker
         if self.rc_hosts:
             threading.Thread(target=self._rc_worker, daemon=True).start()
+        # Automatisations (timers thedev) : gather en fond pour le bouton « 🤖 (N) » + l'écran.
+        self.autos = None
+        threading.Thread(target=self._autos_worker, daemon=True).start()
         # Mise à jour de la config : la machine est-elle en retard sur le git d'où
         # vient sa config dev ? Si oui → bouton « mettre à jour » en tête des actions.
         self.update_available = False
@@ -483,6 +531,10 @@ class Picker:
         live = sorted(live_by_name.values(), key=lambda x: -x["mtime"])
         rest.sort(key=lambda x: -x["mtime"])
         return live, rest
+
+    def enter_autos(self):
+        self.mode = "autos"
+        threading.Thread(target=self._autos_worker, daemon=True).start()   # rafraîchit l'état
 
     def enter_infos(self):
         self.mode = "infos"
@@ -542,6 +594,18 @@ class Picker:
         for t in threads:
             t.start()
         self.rc_stop.wait()   # le worker attend l'arrêt ; les threads par hôte font le travail
+
+    def _autos_worker(self):
+        """Gather les automatisations (timers thedev) : local + chaque VPS. Une passe (les
+        timers ne changent pas en continu ; ré-appelé à l'ouverture de l'écran pour fraîcheur)."""
+        hosts = ["local"] if self.vps else ["local"] + list(self.rc_hosts)
+        res = []
+        for h in hosts:
+            if self.rc_stop.is_set():
+                return
+            res.extend(fetch_autos(h))
+        with self.rc_lock:
+            self.autos = res
 
     # --- construction des lignes affichées -------------------------------
     def left_rows(self):
@@ -641,6 +705,10 @@ class Picker:
                     rows.append({"kind": "rcgap"})   # simple ligne vide (remplace l'ancien titre)
                     rows.extend(rc_rows)
             # épinglé tout en bas du panneau (footer) : écran d'infos pratiques
+            with self.rc_lock:
+                na = None if self.autos is None else len(self.autos)
+            rows.append({"kind": "act", "id": "autos", "footer": True,
+                         "text": "automatisations" + ("" if na is None else " (%d)" % na)})
             rows.append({"kind": "act", "id": "infos", "text": "ⓘ infos", "footer": True})
             return rows
         rows = [
@@ -676,15 +744,16 @@ class Picker:
         except curses.error:
             pass
         TOP = 4                         # ligne 3 laissée vide (aération)
-        # Dernière ligne marquée "footer" → épinglée tout en bas du panneau
-        # (ex. bouton « infos »), juste au-dessus de la bordure. Le reste défile.
-        footer = rows[-1] if (rows and rows[-1].get("footer")) else None
-        body = rows[:-1] if footer else rows
-        foot_line = h - 2
-        inner = (h - TOP - 2) if footer else (h - TOP - 1)
+        # Lignes marquées "footer" : la SUITE finale → épinglées tout en bas, dans l'ordre
+        # (ex. autos puis infos), juste au-dessus de la bordure. Le reste défile.
+        nfoot = 0
+        while nfoot < len(rows) and rows[len(rows) - 1 - nfoot].get("footer"):
+            nfoot += 1
+        footers = rows[len(rows) - nfoot:] if nfoot else []
+        body = rows[:len(rows) - nfoot] if nfoot else rows
+        inner = (h - TOP - 1) - nfoot
         sels = self.selectable_idx(rows)          # indices dans `rows` complet
         cur_row = sels[sel_pos] if sels and 0 <= sel_pos < len(sels) else -1
-        footer_idx = len(rows) - 1 if footer else -1
 
         def paint(yy, row, is_sel):
             x = 2
@@ -715,8 +784,9 @@ class Picker:
         for i in range(off, min(len(body), off + inner)):
             paint(y, body[i], i == cur_row and focused)
             y += 1
-        if footer:                                # toujours sur la dernière ligne
-            paint(foot_line, footer, cur_row == footer_idx and focused)
+        base = len(rows) - nfoot                  # footers épinglés en bas, dans l'ordre
+        for k, frow in enumerate(footers):
+            paint((h - 1 - nfoot) + k, frow, cur_row == (base + k) and focused)
         win.noutrefresh()
         return off
 
@@ -813,6 +883,25 @@ class Picker:
                 except curses.error:
                     pass
             y[0] += 1
+        def seg_line(segs):                       # une ligne, plusieurs segments colorés
+            if 0 <= y[0] < H - 1:
+                x = 2
+                for text, attr in segs:
+                    if W - x - 1 <= 0:
+                        break
+                    try:
+                        self.scr.addnstr(y[0], x, text, W - x - 1, attr)
+                    except curses.error:
+                        pass
+                    x += len(text)
+            y[0] += 1
+        def gauge(label, pct, detail):            # barre visuelle, couleur selon le niveau
+            pct = max(0.0, min(100.0, float(pct)))
+            wbar = 18; fill = int(round(pct / 100 * wbar))
+            col = self.GREEN if pct < 70 else (self.YEL if pct < 88 else self.RED)
+            seg_line([("  %-11s " % label, curses.A_DIM),
+                      ("█" * fill, col), ("░" * (wbar - fill), curses.A_DIM),
+                      ("  %3.0f%%" % pct, col), ("   " + detail, curses.A_DIM)])
         if data is None:
             line("chargement…", curses.A_DIM)
         else:
@@ -822,16 +911,71 @@ class Picker:
                 if not rows or y[0] >= H - 2:
                     continue
                 line(sec, self.CYAN | curses.A_BOLD)
-                for ln in rows:
+                for it in rows:
                     if y[0] >= H - 1:
                         break
-                    line("  " + ln, curses.A_DIM)
+                    if isinstance(it, tuple) and it and it[0] == "gauge":
+                        gauge(it[1], it[2], it[3])
+                    else:
+                        line("  " + str(it), curses.A_DIM)
+                y[0] += 1
+        self.draw_status(H, W)
+        self.scr.noutrefresh()
+        curses.doupdate()
+
+    def draw_autos(self):
+        self.scr.erase()
+        H, W = self.scr.getmaxyx()
+        self.scr.addnstr(0, 2, "AUTOMATISATIONS", W - 4, self.CYAN | curses.A_BOLD)
+        hint = "Esc retour"
+        if W - 2 - len(hint) > 12:
+            self.scr.addnstr(0, W - 2 - len(hint), hint, len(hint), curses.A_DIM)
+        try:
+            self.scr.addnstr(1, 2, "─" * (W - 4), W - 4, curses.A_DIM)
+        except curses.error:
+            pass
+        with self.rc_lock:
+            autos = self.autos
+        y = [3]
+        def line(text, attr=0, col=2):
+            if 0 <= y[0] < H - 1 and W - col - 1 > 0:
+                try:
+                    self.scr.addnstr(y[0], col, text, W - col - 1, attr)
+                except curses.error:
+                    pass
+            y[0] += 1
+        if autos is None:
+            line("chargement…", curses.A_DIM)
+        elif not autos:
+            line("(aucune automatisation)", curses.A_DIM)
+            line("", 0)
+            line("Une automatisation = un timer systemd --user thedev (ex. la veille).", curses.A_DIM)
+        else:
+            bym = {}
+            for a in autos:
+                bym.setdefault(a["machine"], []).append(a)
+            for m in bym:
+                if y[0] >= H - 2:
+                    break
+                line(m, self.CYAN | curses.A_BOLD)
+                for a in bym[m]:
+                    if y[0] >= H - 1:
+                        break
+                    icon = {"running": "►", "active": "●", "inactive": "○"}.get(a["state"], "·")
+                    txt = "  %s %-15s %s" % (icon, a["name"], a["next"])
+                    if a["last"] and a["last"] != "—":
+                        txt += "  · dernier: " + a["last"]
+                    attr = self.GREEN if a["state"] in ("active", "running") else curses.A_DIM
+                    line(txt, attr)
                 y[0] += 1
         self.draw_status(H, W)
         self.scr.noutrefresh()
         curses.doupdate()
 
     def draw(self):
+        if self.mode == "autos":
+            self.draw_autos()
+            return
         if self.mode == "infos":
             self.draw_infos()
             return
@@ -852,7 +996,7 @@ class Picker:
 
     # --- navigation ------------------------------------------------------
     def clamp(self):
-        if self.mode == "infos":
+        if self.mode in ("infos", "autos"):
             return
         ln = len(self.selectable_idx(self.left_rows()))
         rn = len(self.selectable_idx(self.right_rows()))
@@ -935,6 +1079,9 @@ class Picker:
             self.decision = ("SERVER", it["host"], it["cwd"])
             return "quit"
         aid = it.get("id")
+        if aid == "autos":           # écran des automatisations (Esc pour revenir)
+            self.enter_autos()
+            return
         if aid == "infos":           # écran d'infos pratiques (Esc pour revenir)
             self.enter_infos()
             return
@@ -989,7 +1136,7 @@ class Picker:
             self.draw()
             # getch non bloquant tant qu'il y a qqch à rafraîchir (liste RC live,
             # check git en fond, ou écran infos en cours de chargement) ; sinon bloque.
-            poll = bool(self.rc_hosts) or self.git_checking or (self.mode == "infos" and self.infos_data is None)
+            poll = bool(self.rc_hosts) or self.git_checking or (self.mode == "infos" and self.infos_data is None) or (self.mode == "autos" and self.autos is None)
             self.scr.timeout(400 if poll else -1)
             try:
                 ch = self.scr.getch()
@@ -1018,7 +1165,7 @@ class Picker:
                 elif 32 <= ch < 127:
                     self.newname += chr(ch)
                 continue
-            if self.mode == "infos":                # écran infos : Esc revient
+            if self.mode in ("infos", "autos"):     # écran infos/autos : Esc revient
                 if ch == 27:
                     self.mode = "sessions"; self.focus = "left"
                     self.li = self.ri = 0; self.loff = 0
