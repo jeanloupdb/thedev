@@ -29,25 +29,35 @@ Terminal-natif, multi-machines, sur ton abonnement — **zéro port ouvert, zér
 
 </div>
 
-> **VSCode** _édite_ du code. **Claude Code** le _code pour toi_ — sur une machine.
-> **OpenClaw / Hermes** te donnent un _assistant dans ta messagerie_ — au prix d'une clé API et d'un service exposé sur le net.
-> **thedev fait coder l'IA à travers _toutes_ tes machines, depuis le terminal — sans rien exposer, sans API à payer.**
+> **VSCode** édite. **Claude Code** développe à ta place — sur une seule machine. **OpenClaw / Hermes** branchent un assistant dans ta messagerie, contre une clé API et un service exposé sur le net.
+>
+> **thedev réunit toutes tes machines en un atelier que l'IA pilote depuis le terminal — sans rien exposer, sans API à payer.**
 
-## Le combo que personne d'autre n'a
+## thedev face au reste
+
+Légende : ✅ dispo · 🔜 sur la roadmap · ⚠️ oui, mais (coût ou risque) · ❌ non
 
 | | **thedev** | VSCode +Copilot | Claude Code | OpenClaw / Hermes |
 |---|:--:|:--:|:--:|:--:|
-| Interface | terminal (zellij) | GUI Electron | terminal | chat / messagerie |
-| L'IA code | Claude Code natif | extension | natif | via API |
-| **Déléguer entre machines** | ✅ missions SSH | ❌ | ❌ 1 machine | ❌ 1 hôte |
-| **Process longs isolés** | ✅ `crun` / sandbox | onglets | ❌ | ❌ |
-| **Exposer un service en public** | ✅ 0 port (Tailscale) | ❌ | ❌ | gateway exposé ⚠️ |
-| Coût | abonnement | abo + API | abonnement | clés API 20–500 $/mo |
-| Empreinte | bash + zellij, lisible en une soirée | lourde | légère | gateway Node + CVE |
+| Terminal-natif, léger | ✅ | ❌ Electron | ✅ | ❌ chat |
+| L'IA développe à ta place | ✅ Claude natif | extension | ✅ | ⚠️ via API |
+| **Déléguer du travail entre machines** | ✅ missions SSH | ❌ | ❌ 1 machine | ❌ 1 hôte |
+| **Process longs isolés** | ✅ `crun` / sandbox | ❌ onglets | ❌ | ❌ |
+| **Exposer un service en public** | ✅ 1 commande, 0 port | ❌ | ❌ | ⚠️ gateway exposé |
+| Surface d'attaque | ✅ aucun port entrant | — | — | ❌ CVE, 42k exposés |
+| Coût | ✅ abonnement seul | ⚠️ abo + API | ✅ abonnement | ❌ 20–500 $/mois d'API |
+| Lisible/auditable en une soirée | ✅ bash + fichiers | ❌ | ⚠️ | ❌ gateway Node |
+| **🔜 _Autonomie — en construction_** | | | | |
+| Déclencheurs programmés (cron) | 🔜 | ❌ | ⚠️ cloud payant | ✅ |
+| Notifie quand c'est fini / qqch casse | 🔜 | ❌ | ⚠️ | ✅ |
+| Dicter une mission depuis le téléphone | 🔜 | ❌ | ⚠️ pilotage seul | ✅ |
+| Mémoire qui apprend entre missions | 🔜 | ❌ | ✅ | ✅ |
+| Parallélisme + relecture avant merge | 🔜 worktree | ❌ | ❌ | ❌ |
+| Reprise auto après un reboot | 🔜 systemd | — | ❌ | ⚠️ daemon |
 
-Pas un nouvel éditeur, pas un nouveau modèle : **la couche qui transforme Claude Code en tissu de dev multi-machines.**
+> Les 🔜 arrivent **sur l'abonnement et à 0 port** : la puissance d'un OpenClaw, sans sa facture API ni sa surface d'attaque. Pas un nouvel éditeur, pas un nouveau modèle — **la couche qui transforme Claude Code en tissu de dev multi-machines.**
 
-## Comment c'est foutu
+## Anatomie d'un espace
 
 ```mermaid
 flowchart LR
@@ -56,11 +66,11 @@ flowchart LR
   E --> MS["my space<br/>tes shells"]
 ```
 
-Une **machine** porte des **espaces** (1 projet chacun) ; chaque espace a 3 **pages**, chaque page des **panes**. Un **crun** = un process long dans la sandbox. Vocabulaire complet : [`NAMING.md`](NAMING.md).
+Une **machine** porte des **espaces** (1 projet chacun) ; chaque espace a 3 **pages**, chaque page des **panes**. Un **crun** = un process long lancé dans la sandbox (serveur, watcher, sous-agent). Le vocabulaire complet tient dans [`NAMING.md`](NAMING.md).
 
 ## Entre machines
 
-Les espaces s'échangent des **missions** (Claude interactif, sur l'abonnement — jamais `claude -p`/crédits), et un service local s'expose en HTTPS public via un VPS **sans ouvrir un seul port**.
+Un espace envoie une **mission** à un espace d'une autre machine (Claude **interactif** via SSH, donc sur l'abonnement — jamais `claude -p`/crédits) ; le résultat revient quand il est prêt, même si tu fermes ton laptop entre-temps. Et un service local devient une **URL HTTPS publique** via un VPS, **sans ouvrir un seul port**.
 
 ```mermaid
 flowchart LR
@@ -70,7 +80,7 @@ flowchart LR
 
 ## Installer
 
-**Avec l'IA** — installe le [CLI Claude](https://docs.claude.com/claude-code), clone, lance `claude`, et donne-lui :
+**Avec l'IA** — installe le [CLI Claude](https://docs.claude.com/claude-code), clone le repo, lance `claude` dedans, et donne-lui :
 
 > Installe thedev. Lis `README.md` et `MANIFEST.md`, vérifie les dépendances
 > (`./bin/thedev-manifest --check-deps`), installe celles qui manquent, lance
@@ -86,9 +96,8 @@ git clone https://github.com/jeanloupdb/thedev.git ~/thedev && cd ~/thedev
 
 Serveur : `./install.sh --vps=<label>`.
 
-## Le reste
+## Aller plus loin
 
 - **Toutes les commandes** : [`MANIFEST.md`](MANIFEST.md) (généré) ou `./bin/thedev-manifest`.
 - **Dépendances** : zellij, claude, nvim, python3, git, jq, fzf, inotify-tools.
 - **À toi** : `thedev-machines` (board cross-machine) — pars de `.example`, le vrai est gitignoré.
-</content>
