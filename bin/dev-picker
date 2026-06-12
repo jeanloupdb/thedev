@@ -160,7 +160,12 @@ def fetch_autos(host):
     for line in out.splitlines():
         p = line.split("\t")
         if len(p) >= 4 and p[1]:
-            autos.append({"state": p[0], "name": p[1], "next": p[2], "last": p[3], "machine": label})
+            autos.append({"state": p[0], "name": p[1], "next": p[2], "last": p[3],
+                          "espace": p[4] if len(p) > 4 else "",
+                          "cwd": p[5] if len(p) > 5 else "",
+                          "desc": p[6] if len(p) > 6 else "",
+                          "open": (p[7] == "1") if len(p) > 7 else False,
+                          "machine": label})
     return autos
 
 
@@ -486,8 +491,10 @@ class Picker:
         self.rc_stop = threading.Event()   # arrête le polling à la fermeture du picker
         if self.rc_hosts:
             threading.Thread(target=self._rc_worker, daemon=True).start()
-        # Automatisations (timers thedev) : gather en fond pour le bouton « 🤖 (N) » + l'écran.
+        # Automatisations (timers thedev) : gather en fond pour le bouton + l'écran dédié.
         self.autos = None
+        self.ai = 0                   # sélection dans l'écran automatisations
+        self._autos_flat = []         # automatisations sélectionnables (rempli par draw_autos)
         threading.Thread(target=self._autos_worker, daemon=True).start()
         # Mise à jour de la config : la machine est-elle en retard sur le git d'où
         # vient sa config dev ? Si oui → bouton « mettre à jour » en tête des actions.
@@ -534,6 +541,8 @@ class Picker:
 
     def enter_autos(self):
         self.mode = "autos"
+        self.ai = 0
+        self._autos_flat = []
         threading.Thread(target=self._autos_worker, daemon=True).start()   # rafraîchit l'état
 
     def enter_infos(self):
@@ -606,6 +615,30 @@ class Picker:
             res.extend(fetch_autos(h))
         with self.rc_lock:
             self.autos = res
+
+    def _reactivate_auto(self, a):
+        """État arrêté → actif : (re)démarre le timer systemd --user, local ou via ssh, puis
+        rafraîchit l'écran. Le timer reprend son planning ; il lui faudra un espace ouvert
+        (accès Claude) pour s'exécuter vraiment — c'est l'autre axe."""
+        unit = "%s.timer" % a["name"]
+        self.msg = "réactivation de %s…" % a["name"]
+        try:
+            if a["machine"] == "local":
+                r = subprocess.run(["systemctl", "--user", "start", unit],
+                                   capture_output=True, text=True, timeout=8)
+            else:
+                r = subprocess.run(
+                    ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes",
+                     "-o", "ControlPath=~/.ssh/dev-cm-%C", a["machine"],
+                     'XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user start ' + unit],
+                    capture_output=True, text=True, timeout=12)
+            self.msg = ("%s réactivée" % a["name"]) if r.returncode == 0 \
+                else ("échec : %s" % (r.stderr.strip().splitlines()[-1] if r.stderr.strip() else "?"))
+        except Exception as e:
+            self.msg = "échec réactivation %s : %s" % (a["name"], e)
+        with self.rc_lock:
+            self.autos = None
+        threading.Thread(target=self._autos_worker, daemon=True).start()
 
     # --- construction des lignes affichées -------------------------------
     def left_rows(self):
@@ -708,7 +741,7 @@ class Picker:
             with self.rc_lock:
                 na = None if self.autos is None else len(self.autos)
             rows.append({"kind": "act", "id": "autos", "footer": True,
-                         "text": "automatisations" + ("" if na is None else " (%d)" % na)})
+                         "text": "automatisation" + ("" if na is None else " [%d]" % na)})
             rows.append({"kind": "act", "id": "infos", "text": "ⓘ infos", "footer": True})
             return rows
         rows = [
@@ -790,6 +823,16 @@ class Picker:
         win.noutrefresh()
         return off
 
+    def _auto_count(self, machine, cwd):
+        """Nombre d'automatisations rattachées à (machine, cwd) — pour le badge magenta.
+        Matching par CWD (le dossier de l'espace) et non par nom : robuste même si le nom
+        de session diffère du basename du cwd."""
+        c = (cwd or "").rstrip("/")
+        if not c:
+            return 0
+        return sum(1 for a in (self.autos or [])
+                   if a.get("machine") == machine and (a.get("cwd") or "").rstrip("/") == c)
+
     def render_row(self, r, is_sel):
         """Retourne une liste de segments [(texte, attr), …]."""
         if r["kind"] == "header":
@@ -804,6 +847,9 @@ class Picker:
             if r.get("remote"):
                 segs += [("remote", curses.A_DIM), (".", 0)]
             segs += [(r["name"], 0), ("  (%d)" % r.get("nclaude", 0), curses.A_DIM)]
+            na = self._auto_count(r["host"], r.get("cwd", ""))
+            if na:
+                segs.append(("  [%d]" % na, self.MAG))
             return segs
         if r["kind"] == "input":
             return [("    ▸ " + r.get("text", "") + "▏", self.GREEN | curses.A_BOLD)]
@@ -814,6 +860,8 @@ class Picker:
         if r["kind"] == "act":
             if r.get("id") == "update_dev":   # mise à jour dispo : jaune, bien visible
                 return [(p + r["text"], self.YEL | curses.A_BOLD)]
+            if r.get("id") == "autos":        # automatisations : couleur dédiée (magenta)
+                return [(p + r["text"], self.MAG | curses.A_BOLD)]
             segs = [(p + r["text"], self.GREEN)]
             if r.get("err"):                  # serveur injoignable : croix + raison en gris
                 segs += [("  ✗ ", curses.A_DIM), (r["err"], curses.A_DIM)]
@@ -831,6 +879,9 @@ class Picker:
         if self.vps:                  # sur un VPS : ces sessions sont « remote » (préfixe gris)
             segs.append(("remote.", curses.A_DIM))
         segs.append((w["name"], (self.CYAN | curses.A_BOLD) if live else self.pcolor(w["name"])))
+        na = self._auto_count("local", w.get("cwd", ""))
+        if na:
+            segs.append(("  [%d]" % na, self.MAG))
         return segs
 
     def header_line(self):
@@ -865,10 +916,12 @@ class Picker:
     def draw_infos(self):
         self.scr.erase()
         H, W = self.scr.getmaxyx()
-        self.scr.addnstr(0, 2, "INFOS", W - 4, self.CYAN | curses.A_BOLD)
-        hint = "Esc retour"
-        if W - 2 - len(hint) > 12:
-            self.scr.addnstr(0, W - 2 - len(hint), hint, len(hint), curses.A_DIM)
+        back = " ‹ Retour (Esc) "
+        self.scr.addnstr(0, 2, back, W - 4, self.CYAN | curses.A_REVERSE | curses.A_BOLD)
+        tx = 2 + len(back) + 2
+        title = "INFOS"
+        if tx + len(title) < W - 2:
+            self.scr.addnstr(0, tx, title, W - tx - 1, self.CYAN | curses.A_BOLD)
         try:
             self.scr.addnstr(1, 2, "─" * (W - 4), W - 4, curses.A_DIM)
         except curses.error:
@@ -926,10 +979,12 @@ class Picker:
     def draw_autos(self):
         self.scr.erase()
         H, W = self.scr.getmaxyx()
-        self.scr.addnstr(0, 2, "AUTOMATISATIONS", W - 4, self.CYAN | curses.A_BOLD)
-        hint = "Esc retour"
-        if W - 2 - len(hint) > 12:
-            self.scr.addnstr(0, W - 2 - len(hint), hint, len(hint), curses.A_DIM)
+        back = " ‹ Retour (Esc) "
+        self.scr.addnstr(0, 2, back, W - 4, self.CYAN | curses.A_REVERSE | curses.A_BOLD)
+        tx = 2 + len(back) + 2
+        title = "AUTOMATISATIONS"
+        if tx + len(title) < W - 2:
+            self.scr.addnstr(0, tx, title, W - tx - 1, self.CYAN | curses.A_BOLD)
         try:
             self.scr.addnstr(1, 2, "─" * (W - 4), W - 4, curses.A_DIM)
         except curses.error:
@@ -944,30 +999,85 @@ class Picker:
                 except curses.error:
                     pass
             y[0] += 1
+        def seg_line(segs):
+            if 0 <= y[0] < H - 1:
+                x = 2
+                for text, attr in segs:
+                    if W - x - 1 <= 0:
+                        break
+                    try:
+                        self.scr.addnstr(y[0], x, text, W - x - 1, attr)
+                    except curses.error:
+                        pass
+                    x += len(text)
+            y[0] += 1
+        flat = []                         # automatisations sélectionnables, dans l'ordre affiché
         if autos is None:
             line("chargement…", curses.A_DIM)
         elif not autos:
             line("(aucune automatisation)", curses.A_DIM)
             line("", 0)
-            line("Une automatisation = un timer systemd --user thedev (ex. la veille).", curses.A_DIM)
+            line("Une automatisation = un timer systemd --user thedev (ex. la veille du matin)", curses.A_DIM)
+            line("qui dépose une mission dans un espace ouvert. Elle ne tourne que si cet", curses.A_DIM)
+            line("espace est ouvert/détaché.", curses.A_DIM)
         else:
+            if self.ai >= len([a for a in autos]):
+                self.ai = 0
             bym = {}
             for a in autos:
                 bym.setdefault(a["machine"], []).append(a)
             for m in bym:
-                if y[0] >= H - 2:
+                if y[0] >= H - 3:
                     break
                 line(m, self.CYAN | curses.A_BOLD)
                 for a in bym[m]:
-                    if y[0] >= H - 1:
+                    if y[0] >= H - 2:
                         break
-                    icon = {"running": "►", "active": "●", "inactive": "○"}.get(a["state"], "·")
-                    txt = "  %s %-15s %s" % (icon, a["name"], a["next"])
+                    idx = len(flat); flat.append(a)
+                    sel = (idx == self.ai)
+                    actif = a["state"] in ("active", "running")   # axe 1 : état
+                    acces = bool(a.get("open"))                    # axe 2 : attachement
+                    # icône/couleur : arrêté ○ rouge · actif+accès ●/► vert · actif sans accès ● jaune
+                    if not actif:
+                        icon, icol = "○", self.RED
+                    elif acces:
+                        icon, icol = ("►" if a["state"] == "running" else "●"), self.GREEN
+                    else:
+                        icon, icol = "●", self.YEL
+                    segs = [("  " + ("▸ " if sel else "  "), 0), (icon + " ", icol),
+                            (a["name"], self.MAG | curses.A_BOLD)]
+                    if a.get("desc"):
+                        segs.append(("   " + a["desc"], curses.A_DIM))
+                    seg_line(segs)
+                    if sel:
+                        try:
+                            self.scr.chgat(y[0] - 1, 2, W - 4, curses.A_REVERSE)
+                        except curses.error:
+                            pass
+                    # les 2 paramètres, explicites
+                    att_txt = ("accès Claude" if acces else "pas d'accès") if actif else "—"
+                    att_col = self.GREEN if (actif and acces) else (self.YEL if actif else curses.A_DIM)
+                    seg_line([("        état : ", curses.A_DIM),
+                              ("actif" if actif else "arrêté", self.GREEN if actif else self.RED),
+                              ("    attachement : ", curses.A_DIM), (att_txt, att_col)])
+                    det = "prochain %s" % a["next"]
                     if a["last"] and a["last"] != "—":
-                        txt += "  · dernier: " + a["last"]
-                    attr = self.GREEN if a["state"] in ("active", "running") else curses.A_DIM
-                    line(txt, attr)
+                        det += "   ·   dernier %s" % a["last"]
+                    if a["espace"]:
+                        det += "   ·   espace %s" % a["espace"]
+                    line("        " + det, curses.A_DIM)
+                    # action contextuelle (ce que fait ↵ sur cette auto)
+                    if not actif:
+                        seg_line([("        ↵ réactiver l'automatisation", self.CYAN | curses.A_BOLD)])
+                    elif not acces:
+                        cwd = a.get("cwd") or "?"
+                        seg_line([("        ▲ pas d'accès Claude — ", self.YEL),
+                                  ("relance un thedev dans %s sur %s (↵)" % (cwd, a["machine"]),
+                                   self.YEL | curses.A_BOLD)])
+                    else:
+                        line("        espace %s ouvert · ↵ rejoindre" % a["espace"], curses.A_DIM)
                 y[0] += 1
+        self._autos_flat = flat
         self.draw_status(H, W)
         self.scr.noutrefresh()
         curses.doupdate()
@@ -1165,7 +1275,29 @@ class Picker:
                 elif 32 <= ch < 127:
                     self.newname += chr(ch)
                 continue
-            if self.mode in ("infos", "autos"):     # écran infos/autos : Esc revient
+            if self.mode == "autos":                # écran automatisations : navigable
+                n = len(self._autos_flat)
+                if ch == 27:
+                    self.mode = "sessions"; self.focus = "left"
+                    self.li = self.ri = 0; self.loff = 0
+                elif ch == curses.KEY_UP and n:
+                    self.ai = (self.ai - 1) % n
+                elif ch == curses.KEY_DOWN and n:
+                    self.ai = (self.ai + 1) % n
+                elif ch in (curses.KEY_ENTER, 10, 13) and 0 <= self.ai < n:
+                    a = self._autos_flat[self.ai]
+                    if a["state"] not in ("active", "running"):   # arrêté → réactiver le timer
+                        self._reactivate_auto(a)
+                    else:                                         # actif → rejoindre/rattacher l'espace
+                        cwd = a.get("cwd")
+                        if not cwd:
+                            self.msg = "pas de cwd connu — ouvre un thedev manuellement"
+                        elif a["machine"] == "local":
+                            self.decision = ("NEW", cwd); return
+                        else:
+                            self.decision = ("SERVER", a["machine"], cwd); return
+                continue
+            if self.mode == "infos":                # écran infos : Esc revient
                 if ch == 27:
                     self.mode = "sessions"; self.focus = "left"
                     self.li = self.ri = 0; self.loff = 0
