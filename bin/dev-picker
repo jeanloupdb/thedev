@@ -274,6 +274,21 @@ def gather_infos(vps, update_available, head):
         pass
     sections.append(("système", health))
 
+    # ── usage (historique local — cache Claude, peut dater) ──
+    stats = _read_json("~/.claude/stats-cache.json")
+    days = [d for d in (stats.get("dailyActivity") or []) if d.get("date")]
+    usg = []
+    if days:
+        usg.append(("kv", "période", "%d jours" % len(days)))
+        usg.append(("kv", "messages", "%d" % sum(d.get("messageCount", 0) for d in days)))
+        usg.append(("kv", "sessions", "%d" % sum(d.get("sessionCount", 0) for d in days)))
+        usg.append(("kv", "outils", "%d appels" % sum(d.get("toolCallCount", 0) for d in days)))
+        lc = (stats.get("lastComputedDate") or "")[:10]
+        usg.append(("kv", "cache", lc or "?"))
+    else:
+        usg.append("(pas de stats locales)")
+    sections.append(("usage", usg))
+
     return sections
 
 
@@ -1065,45 +1080,61 @@ class Picker:
             except curses.error:
                 pass
 
-        def gauge_row(label, pct, detail, innerw):
+        LBL = 12                                   # largeur de libellé fixe → barres alignées
+        def gauge_row(label, pct, detail, contentw):
             pct = max(0.0, min(100.0, float(pct)))
-            barw = max(6, innerw - 24)
+            detail = (detail or "")[:14]
+            barw = max(8, min(34, contentw - (LBL + 2) - 6 - len(detail) - 2))
             fill = int(round(pct / 100 * barw))
             col = G if pct < 70 else (Y if pct < 88 else R)
-            return [(" %-9s " % label, DIM), ("█" * fill, col), ("░" * (barw - fill), DIM),
+            return [(" %-*s " % (LBL, label), DIM), ("█" * fill, col), ("░" * (barw - fill), DIM),
                     (" %3.0f%%" % pct, col | curses.A_BOLD), ("  " + detail, DIM)]
         def kv_row(k, v):
             if isinstance(v, tuple):
                 txt, attr = v[0], {"grn": G, "yel": Y, "red": R}.get(v[1], 0)
             else:
                 txt, attr = v, 0
-            return [(" %-11s " % k, DIM), (str(txt), attr)]
-        def items_to_rows(items, innerw):
-            rows = []
+            return [(" %-*s " % (LBL, k), DIM), (str(txt), attr)]
+        def items_to_rows(items, contentw):
+            out = []
             for it in items:
                 if isinstance(it, tuple) and it[0] == "gauge":
-                    rows.append(gauge_row(it[1], it[2], it[3], innerw))
+                    out.append(gauge_row(it[1], it[2], it[3], contentw))
                 elif isinstance(it, tuple) and it[0] == "kv":
-                    rows.append(kv_row(it[1], it[2]))
+                    out.append(kv_row(it[1], it[2]))
                 else:
-                    rows.append([(" " + str(it), DIM)])
-            return rows
+                    out.append([(" " + str(it), DIM)])
+            return out
         def parc_rows():
-            rows = [[(" %-9s " % "local", DIM), ("● ", G), ("%d session(s)" % len(live_sessions()), G)]]
+            out = [[(" %-*s " % (LBL, "local"), DIM), ("● ", G), ("%d session(s)" % len(live_sessions()), G)]]
             for host in self.rc_hosts:
                 d = rc.get(host) or {"loading": True}
                 if d.get("loading"):
-                    rows.append([(" %-9s " % host, DIM), ("…", DIM)])
+                    out.append([(" %-*s " % (LBL, host), DIM), ("…", DIM)])
                 elif d.get("error"):
-                    rows.append([(" %-9s " % host, DIM), ("○ ", R), (str(d["error"]), R)])
+                    out.append([(" %-*s " % (LBL, host), DIM), ("○ ", R), (str(d["error"]), R)])
                 else:
                     s = d.get("sessions", [])
                     if s:
                         np = sum(len(x.get("panes", [])) for x in s)
-                        rows.append([(" %-9s " % host, DIM), ("● ", G), ("%d session · %d Claude" % (len(s), np), G)])
+                        out.append([(" %-*s " % (LBL, host), DIM), ("● ", G), ("%d session · %d Claude" % (len(s), np), G)])
                     else:
-                        rows.append([(" %-9s " % host, DIM), ("○ ", Y), ("aucune session", Y)])
-            return rows
+                        out.append([(" %-*s " % (LBL, host), DIM), ("○ ", Y), ("aucune session", Y)])
+            return out
+        def autos_rows():
+            with self.rc_lock:
+                autos = self.autos
+            if autos is None:
+                return [[(" …", DIM)]]
+            if not autos:
+                return [[(" aucune automatisation", DIM)]]
+            out = []
+            for a in autos[:8]:
+                act = a.get("state") in ("active", "running")
+                icon, c = ("● ", G) if act else ("○ ", DIM)
+                out.append([(" ", 0), (icon, c), ("%-16s " % (a.get("name", "?")[:16]), 0),
+                            (("→ " + a.get("next", "")) if a.get("next") else "", DIM)])
+            return out
 
         if data is None:
             try:
@@ -1115,32 +1146,40 @@ class Picker:
             curses.doupdate()
             return
 
-        # ── disposition 2 colonnes ──
+        # ── disposition 2 colonnes, cartes ÉTIRÉES pour remplir la hauteur ──
         sec = {t: rows for t, rows in data}
         colw = (W - 5) // 2
-        innerw = colw - 4
+        contentw = colw - 4
         leftx, rightx = 2, 2 + colw + 1
-        top0 = 3
+        top0, boty = 3, H - 2
+        avail = boty - top0
 
-        def draw_panel(top, left, title, rows):
-            h = len(rows) + 2
-            box(top, left, colw, h, title)
-            for i, segs in enumerate(rows):
-                put(top + 1 + i, left + 2, segs, left + colw - 1)
-            return top + h + 1            # +1 d'espacement
-
-        # colonne gauche : thedev · parc
-        yL = top0
-        if "thedev" in sec:
-            yL = draw_panel(yL, leftx, "thedev", items_to_rows(sec["thedev"], innerw))
+        left = [("thedev", items_to_rows(sec.get("thedev", []), contentw))]
         if self.rc_hosts:
-            yL = draw_panel(yL, leftx, "parc", parc_rows())
-        # colonne droite : Claude · système
-        yR = top0
-        if "Claude" in sec:
-            yR = draw_panel(yR, rightx, "Claude · Max 5x", items_to_rows(sec["Claude"], innerw))
-        if "système" in sec:
-            yR = draw_panel(yR, rightx, "système", items_to_rows(sec["système"], innerw))
+            left.append(("parc", parc_rows()))
+        left.append(("automatisations", autos_rows()))
+        right = [("Claude · Max 5x", items_to_rows(sec.get("Claude", []), contentw)),
+                 ("système", items_to_rows(sec.get("système", []), contentw)),
+                 ("usage", items_to_rows(sec.get("usage", []), contentw))]
+
+        def layout_col(x, panels):
+            n = len(panels)
+            if n == 0:
+                return
+            gap = 1
+            base = sum(len(r) + 2 for _, r in panels) + gap * (n - 1)
+            per, rem = divmod(max(0, avail - base), n)   # rallonge chaque carte pour remplir
+            top = top0
+            for idx, (title, rows) in enumerate(panels):
+                h = len(rows) + 2 + per + (1 if idx < rem else 0)
+                if top + h > boty:
+                    h = max(len(rows) + 2, boty - top)
+                box(top, x, colw, h, title)
+                for i, segs in enumerate(rows):
+                    put(top + 1 + i, x + 2, segs, x + colw - 1)
+                top += h + gap
+        layout_col(leftx, left)
+        layout_col(rightx, right)
 
         self.draw_status(H, W)
         self.scr.noutrefresh()
