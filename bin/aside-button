@@ -2,25 +2,47 @@
 # @thedev session barre + pour ajouter un Claude aside a la stack
 # aside-button — barre "＋" fixe en bas de la colonne droite (toujours sous tous
 # les claudes). Tu y vas avec Alt+↓ ; Entrée ouvre un nouveau Claude qui rejoint
-# la stack au-dessus. La barre reste petite (pane à taille fixe, hors stack).
+# la stack au-dessus.
+#
+# Deux états VISUELS, pour qu'on voie quand la ligne est sélectionnée :
+#   - au REPOS (pane non focus) : « ＋ Nouveau Claude » + métriques limitantes à droite ;
+#   - SÉLECTIONNÉ (pane focus) : métriques MASQUÉES + action mise en évidence (inversé).
+# Détection du focus via les événements terminaux focus-in/out (CSI I / CSI O,
+# demandés par \033[?1004h, transmis par zellij). Si non transmis → reste au repos.
 
-g=$'\033[1;32m'; d=$'\033[2m'; r=$'\033[0m'
+g=$'\033[1;32m'; d=$'\033[2m'; r=$'\033[0m'; rev=$'\033[7m'
+printf '\033[?1004h'                       # demande les événements focus in/out
+trap 'printf "\033[?1004l\r\033[K"' EXIT   # désactive + nettoie la ligne à la sortie
+focused=0
+
+render() {
+  if [ "$focused" = 1 ]; then
+    # sélectionné : pas de métriques (bruit), action claire et surlignée
+    printf '\r\033[K %s%s  ＋  Nouveau Claude  —  Entrée pour ouvrir  %s' "$rev" "$g" "$r"
+  else
+    # au repos : action discrète + métriques limitantes à droite (source thedev-metrics)
+    local metrics; metrics="$(thedev-metrics 2>/dev/null)"
+    printf '\r\033[K %s＋ Nouveau Claude%s  %s[Entrée]%s   %s' "$g" "$r" "$d" "$r" "$metrics"
+  fi
+}
+
 while :; do
-  # 1 seule ligne : « ＋ Nouveau Claude » à gauche + métriques limitantes à droite
-  # (RAM/disque/load, source unique thedev-metrics). On réécrit en place (\r + efface).
-  metrics="$(thedev-metrics 2>/dev/null)"
-  printf '\r\033[K %s＋ Nouveau Claude%s  %s[Entrée]%s   %s' "$g" "$r" "$d" "$r" "$metrics"
-  # read avec timeout : la ligne se rafraîchit toutes les 3 s même sans frappe.
-  if IFS= read -t 3 -r line; then
-    case "$line" in
-      q|Q) : ;;
-      *)
-        # remonter dans la stack pour que le nouveau Claude s'y empile (pas dans la barre)
+  render
+  # read 1 caractère brut (pour capter l'ESC des séquences de focus), timeout 3s
+  # → la ligne se rafraîchit même sans frappe (métriques live).
+  if IFS= read -t 3 -rsN1 c; then
+    case "$c" in
+      $'\033')                                  # début de séquence — focus event ?
+        IFS= read -t 0.08 -rsN2 seq 2>/dev/null
+        case "$seq" in '[I') focused=1 ;; '[O') focused=0 ;; esac
+        ;;
+      $'\r'|$'\n')                              # Entrée → ouvrir un nouveau Claude
         zellij action move-focus up 2>/dev/null
         claude-aside
         ;;
+      q|Q) : ;;
     esac
   else
-    [ "$?" -le 128 ] && sleep 1   # EOF/erreur (pas un timeout) → évite la boucle folle
+    [ "$?" -le 128 ] && sleep 1                 # EOF/erreur (pas un timeout) → anti-boucle folle
   fi
 done
