@@ -25,16 +25,34 @@ add() {  # $1 titre  $2 pourquoi  $3 priorite(haute|moyenne|basse)  $4 action(hi
     '{titre:$t, pourquoi:$p, priorite:$pr, action:$a, machine:$m, cree_le:$c}')")
 }
 
-# (A) todos non cochés — les tâches que TU as écrites (le signal le plus fort, zéro bruit)
+# (A) todos non cochés — les tâches que TU as écrites (le signal le plus fort, zéro bruit).
+# Fichiers STRUCTURÉS (sections « ### projet ») → on remonte LE PROCHAIN PAS de CHAQUE projet
+# actif, en excluant les sections « en pause » / « abandonnés ». Diversité par sujet : pas
+# 4 pas du même projet (cf. règle « une todo non cochée par projet actif = next step »).
+# Fichiers PLATS (sans sections) → todos pris indépendamment.
 for f in "$DEV_ROOT/todo.md" "$DEV_ROOT/PROJECTS.md" \
          "$DEV_ROOT/perso/todo.md" "$DEV_ROOT/perso/PROJECTS.md"; do
   [ -f "$f" ] || continue
   base="$(basename "$(dirname "$f")")/$(basename "$f")"
-  while IFS= read -r task; do
-    [ -n "$task" ] || continue
-    add "$task" "À faire — $base" "moyenne" "open:$(dirname "$f")"
-  done < <(grep -hE '^[[:space:]]*[-*] \[ \] ' "$f" 2>/dev/null \
-             | sed -E 's/^[[:space:]]*[-*] \[ \] //; s/[[:space:]]+$//' | head -4)
+  if grep -qE '^### ' "$f" 2>/dev/null; then
+    while IFS=$'\t' read -r proj task; do
+      [ -n "$task" ] || continue
+      add "${proj:+$proj — }$task" "Prochain pas non coché — $base" "moyenne" "open:$(dirname "$f")"
+    done < <(awk '
+      BEGIN{active=1}
+      /^##[[:space:]]/  { c=tolower($0); active=(index(c,"abandonn")==0 && index(c,"pause")==0); next }
+      /^###[[:space:]]/ { proj=$0; sub(/^###[[:space:]]+/,"",proj); seen=0; next }
+      active && !seen && /^[[:space:]]*[-*][[:space:]]\[[[:space:]]\][[:space:]]/ {
+        t=$0; sub(/^[[:space:]]*[-*][[:space:]]\[[[:space:]]\][[:space:]]+/,"",t); sub(/[[:space:]]+$/,"",t)
+        print proj "\t" t; seen=1
+      }' "$f")
+  else
+    while IFS= read -r task; do
+      [ -n "$task" ] || continue
+      add "$task" "À faire — $base" "moyenne" "open:$(dirname "$f")"
+    done < <(grep -hE '^[[:space:]]*[-*] \[ \] ' "$f" 2>/dev/null \
+               | sed -E 's/^[[:space:]]*[-*] \[ \] //; s/[[:space:]]+$//' | head -6)
+  fi
 done
 
 # (B) commits locaux non poussés (repos avec upstream, profondeur ≤ 2 sous le parc)
