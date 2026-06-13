@@ -1,7 +1,7 @@
 # thedev — manifest
 
 > **Généré** par `thedev-manifest` depuis les tags `# @thedev` des scripts `bin/`.
-> Ne pas éditer à la main. Régénérer : `thedev-manifest --write`. 26 commandes.
+> Ne pas éditer à la main. Régénérer : `thedev-manifest --write`. 27 commandes.
 
 ## Modèle mental
 
@@ -51,6 +51,7 @@ Un **crun** = un pane long-running lancé dans la sandbox. Les espaces s'échang
 - **heartbeat-run** — heartbeat autonome (DORMANT, coupe 2026-06 pour cout)
 - **thedev-manifest** — genere le manifest de thedev depuis les tags @thedev des scripts bin/
 - **thedev-metrics** — métriques limitantes locales (RAM/disque/load) — source unique
+- **thedev-propose** — proposeur de tâches par signaux (parc git + todos + autos) — zéro IA, zéro coût
 
 ### Autres
 - **feed** (veille) — déclenche un feed (cron-as-mission) : dépose une mission locale dans l'inbox

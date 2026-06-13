@@ -507,11 +507,13 @@ class Picker:
         self._autos_flat = []         # automatisations sélectionnables (rempli par draw_autos)
         self.confirm_del = None       # auto en attente de confirmation de suppression
         threading.Thread(target=self._autos_worker, daemon=True).start()
-        # Propositions de tâches (écran dédié, porte d'entrée des agents autonomes) :
-        # lues d'un fichier JSON produit en amont par le « proposeur » (pas généré ici).
-        self.propals = load_propals()  # liste de propositions (lue du JSON du proposeur)
+        # Propositions de tâches : le proposeur (thedev-propose) scanne des signaux du
+        # parc (todos non cochés, commits non poussés, autos en échec) → JSON local, zéro
+        # IA. On montre le dernier instantané tout de suite, puis on régénère en fond.
+        self.propals = load_propals()  # dernier instantané (lecture immédiate)
         self.pi = -1                  # sélection écran propositions (-1 = bouton Retour)
         self._propals_flat = []
+        threading.Thread(target=self._propals_worker, daemon=True).start()
         # Mise à jour de la config : la machine est-elle en retard sur le git d'où
         # vient sa config dev ? Si oui → bouton « mettre à jour » en tête des actions.
         self.update_available = False
@@ -577,7 +579,20 @@ class Picker:
         self.mode = "propals"
         self.pi = -1                  # bouton Retour sélectionné par défaut
         self._propals_flat = []
-        self.propals = load_propals()  # fichier local → lecture immédiate
+        self.propals = load_propals()  # instantané immédiat
+        threading.Thread(target=self._propals_worker, daemon=True).start()  # régénère en fond
+
+    def _propals_worker(self):
+        """Régénère les propositions : lance `thedev-propose` (scan de signaux du parc,
+        zéro IA, zéro coût) qui réécrit le JSON, puis recharge la liste. Une passe, en
+        fond — silencieux si le proposeur est absent ou échoue."""
+        try:
+            subprocess.run(["thedev-propose"], capture_output=True, text=True, timeout=20)
+        except Exception:
+            pass
+        res = load_propals()
+        with self.rc_lock:
+            self.propals = res
 
     def _local_worker(self):
         # self.live (sessions zellij vivantes → marqueurs « ● en cours ») est figé
@@ -1386,11 +1401,10 @@ class Picker:
             self.pi = -1
             line("(aucune proposition pour l'instant)", curses.A_DIM)
             line("", 0)
-            line("Le « proposeur » analysera ton parc et ta base de connaissance pour", curses.A_DIM)
-            line("suggérer ici des agents autonomes à lancer (ex. reprendre le git d'un", curses.A_DIM)
-            line("projet sur un VPS, mener une mission complexe, te renvoyer le rapport).", curses.A_DIM)
+            line("Le proposeur scanne ton parc (todos non cochés, commits non poussés,", curses.A_DIM)
+            line("automatisations en échec) et suggère ici des tâches concrètes — sans IA.", curses.A_DIM)
             line("", 0)
-            line("Pas encore branché — porte d'entrée posée.", curses.A_DIM)
+            line("Rien à signaler pour l'instant : parc propre.", curses.A_DIM)
         else:
             if self.pi >= len(propals):
                 self.pi = len(propals) - 1
