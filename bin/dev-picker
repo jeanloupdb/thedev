@@ -1462,8 +1462,19 @@ class Picker:
         # Si des hôtes RC : getch non bloquant (timeout) pour afficher la liste dès
         # qu'elle charge ET la rafraîchir en continu (statut « en cours » live).
         while True:
-            self.clamp()
-            self.draw()
+            try:
+                self.clamp()
+                self.draw()
+            except Exception:
+                # Un bug de rendu ne doit PLUS tuer le picker (sortie « sans raison »).
+                # On logue la trace pour corriger la cause, et on continue.
+                import traceback
+                try:
+                    with open(os.path.expanduser("~/.cache/dev-picker-crash.log"), "a") as _f:
+                        _f.write("=== draw crash ===\n" + traceback.format_exc() + "\n")
+                except Exception:
+                    pass
+                self.msg = "⚠ erreur d'affichage — voir ~/.cache/dev-picker-crash.log"
             # getch non bloquant tant qu'il y a qqch à rafraîchir (liste RC live,
             # check git en fond, ou écran infos en cours de chargement) ; sinon bloque.
             poll = bool(self.rc_hosts) or self.git_checking or self.local_refreshing or (self.metrics is not None) or (self.mode == "infos" and self.infos_data is None) or (self.autos is None)
