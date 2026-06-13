@@ -40,6 +40,19 @@ append=""
 prompt_args=()
 [ -n "$append" ] && prompt_args=(--append-system-prompt "$append")
 
+# Message initial (ex. « ajuster une automatisation » depuis l'accueil) : passé en
+# positionnel à claude → 1er message de la conversation neuve. One-shot (la relance
+# manuelle via ↑ rejoue `claude` nu, sans ce prompt). Deux sources : CLAUDE_PANE_INIT
+# (inline) ou CLAUDE_PANE_INIT_FILE (chemin — évite le quoting à travers ssh/zellij ;
+# le fichier est consommé puis supprimé). Le fichier prime s'il existe.
+init_args=()
+if [ -n "${CLAUDE_PANE_INIT_FILE:-}" ] && [ -f "$CLAUDE_PANE_INIT_FILE" ]; then
+  init_args=("$(cat "$CLAUDE_PANE_INIT_FILE")")
+  rm -f "$CLAUDE_PANE_INIT_FILE"
+elif [ -n "${CLAUDE_PANE_INIT:-}" ]; then
+  init_args=("$CLAUDE_PANE_INIT")
+fi
+
 # Resume the conversation picked in `dev`, if any.
 resume_args=()
 if [ -n "${CLAUDE_RESUME_ID:-}" ]; then
@@ -110,6 +123,7 @@ CLAUDE_CODE_NO_FLICKER=1 claude \
   "${model_args[@]}" \
   "${prompt_args[@]}" \
   "${resume_args[@]}" \
+  "${init_args[@]}" \
   "$@"
 
 # Mode "once" (Claude secondaire via `aside`) : pas de keep-alive → le pane se

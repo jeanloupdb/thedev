@@ -33,8 +33,21 @@ case "$ev" in
     # nom persistant déjà stocké (« ◆ <sujet> »), qu'on ré-applique au pane.
     def="${CLAUDE_PANE_NAME:-claude}"
     # Les Claude de mission (thedev-link) sont éphémères et leur pane est géré
-    # par crun (« mission-<id> ») : pas de registre, pas de rename.
-    case "$def" in mission-*) exit 0 ;; esac
+    # par crun (« mission-<id> ») : pas de registre, pas de rename. MAIS on
+    # enregistre le TRANSCRIPT_PATH dans le work-dir : c'est la source de vérité
+    # déterministe du résultat (le watcher y lit le dernier message assistant,
+    # même si le LLM n'écrit jamais son fichier résultat).
+    case "$def" in
+      mission-*)
+        mid="${def#mission-}"
+        tp=$(printf '%s' "$payload" | jq -r '.transcript_path // empty' 2>/dev/null)
+        if [ -n "$tp" ]; then
+          for w in "$HOME"/.cache/thedev/spaces/*/work/"$mid"; do
+            [ -d "$w" ] && printf '%s\n' "$tp" > "$w/transcript_path" 2>/dev/null
+          done
+        fi
+        exit 0 ;;
+    esac
     name=$(dev-claude-reg upsert "$sid" "$cwd" "$role" "${ZELLIJ_SESSION_NAME:-}" "$def" 2>/dev/null)
     # Garde-fou : ne renomme que les panes GÉRÉS (lancés par claude-pane/aside,
     # signature = CLAUDE_PANE_NAME posé). Un `claude` tapé à la main dans le
@@ -82,6 +95,24 @@ case "$ev" in
   Stop)
     # Claude a fini sa réponse → plus busy.
     rm -f "$BUSY_DIR/$sid" 2>/dev/null
+    # Mission thedev : le Claude de mission ne QUITTE pas (il reste interactif au
+    # repos) — la fin de tour est donc le seul signal DÉTERMINISTE de « j'ai fini ».
+    # On (ré)écrit une sentinelle `turn-ended` dans son work-dir : le watcher peut
+    # alors trancher (résultat écrit ou pas) sans pendre jusqu'au hardcap. Le mtime
+    # se rafraîchit à chaque tour → une mission multi-tours n'est pas coupée à tort.
+    # work-dir retrouvé par glob sur l'id unique (le hook ne connaît pas l'espace).
+    case "${CLAUDE_PANE_NAME:-}" in
+      mission-*)
+        mid="${CLAUDE_PANE_NAME#mission-}"
+        tp=$(printf '%s' "$payload" | jq -r '.transcript_path // empty' 2>/dev/null)
+        for w in "$HOME"/.cache/thedev/spaces/*/work/"$mid"; do
+          [ -d "$w" ] || continue
+          date -Iseconds > "$w/turn-ended" 2>/dev/null
+          # transcript_path aussi ici (redondance : si SessionStart l'a raté)
+          [ -n "$tp" ] && [ ! -s "$w/transcript_path" ] && printf '%s\n' "$tp" > "$w/transcript_path" 2>/dev/null
+        done
+        ;;
+    esac
     ;;
   SessionEnd)
     # Sur un quit (Ctrl+Q→fermer), Claude intercepte le signal et déclenche

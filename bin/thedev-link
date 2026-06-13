@@ -59,6 +59,7 @@ cmd_status() {
 cmd_watch() {
   local esp="$1" cwd="$2"
   local sdir="$ROOT/spaces/$esp" reg="$ROOT/links/$esp"
+  WATCHER_START=$(date +%s)   # global lu par _process pour distinguer backlog / file live
   mkdir -p "$sdir"/inbox "$sdir"/outbox "$sdir"/work "$sdir"/done "$ROOT/links"
   cat > "$reg" <<EOF
 espace=$esp
@@ -93,20 +94,22 @@ _process() {
   local sdir="$ROOT/spaces/$esp" wdir="$ROOT/spaces/$esp/work/$3"
   local out="$sdir/outbox/$id.result"
 
-  # Garde-fou TTL : une mission trop vieille (émetteur parti depuis longtemps) est
-  # ÉCARTÉE sans lancer claude — évite de rejouer un backlog à la réouverture d'un
-  # espace. Surchargeable via MISSION_TTL (secondes, défaut 600 = 10 min).
+  # Garde-fou TTL — n'écarte QUE le BACKLOG : une mission déposée AVANT le démarrage
+  # de CE watcher (file restée d'une session précédente, émetteur très probablement
+  # parti) ET trop vieille. Une mission arrivée APRÈS le démarrage = file LIVE → jamais
+  # écartée, même si elle a patienté des heures derrière une longue mission (en async,
+  # son résultat reste récupérable via `mission result`). Surchargeable via MISSION_TTL.
   local created cepoch age ttl="${MISSION_TTL:-600}"
   created="$(grep -i '^Created:' "$wdir/mission" | head -1 | cut -d' ' -f2-)"
   cepoch="$(date -d "$created" +%s 2>/dev/null || echo 0)"
-  if [ "${cepoch:-0}" -gt 0 ]; then
+  if [ "${cepoch:-0}" -gt 0 ] && [ "$cepoch" -lt "${WATCHER_START:-0}" ]; then
     age=$(( $(date +%s) - cepoch ))
     if [ "$age" -gt "$ttl" ]; then
-      printf 'Status: stale\nFinished: %s\n\nMission écartée : déposée il y a %ss (TTL %ss), émetteur probablement parti — non exécutée.\n' \
+      printf 'Status: stale\nFinished: %s\n\nMission écartée : backlog déposé il y a %ss (TTL %ss) avant le démarrage du watcher — émetteur probablement parti, non exécutée.\n' \
         "$(date -Iseconds)" "$age" "$ttl" > "$out"
       cp "$out" "$wdir/result" 2>/dev/null
       rm -rf "$sdir/done/$id" 2>/dev/null; mv "$wdir" "$sdir/done/$id" 2>/dev/null
-      echo "⏭ mission $id écartée (stale : ${age}s > ${ttl}s)"
+      echo "⏭ mission $id écartée (backlog stale : ${age}s > ${ttl}s)"
       return 0
     fi
   fi
@@ -144,6 +147,8 @@ N'écris ce fichier qu'UNE fois, à la toute fin — c'est lui qui signale la fi
 (et déclenche la fermeture de ce pane). Si tu lances un workflow ou des agents
 en arrière-plan, ATTENDS leur fin complète avant d'écrire ce fichier : l'écrire
 trop tôt tuerait le travail encore en cours.
+(Filet : si tu n'écris pas ce fichier, ta DERNIÈRE réponse sera capturée comme
+résultat — termine donc toujours par le résultat complet, autonome.)
 Reste STRICTEMENT dans le périmètre de cet espace (règles de ~/.claude/CLAUDE.md).
 EOF
   cat > "$wdir/run.sh" <<EOF
@@ -164,19 +169,66 @@ EOF
   # s'il y en a un) ET (sous le hardcap). On sonde la vivacité du pane via crun
   # plutôt que de parier sur une durée. grace : laisse 2 sondes au pane pour
   # apparaître dans le registre crun avant de le croire mort.
-  local waited=0 grace=0 reason=""
+  local waited=0 grace=0 reason="" te tp tmt now idle="${MISSION_IDLE_GRACE:-30}" tidle="${MISSION_TRANSCRIPT_IDLE:-150}"
   while [ ! -f "$out" ]; do
-    sleep 3; waited=$((waited+3))
-    if [ -n "$timeout" ] && [ "$timeout" -gt 0 ] 2>/dev/null && [ "$waited" -ge "$timeout" ]; then reason="timeout mission (${timeout}s)"; break; fi
-    if [ "$hardcap" -gt 0 ] 2>/dev/null && [ "$waited" -ge "$hardcap" ]; then reason="hardcap (${hardcap}s)"; break; fi
-    if [ "$grace" -ge 4 ] && ! crun alive "mission-$id" 2>/dev/null; then reason="pane mort sans résultat"; break; fi
+    sleep 3; waited=$((waited+3)); now=$(date +%s)
+    if [ -n "$timeout" ] && [ "$timeout" -gt 0 ] 2>/dev/null && [ "$waited" -ge "$timeout" ]; then reason="timeout"; break; fi
+    if [ "$hardcap" -gt 0 ] 2>/dev/null && [ "$waited" -ge "$hardcap" ]; then reason="hardcap"; break; fi
+    # Fin de tour DÉTERMINISTE (sentinelle du hook Stop) : fini + idle ≥ grace sans
+    # résultat → on tranche. mtime rafraîchi à chaque tour → multi-tours protégé.
+    if [ -f "$wdir/turn-ended" ]; then
+      te=$(stat -c %Y "$wdir/turn-ended" 2>/dev/null || echo 0)
+      [ $(( now - te )) -ge "$idle" ] && { reason="turn-ended"; break; }
+    fi
+    # Filet INDÉPENDANT du hook : le transcript (écrit par Claude Code à chaque
+    # message/tool-call) ne bouge plus depuis tidle s → session idle, même si le
+    # hook Stop n'a jamais tiré. Évite de pendre jusqu'au hardcap.
+    if [ -s "$wdir/transcript_path" ]; then
+      tp=$(cat "$wdir/transcript_path" 2>/dev/null)
+      tmt=$(stat -c %Y "$tp" 2>/dev/null || echo "$now")
+      [ $(( now - tmt )) -ge "$tidle" ] && { reason="transcript-idle"; break; }
+    fi
+    if [ "$grace" -ge 4 ] && ! crun alive "mission-$id" 2>/dev/null; then reason="dead"; break; fi
+    # Boot-grace : aucun signe de vie de la SESSION (ni transcript_path posé par
+    # SessionStart, ni turn-ended) après boot s → la session n'a jamais démarré
+    # (dialogue trust/permissions bloquant, crash au boot…). On conclut tout de
+    # suite avec le screen-dump, au lieu de pendre jusqu'au hardcap.
+    if [ "$waited" -ge "${MISSION_BOOT_GRACE:-90}" ] && [ ! -s "$wdir/transcript_path" ] && [ ! -f "$wdir/turn-ended" ]; then
+      reason="never-started"; break
+    fi
     grace=$((grace+1))
   done
-  if [ ! -f "$out" ]; then
-    printf 'Status: failed\nFinished: %s\n\nPas de résultat — %s. (attendu %ss)\n' \
-      "$(date -Iseconds)" "${reason:-arrêt}" "$waited" > "$out"
-  fi
+
+  # Capture d'écran du pane AVANT de le tuer (révèle un dialogue interactif bloquant,
+  # une erreur au boot…) → archivée avec la mission. Puis kill.
+  crun logs "mission-$id" > "$wdir/screen.txt" 2>/dev/null || true
   crun kill "mission-$id" 2>/dev/null
+
+  # SOURCE DE VÉRITÉ : le transcript JSONL (écrit par Claude Code, pas par le LLM).
+  # Toujours archivé → on a TOUJOURS le déroulé exact, succès comme échec.
+  tp=""; [ -s "$wdir/transcript_path" ] && tp=$(cat "$wdir/transcript_path" 2>/dev/null)
+  [ -n "$tp" ] && [ -f "$tp" ] && cp "$tp" "$wdir/transcript.jsonl" 2>/dev/null
+
+  if [ ! -f "$out" ]; then
+    # Le LLM n'a pas écrit son fichier → on extrait NOUS-MÊMES son dernier message
+    # du transcript : c'est sa réponse, capture déterministe (réplique le stdout
+    # de claude -p, mais en interactif/abonnement).
+    local last=""
+    if [ -s "$wdir/transcript.jsonl" ] && command -v jq >/dev/null 2>&1; then
+      last=$(jq -rs '[.[] | select(.type=="assistant") | .message.content[]? | select(.type=="text") | .text] | last // empty' "$wdir/transcript.jsonl" 2>/dev/null)
+    fi
+    if [ -n "$last" ]; then
+      printf 'Status: ok\nSource: transcript (fin: %s)\nFinished: %s\n\n%s\n' \
+        "${reason:-?}" "$(date -Iseconds)" "$last" > "$out"
+    else
+      # Pas même un message dans le transcript → la session n'a jamais vraiment
+      # démarré (dialogue interactif bloquant ? crash au boot ?). screen.txt joint.
+      local st="failed"
+      case "$reason" in dead) st="crashed" ;; hardcap) st="hung" ;; never-started) st="never-started (dossier non approuvé ? dialogue bloquant ? voir screen.txt)" ;; esac
+      printf 'Status: %s\nReason: %s\nFinished: %s\n\nAucune réponse dans le transcript (%s). Session jamais démarrée ? Voir done/%s/{screen.txt,transcript.jsonl} sur la machine.\n' \
+        "$st" "${reason:-arrêt}" "$(date -Iseconds)" "${tp:-transcript_path inconnu}" "$id" > "$out"
+    fi
+  fi
   cp "$out" "$wdir/result" 2>/dev/null
   rm -rf "$sdir/done/$id" 2>/dev/null; mv "$wdir" "$sdir/done/$id" 2>/dev/null
 }

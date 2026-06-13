@@ -1,15 +1,23 @@
 #!/usr/bin/env bash
-# @thedev liens envoie une mission a un espace distant et attend le resultat (--model)
-# mission — envoie une MISSION à un ESPACE distant (lien thedev) et attend le RÉSULTAT.
-# Voir NAMING.md + plans/thedev-liens.md. C'est le CÔTÉ ÉMETTEUR (cross-machine, via SSH).
+# @thedev liens envoie une mission a un espace distant (async par defaut, result/list/cancel)
+# mission — envoie une MISSION à un ESPACE distant (lien thedev) et récupère le RÉSULTAT.
+# Voir NAMING.md + plans/thedev-liens.md. CÔTÉ ÉMETTEUR (cross-machine, via SSH).
 #
-#   mission [--model <m>] <machine>/<espace> "<texte>"   envoie, attend, affiche le résultat
-#   mission ls <machine>                                  liste les espaces joignables (via ssh)
+#   mission [--model <m>] [--wait] <machine>/<espace> "<texte>"
+#                                   envoie une mission. Par DÉFAUT ASYNCHRONE : dépose,
+#                                   rend la main, affiche l'id. --wait = bloque jusqu'au
+#                                   résultat (pratique pour relayer dans la foulée).
+#   mission result <machine> <id>   récupère le résultat (ou l'état : en attente / en cours)
+#   mission list   <machine>        liste les missions et leur état sur la machine
+#   mission cancel <machine> <id>   annule une mission EN ATTENTE (pas encore prise)
+#   mission ls     <machine>        liste les espaces ouverts aux missions
 #
-# Réglages : TIMEOUT=<sec> (défaut 600 ; 0 = pas de plafond, l'espace attend
-# tant que le Claude de mission vit — utile pour un workflow long).
-# --model <m> : modèle du Claude de mission (alias fable|opus|sonnet|haiku ou id
-# complet). Absent = défaut de la machine cible.  L'espace doit être OUVERT.
+# Async par défaut → on n'est plus OTAGE de la connexion SSH : le résultat est écrit
+# côté serveur et reste récupérable plus tard via `mission result`, même si le laptop
+# se ferme ou que le wifi saute entre-temps.
+# Réglages : TIMEOUT=<sec> = plafond DUR optionnel (défaut 0 = pas de plafond ; la fin
+# de mission est détectée par vivacité du pane + sentinelle ⭐2, avec un hardcap 6 h côté
+# watcher). --model <m> = modèle du Claude de mission. L'espace doit être OUVERT.
 set -u
 me="$(basename "$0")"
 from="$( { cat "$HOME/.config/dev-vps" 2>/dev/null || hostname -s; } )/${ZELLIJ_SESSION_NAME:-shell}"
@@ -22,16 +30,52 @@ cmd_ls() {
     || { echo "  ✗ injoignable (ssh $machine)"; return 1; }
 }
 
+# Liste les missions de TOUS les espaces de la machine + leur état (file/en cours/fini).
+cmd_list() {
+  local machine="$1"
+  $SSH "$machine" '
+    base="$HOME/.cache/thedev/spaces"; shopt -s nullglob
+    emit(){ rel="${1#$base/}"; esp="${rel%%/*}"; printf "  %-30s  %-11s  %s\n" "$2" "$3" "$esp"; }
+    n=0
+    printf "  %-30s  %-11s  %s\n" MISSION ÉTAT ESPACE
+    for f in "$base"/*/inbox/*.mission;  do emit "$f" "$(basename "$f" .mission)" "en attente"; n=$((n+1)); done
+    for d in "$base"/*/work/*;           do [ -d "$d" ] && { emit "$d" "$(basename "$d")" "en cours"; n=$((n+1)); }; done
+    for f in "$base"/*/outbox/*.result;  do emit "$f" "$(basename "$f" .result)" "fini"; n=$((n+1)); done
+    [ "$n" -eq 0 ] && echo "  (aucune mission)"
+    exit 0' 2>/dev/null \
+    || { echo "  ✗ injoignable (ssh $machine)"; return 1; }
+}
+
+# Récupère le résultat d'une mission par id (cherche dans tous les espaces).
+cmd_result() {
+  local machine="$1" id="$2"
+  $SSH "$machine" "
+    base=\"\$HOME/.cache/thedev/spaces\"; shopt -s nullglob
+    for f in \"\$base\"/*/outbox/$id.result;  do echo '──────── RÉSULTAT ────────'; cat \"\$f\"; exit 0; done
+    for d in \"\$base\"/*/work/$id;           do [ -d \"\$d\" ] && { echo '⏳ en cours…'; exit 0; }; done
+    for f in \"\$base\"/*/inbox/$id.mission;  do echo '⏸ en attente dans la file'; exit 0; done
+    echo '✗ mission introuvable : $id'; exit 1" 2>/dev/null \
+    || { echo "✗ injoignable ou mission introuvable (ssh $machine)"; return 1; }
+}
+
+# Annule une mission EN ATTENTE (retire de l'inbox avant qu'elle soit prise).
+cmd_cancel() {
+  local machine="$1" id="$2"
+  $SSH "$machine" "
+    base=\"\$HOME/.cache/thedev/spaces\"; shopt -s nullglob
+    for f in \"\$base\"/*/inbox/$id.mission;  do rm -f \"\$f\" && echo '✓ mission annulée (était en attente)'; exit 0; done
+    for d in \"\$base\"/*/work/$id;           do [ -d \"\$d\" ] && { echo '✗ déjà EN COURS — non annulable proprement, laisse-la finir.'; exit 0; }; done
+    for f in \"\$base\"/*/outbox/$id.result;  do echo 'ℹ déjà FINIE.'; exit 0; done
+    echo '✗ mission introuvable : $id'; exit 1" 2>/dev/null \
+    || { echo "✗ injoignable (ssh $machine)"; return 1; }
+}
+
 cmd_send() {
-  local addr="$1" text="$2" model="${3:-}"
+  local addr="$1" text="$2" model="$3" wait_flag="$4"
   local machine="${addr%%/*}" espace="${addr#*/}"
   [ "$machine" = "$addr" ] && { echo "✗ format : <machine>/<espace>"; exit 1; }
   local id="m-$(date +%Y%m%d-%H%M%S)-$RANDOM"
-  local wait="${TIMEOUT:-600}" loops
-  # wait=0 (pas de plafond) : on sonde longtemps côté serveur (cap d'attente ssh
-  # généreux, l'espace gère le vrai sans-timeout via la vivacité du pane).
-  if [ "$wait" -eq 0 ] 2>/dev/null; then loops=$(( 21600 / 3 )); else loops=$(( (wait + 30) / 3 )); fi
-  # en-tête Model: seulement si demandé
+  local plafond="${TIMEOUT:-0}"
   local model_hdr=""; [ -n "$model" ] && model_hdr="Model: $model"$'\n'
   # 1. l'espace est-il ouvert ?
   if ! $SSH "$machine" "[ -f \$HOME/.cache/thedev/links/$espace ]" 2>/dev/null; then
@@ -39,33 +83,48 @@ cmd_send() {
     echo "  (là-bas, dans l'espace : thedev-link open ; ici : mission ls $machine)"
     exit 1
   fi
-  # 2. déposer la mission dans l'inbox
+  # 2. dépôt ATOMIQUE : on écrit en .tmp puis `mv` (atomique) → le watcher, qui
+  #    globe inbox/*.mission, ne peut JAMAIS tomber sur un fichier à moitié écrit.
   printf 'From: %s\nCreated: %s\nTimeout: %s\n%s\n%s\n' \
-      "$from" "$(date -Iseconds)" "$wait" "$model_hdr" "$text" \
-    | $SSH "$machine" "d=\$HOME/.cache/thedev/spaces/$espace/inbox; mkdir -p \"\$d\"; cat > \"\$d/$id.mission\"" \
+      "$from" "$(date -Iseconds)" "$plafond" "$model_hdr" "$text" \
+    | $SSH "$machine" "d=\$HOME/.cache/thedev/spaces/$espace/inbox; mkdir -p \"\$d\"
+        cat > \"\$d/$id.mission.tmp\" && mv \"\$d/$id.mission.tmp\" \"\$d/$id.mission\"" \
     || { echo "✗ échec dépôt mission"; exit 1; }
-  echo "→ mission $id → $addr (timeout ${wait}s). En attente du résultat…"
-  # 3. attendre le résultat côté serveur (une seule connexion)
+  # 3a. ASYNC (défaut) : on rend la main, le résultat se récupère plus tard.
+  if [ -z "$wait_flag" ]; then
+    echo "→ mission $id déposée → $addr"
+    echo "  résultat : mission result $machine $id   ·   file : mission list $machine"
+    return 0
+  fi
+  # 3b. --wait : bloque jusqu'au résultat (une seule connexion). Si elle saute, le
+  #     résultat reste récupérable via 'mission result' (l'espace l'a écrit côté serveur).
+  echo "→ mission $id → $addr — attente du résultat (--wait)…"
+  local loops; if [ "$plafond" -eq 0 ] 2>/dev/null; then loops=$((21600/3)); else loops=$(( (plafond+60)/3 )); fi
   $SSH "$machine" "f=\$HOME/.cache/thedev/spaces/$espace/outbox/$id.result
     for i in \$(seq 1 $loops); do [ -f \"\$f\" ] && { echo '──────── RÉSULTAT ────────'; cat \"\$f\"; exit 0; }; sleep 3; done
     exit 7" \
-    || { echo "✗ pas de résultat (timeout ${wait}s)"; exit 1; }
+    || { echo "✗ pas de résultat dans le délai — récupère-le plus tard : mission result $machine $id"; exit 1; }
 }
 
-# sous-commande ls à part
-if [ "${1:-}" = "ls" ]; then
-  shift; [ -n "${1:-}" ] || { echo "usage: $me ls <machine>"; exit 1; }; cmd_ls "$1"; exit $?
-fi
+# ── dispatch ────────────────────────────────────────────────────────────────
+case "${1:-}" in
+  ls)     shift; [ -n "${1:-}" ] || { echo "usage: $me ls <machine>"; exit 1; };     cmd_ls "$1";     exit $? ;;
+  list)   shift; [ -n "${1:-}" ] || { echo "usage: $me list <machine>"; exit 1; };   cmd_list "$1";   exit $? ;;
+  result) shift; { [ -n "${1:-}" ] && [ -n "${2:-}" ]; } || { echo "usage: $me result <machine> <id>"; exit 1; }; cmd_result "$1" "$2"; exit $? ;;
+  cancel) shift; { [ -n "${1:-}" ] && [ -n "${2:-}" ]; } || { echo "usage: $me cancel <machine> <id>"; exit 1; }; cmd_cancel "$1" "$2"; exit $? ;;
+esac
 
-# envoi : --model optionnel avant <machine>/<espace> "<texte>"
-model=""
+# envoi : --model / --wait optionnels avant <machine>/<espace> "<texte>"
+model=""; wait_flag=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --model|-m) model="$2"; shift 2 ;;
+    --model|-m) model="${2:-}"; shift 2 ;;
+    --wait|-w)  wait_flag=1; shift ;;
     *) break ;;
   esac
 done
 if [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
-  printf 'usage:\n  %s [--model <fable|opus|sonnet|haiku>] <machine>/<espace> "<texte>"\n  %s ls <machine>\n' "$me" "$me"; exit 1
+  printf 'usage:\n  %s [--model <m>] [--wait] <machine>/<espace> "<texte>"\n  %s result|cancel <machine> <id>\n  %s list|ls <machine>\n' "$me" "$me" "$me"
+  exit 1
 fi
-cmd_send "$1" "$2" "$model"
+cmd_send "$1" "$2" "$model" "$wait_flag"

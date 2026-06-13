@@ -122,17 +122,6 @@ EOF
   }
   cat <<'EOF'
 
-## Capacités composables
-
-Ce que tu peux *faire* en combinant les briques (au-delà des commandes prises une à une) :
-
-- **Exposer n'importe quel site/service en public, via un VPS** : `ship <vps> .` (pousse le code) → `mission <vps>/<espace> "lance-le bindé sur 127.0.0.1:<port> puis tsnode <nom> <port>"` → URL `https://<nom>.<tailnet>.ts.net` publique (Tailscale Funnel, sans ouvrir de port ni toucher au reste du serveur). Marche même depuis une machine sans IP publique.
-- **Déléguer un vrai chantier à une autre machine** : `mission [--model <m>] <machine>/<espace> "…"` — le Claude distant peut lui-même lancer un workflow (armée d'agents), sur l'abonnement. `TIMEOUT=0` pour un chantier long.
-- **Voir l'état de tout le parc d'un coup d'œil** : `thedev-status` (espaces ouverts, missions en cours, cruns vivants/morts par machine) sans ssh manuel.
-- **Plusieurs Claude en parallèle dans un espace** + les **retrouver après un quit** (asides + registre de reprise).
-EOF
-  cat <<'EOF'
-
 ## Dépendances externes
 
 | Commande | Paquet | Portée | |

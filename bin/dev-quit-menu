@@ -20,8 +20,12 @@ printf '\n\n'
 printf '     %sQuitter%s  %s%s%s\n' "$B" "$R" "$CY" "$sess" "$R"
 printf '     %s───────────────────────────────%s\n\n' "$D" "$R"
 printf '      %s  d  %s   %sDÉTACHER%s   %sla session reste vivante%s\n\n' "$GCHIP" "$R" "$G" "$R" "$D" "$R"
-printf '      %s  f  %s   %sFERMER%s     %sla session est tuée%s\n\n' "$RCHIP" "$R" "$RED" "$R" "$D" "$R"
-printf '     %s───────────────────────────────%s\n' "$D" "$R"
+printf '      %s  f  %s   %sFERMER%s     %sla session est tuée%s\n' "$RCHIP" "$R" "$RED" "$R" "$D" "$R"
+# Conséquences concrètes de « fermer », en compact, juste sous FERMER (rouge = tué,
+# ○ violet = automatisation qui passe inactive). Affiché seulement si qqch tourne.
+impact=$(dev-quit-impact "$sess" 2>/dev/null)
+[ -n "$impact" ] && printf '%s\n' "$impact"
+printf '\n     %s───────────────────────────────%s\n' "$D" "$R"
 printf '      %séchap / autre touche  ·  annuler%s\n\n' "$D" "$R"
 
 read -rsn1 key

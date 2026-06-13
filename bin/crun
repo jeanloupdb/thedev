@@ -84,7 +84,13 @@ ensure_client() {
   command -v script >/dev/null 2>&1 || return 1
   local sess="${ZELLIJ_SESSION_NAME:-}"
   [ -n "$sess" ] || return 1
-  script -q -c "zellij attach $sess" /dev/null </dev/null >/dev/null 2>&1 &
+  # CRITIQUE : `zellij attach <sess>` lancé DEPUIS la session panique (« attach to the
+  # current session is not supported »). Le watcher/crun tournant DANS un pane zellij,
+  # $ZELLIJ est défini → sans ce env -u, le fantôme ne s'attachait JAMAIS et les panes
+  # de mission/automatisation atterrissaient en code page (bug du détaché). On masque
+  # l'appartenance à la session le temps de l'attach → zellij croit qu'on est dehors.
+  env -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID \
+    script -q -c "zellij attach $sess" /dev/null </dev/null >/dev/null 2>&1 &
   PHANTOM_PID=$!
   trap kill_phantom EXIT
   local i
@@ -200,7 +206,7 @@ exec \"\$@\""
   else
     # Fantôme indispo (script absent ?) : on ne peut pas cibler l'onglet headless.
     kill_phantom
-    warn "session headless et client fantôme indisponible (script(1) absent ?) :"
+    warn "session détachée et client fantôme indisponible (script(1) absent ou attach refusé) :"
     warn "  le pane '$name' a été créé hors de l'onglet '$tab' — réorganise au réattachement."
     info "agent '$name' démarré (pane $pane_id)"
   fi

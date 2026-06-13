@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# @thedev veille envoie texte/photo sur Telegram (Bot API, curl) — livraison des feeds & alertes
+# tg — pousse un message ou une photo sur Telegram via l'API Bot. Zéro dépendance (curl).
+# Pensé pour des digests en PLUSIEURS messages courts + images (un appel = un message).
+# Réessaie tout seul sur le flood-control Telegram (« retry after N ») → fiable non surveillé.
+#
+#   tg "<texte markdown>"                    → message (parse_mode Markdown)
+#   tg --photo <url|fichier> ["<légende>"]   → photo (URL distante OU fichier local), légende Markdown
+#   tg --plain "<texte>"                     → message sans formatage (aucun parse_mode)
+#
+# Config (fichiers SOURCÉS, jamais affichés ; chaque fichier complète les variables) :
+#   ~/.config/thedev/telegram.env · ~/.config/heartbeat/heartbeat.env · ~/.claude/channels/telegram/.env
+#   → TELEGRAM_BOT_TOKEN (obligatoire) · TELEGRAM_CHAT_ID (destinataire)
+set -u
+
+for f in "$HOME/.config/thedev/telegram.env" "$HOME/.config/heartbeat/heartbeat.env" "$HOME/.claude/channels/telegram/.env"; do
+  # shellcheck disable=SC1090
+  [ -f "$f" ] && . "$f"
+done
+: "${TELEGRAM_BOT_TOKEN:=}"; : "${TELEGRAM_CHAT_ID:=}"
+[ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ] || {
+  echo "tg: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID manquants (cf. ~/.config/thedev/telegram.env)" >&2; exit 1; }
+API="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}"
+
+# Envoi avec réessai auto sur flood-control (« retry after N »). Le token n'apparaît
+# JAMAIS en sortie : on ne montre que le statut renvoyé par Telegram.
+send() {  # send <endpoint> <curl-args…>
+  local ep="$1"; shift
+  local out delay t
+  for t in 1 2 3; do
+    out=$(curl -sS -m 60 "$API/$ep" "$@" 2>&1)
+    case "$out" in
+      *'"ok":true'*) return 0 ;;
+      *'retry after'*)
+        delay=$(printf '%s' "$out" | grep -oE 'retry after [0-9]+' | grep -oE '[0-9]+$')
+        sleep "$(( ${delay:-3} + 1 ))" ;;
+      *) echo "tg: échec — $(printf '%s' "$out" | grep -oE '"description":"[^"]*"' | head -1)" >&2; return 1 ;;
+    esac
+  done
+  echo "tg: échec après réessais (flood control)" >&2; return 1
+}
+
+case "${1:-}" in
+  -h|--help|"") grep -E '^#( |$)' "$0" | sed -E 's/^# ?//'; exit 0 ;;
+
+  --photo)
+    src="${2:-}"; cap="${3:-}"
+    [ -n "$src" ] || { echo "tg --photo : url ou fichier requis" >&2; exit 1; }
+    if [ -f "$src" ]; then
+      send sendPhoto -F "chat_id=$TELEGRAM_CHAT_ID" -F "photo=@$src" \
+        -F "caption=$cap" -F "parse_mode=Markdown"
+    else
+      send sendPhoto --data-urlencode "chat_id=$TELEGRAM_CHAT_ID" \
+        --data-urlencode "photo=$src" --data-urlencode "caption=$cap" \
+        --data-urlencode "parse_mode=Markdown"
+    fi ;;
+
+  --plain)
+    send sendMessage --data-urlencode "chat_id=$TELEGRAM_CHAT_ID" \
+      --data-urlencode "text=${2:-}" --data-urlencode "disable_web_page_preview=true" ;;
+
+  *)
+    send sendMessage --data-urlencode "chat_id=$TELEGRAM_CHAT_ID" \
+      --data-urlencode "text=$1" --data-urlencode "parse_mode=Markdown" \
+      --data-urlencode "disable_web_page_preview=true" ;;
+esac

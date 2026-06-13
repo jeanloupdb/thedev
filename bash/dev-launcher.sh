@@ -107,7 +107,7 @@ _dev_update() {
   fi
   echo "→ mise à jour de la config dev (git -C $repo pull)…"
   if git -C "$repo" pull --ff-only; then
-    { [ -f "$repo/install.sh" ] && bash "$repo/install.sh" >/dev/null; } && echo "  symlinks/hooks resynchronisés."
+    [ -f "$repo/install-dev.sh" ] && bash "$repo/install-dev.sh" >/dev/null && echo "  symlinks/hooks resynchronisés."
     echo "✓ config à jour."
   else
     echo "✗ git pull a échoué (voir ci-dessus)."
@@ -143,9 +143,44 @@ dev() {
       RESUME*)   _dev_launch "$cwd" "$id" ;;
       RECREATE*) _dev_recreate "$cwd" "$id" ;;   # fermer & relancer (session ● en cours)
       SERVER*)   SRV_HOST="$cwd" srv "$id" ;;    # dev distant : $cwd=hôte ; $id=cwd distant (vide → picker serveur ; sinon attache la session)
+      ADJUST*)   _dev_adjust_auto "$cwd" "$(printf '%s' "$out" | cut -f3)" "$(printf '%s' "$out" | cut -f4)" ;;  # $cwd=machine, f3=cwd espace, f4=nom auto
       UPDATE*)   _dev_update ;;                  # met à jour la config dev (git pull) puis ré-affiche le picker
     esac
   done
+}
+
+# Ajuster une automatisation : ouvre le thedev CONCERNÉ par l'auto (son espace, machine +
+# cwd) et y ajoute un NOUVEAU pane claude « aside » déjà briefé sur la tâche (contexte
+# pré-écrit). Le prompt du feed est versionné/partagé (git) → on l'édite et on sync.
+#   $1=machine ('local' ou hôte ssh)  $2=cwd de l'espace  $3=nom de l'auto
+# Espace OUVERT (session zellij vivante) → on injecte l'aside dans la session existante par
+# son nom, puis on s'y attache. Espace FERMÉ → on ouvre le thedev, Claude principal briefé.
+_dev_adjust_auto() {
+  local machine="$1" cwd="$2" name="$3" sess task f
+  [ -n "$cwd" ] || { echo "✗ cwd de l'espace inconnu (espace fermé sans historique)"; sleep 1.5; return; }
+  sess=$(basename "$cwd")
+  task="Tu es un Claude d'AJUSTEMENT ouvert dans l'espace « $sess » (machine $machine). Objectif : améliorer l'automatisation thedev « $name » (timer $name.timer). Son prompt de mission est dans ~/jlal_perso/config/feeds/$name.prompt (versionné, partagé via git) — lis-le, propose et applique des améliorations (clarté, robustesse, anti-flood, étapes). Garde-le SYNCHRONE : jamais de Workflow/agent détaché dans une mission. Quand tu as fini : commit et push depuis ~/jlal_perso/config (le timer relira le prompt au prochain tir). Tu peux tester avec « systemctl --user start $name.service ». Ne touche pas au reste de l'espace."
+  f="$HOME/.cache/thedev/adjust-$name.txt"      # contexte passé par FICHIER (zéro quoting)
+
+  if [ "$machine" = local ]; then
+    if zellij list-sessions --no-formatting 2>/dev/null | grep -v EXITED | awk '{print $1}' | grep -qxF "$sess"; then
+      mkdir -p "$HOME/.cache/thedev"; printf '%s\n' "$task" > "$f"
+      zellij --session "$sess" action new-pane --floating --close-on-exit --cwd "$cwd" --name "ajuster $name" \
+        -- bash -lc "CLAUDE_PANE_INIT_FILE=$f CLAUDE_PANE_ONCE=1 exec claude-pane"
+      zellij attach "$sess"
+    else
+      CLAUDE_PANE_INIT="$task" _dev_launch "$cwd" ""     # espace fermé → on l'ouvre, Claude principal briefé
+    fi
+  else
+    # Distant : dépose le contexte (base64, zéro quoting) puis injecte l'aside si la session
+    # tourne ; dans tous les cas on s'attache ensuite au thedev concerné via srv.
+    local b64; b64=$(printf '%s\n' "$task" | base64 -w0 2>/dev/null || printf '%s\n' "$task" | base64)
+    ssh -o ConnectTimeout=8 "$machine" "mkdir -p ~/.cache/thedev; printf %s '$b64' | base64 -d > '$f'
+      if zellij list-sessions --no-formatting 2>/dev/null | grep -v EXITED | awk '{print \$1}' | grep -qxF '$sess'; then
+        PATH=\"\$HOME/.local/bin:\$PATH\" zellij --session '$sess' action new-pane --floating --close-on-exit --cwd '$cwd' --name 'ajuster $name' -- bash -lc 'CLAUDE_PANE_INIT_FILE=$f CLAUDE_PANE_ONCE=1 exec claude-pane'
+      fi" 2>/dev/null
+    SRV_HOST="$machine" srv "$cwd"
+  fi
 }
 
 # `thedev` — alias du nom de l'app vers la commande de lancement `dev`.

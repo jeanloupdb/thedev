@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# @thedev liens état des automatisations thedev de CETTE machine (timers systemd --user)
+# thedev-autos — une ligne TSV par automatisation : <état>\t<nom>\t<prochain>\t<dernier>
+#   état : running (une mission feed tourne) · active (timer planifié) · inactive (arrêté)
+# Convention : une automatisation thedev = un TIMER systemd --user dont le service activé a
+# une Description contenant « thedev ». → tout nouveau feed apparaît tout seul, zéro liste à tenir.
+# Lu par thedev-status ET l'accueil (écran infos), en local et via ssh.
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+ROOT="$HOME/.cache/thedev"
+command -v systemctl >/dev/null 2>&1 || exit 0
+
+systemctl --user list-unit-files --type=timer --no-legend 2>/dev/null | awk '{print $1}' | while read -r timer; do
+  [ -n "$timer" ] || continue
+  svc="${timer%.timer}.service"
+  desc=$(systemctl --user show "$svc" -p Description --value 2>/dev/null)
+  case "$desc" in *[Tt]hedev*) ;; *) continue ;; esac
+  name="${svc%.service}"
+
+  # en cours ? une mission feed-<name>-* encore dans work/
+  running=""
+  for w in "$ROOT"/spaces/*/work/feed-"$name"-*; do [ -d "$w" ] && { running=1; break; }; done
+
+  active=$(systemctl --user is-active "$timer" 2>/dev/null)
+  if   [ -n "$running" ];        then state=running
+  elif [ "$active" = active ];   then state=active
+  else                                state=inactive; fi
+
+  # prochain déclenchement — NextElapseUSecRealtime est rendu comme une DATE lisible
+  # (ex. « Sat 2026-06-13 08:00:00 CEST »), pas en microsecondes → on la parse via date -d.
+  next="—"
+  nval=$(systemctl --user show "$timer" -p NextElapseUSecRealtime --value 2>/dev/null)
+  if [ -n "$nval" ] && [ "$nval" != "n/a" ]; then
+    ne=$(date -d "$nval" +%s 2>/dev/null)
+    if [ -n "$ne" ]; then
+      rem=$(( ne - $(date +%s) ))
+      if   [ "$rem" -gt 86400 ]; then left="$((rem/86400))j"
+      elif [ "$rem" -gt 3600 ];  then left="$((rem/3600))h"
+      elif [ "$rem" -gt 60 ];    then left="$((rem/60))min"
+      else                            left="bientôt"; fi
+      next="$(date -d "$nval" '+%a %H:%M' 2>/dev/null) (dans $left)"
+    fi
+  fi
+
+  # dernier résultat : le done/ le plus récent de ce feed
+  last="—"
+  d=$(ls -dt "$ROOT"/spaces/*/done/feed-"$name"-* 2>/dev/null | head -1)
+  if [ -n "$d" ] && [ -f "$d/result" ]; then
+    last=$(grep -m1 -i '^Status:' "$d/result" 2>/dev/null | sed 's/.*[Ss]tatus: *//' | tr -d '\r' | cut -c1-14)
+    [ -n "$last" ] || last="?"
+  fi
+
+  # espace cible : d'abord l'espace ÉPINGLÉ dans l'ExecStart (« feed <name> <espace> »),
+  # qui est le lien réel et déterministe ; sinon, déduit de l'historique des missions.
+  esp=""
+  argv=$(systemctl --user show "$svc" -p ExecStart --value 2>/dev/null | sed -n 's/.*argv\[\]=\([^;]*\).*/\1/p')
+  esp=$(printf '%s' "$argv" | awk 'NF>=3{print $3}')   # « feed <name> <espace> » → $3
+  if [ -z "$esp" ]; then
+    ep=$(ls -dt "$ROOT"/spaces/*/done/feed-"$name"-* "$ROOT"/spaces/*/work/feed-"$name"-* "$ROOT"/spaces/*/inbox/feed-"$name"-*.mission 2>/dev/null | head -1)
+    [ -n "$ep" ] && { esp="${ep#"$ROOT"/spaces/}"; esp="${esp%%/*}"; }
+  fi
+
+  # ESPACE OUVERT ? = watcher vivant (links/<esp> présent ET son watcher_pid en vie).
+  # cwd = où relancer un thedev pour réactiver l'auto : depuis links/ si ouvert, sinon
+  # depuis le run.sh d'une mission archivée (on sait donc OÙ même quand l'espace est fermé).
+  open=0; cwd=""
+  if [ -n "$esp" ] && [ -f "$ROOT/links/$esp" ]; then
+    cwd=$(sed -n 's/^cwd=//p' "$ROOT/links/$esp" 2>/dev/null | head -1)
+    wpid=$(sed -n 's/^watcher_pid=//p' "$ROOT/links/$esp" 2>/dev/null | head -1)
+    [ -n "$wpid" ] && kill -0 "$wpid" 2>/dev/null && open=1
+  fi
+  if [ -z "$cwd" ] && [ -n "$esp" ]; then
+    rs=$(ls -dt "$ROOT"/spaces/"$esp"/done/feed-"$name"-*/run.sh 2>/dev/null | head -1)
+    [ -n "$rs" ] && cwd=$(sed -n 's/^cd \(.*\) || exit.*/\1/p' "$rs" 2>/dev/null | head -1)
+  fi
+
+  # mini-description : le parenthétique de la Description systemd, sinon la Description nettoyée
+  mdesc=$(printf '%s' "$desc" | sed -n 's/.*(\(.*\)).*/\1/p')
+  [ -n "$mdesc" ] || mdesc=$(printf '%s' "$desc" | sed 's/^[Tt]hedev[[:space:]]*[—:-]*[[:space:]]*//')
+
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$state" "$name" "$next" "$last" "$esp" "$cwd" "$mdesc" "$open"
+done

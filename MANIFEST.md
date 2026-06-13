@@ -18,7 +18,7 @@ Un **crun** = un pane long-running lancé dans la sandbox. Les espaces s'échang
 - **aside-button** — barre + pour ajouter un Claude aside a la stack
 - **claude-aside** — ouvre un Claude secondaire empile (aside) sans toucher la session
 - **claude-pane** — lance le Claude principal d'un pane (surcouche prompt, remote-control, auto-open liens)
-- **dev-quit-impact** — liste, en clair, ce que « fermer cet espace » va tuer/détacher.
+- **dev-quit-impact** — résumé COMPACT de ce que « fermer cet espace » va couper (Ctrl+Q).
 - **dev-quit-menu** — menu de fermeture propre de la session
 - **editor-pane** — pane nvim de la code page (badge VPS)
 - **git-pane** — pane git-centric (alias g/gs)

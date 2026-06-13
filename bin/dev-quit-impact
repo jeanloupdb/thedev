@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# @thedev session résumé COMPACT de ce que « fermer cet espace » va couper (Ctrl+Q).
+# dev-quit-impact <espace> — 2 lignes max, colorées (codes de la page autos). Rien si
+# l'espace est inerte. L'espace == le nom de session zellij (cf. espace_name).
+set -u
+esp="${1:-}"; [ -n "$esp" ] || exit 0
+ROOT="$HOME/.cache/thedev"
+R=$'\033[0m'; D=$'\033[2m'; MAG=$'\033[1;35m'; RED=$'\033[1;31m'
+IND='              '   # indentation : aligne sous le mot « FERMER » du menu
+
+join_dot(){ local out="" p; for p in "$@"; do out="${out:+$out · }$p"; done; printf '%s' "$out"; }
+
+# Ce qui est TUÉ : missions/crons en cours, agents sandbox, watcher.
+kill_parts=()
+nm=$(find "$ROOT/spaces/$esp/work" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)
+[ "${nm:-0}" -gt 0 ] && kill_parts+=("$nm mission$([ "$nm" -gt 1 ] && echo s)")
+if command -v crun >/dev/null 2>&1; then
+  na=$(crun list 2>/dev/null | awk '/^● /{ if ($2 !~ /^link-/ && $2 !~ /^mission-/) c++ } END{print c+0}')
+  [ "${na:-0}" -gt 0 ] && kill_parts+=("$na agent$([ "$na" -gt 1 ] && echo s)")
+fi
+
+# Watcher vivant ? On ne le liste PAS (plomberie interne, présent dans tout thedev) :
+# sa coupure est déjà signifiée par les automatisations rattachées qui passent ○ inactives.
+autos=()
+if [ -f "$ROOT/links/$esp" ]; then
+  wpid=$(sed -n 's/^watcher_pid=//p' "$ROOT/links/$esp" 2>/dev/null | head -1)
+  if [ -n "$wpid" ] && kill -0 "$wpid" 2>/dev/null; then
+    if command -v thedev-autos >/dev/null 2>&1; then
+      while IFS=$'\t' read -r _s name _n _l e _rest; do
+        [ "$e" = "$esp" ] && autos+=("$name")
+      done < <(thedev-autos 2>/dev/null)
+    fi
+  fi
+fi
+
+[ ${#kill_parts[@]} -eq 0 ] && [ ${#autos[@]} -eq 0 ] && exit 0
+
+[ ${#kill_parts[@]} -gt 0 ] && \
+  printf '%s%s✗%s %s%s%s\n' "$IND" "$RED" "$R" "$RED" "$(join_dot "${kill_parts[@]}")" "$R"
+[ ${#autos[@]} -gt 0 ] && \
+  printf '%s%s○%s %s%s%s %s→ inactive%s\n' "$IND" "$RED" "$R" "$MAG" "$(join_dot "${autos[@]}")" "$R" "$D" "$R"
