@@ -1,7 +1,7 @@
 # thedev — manifest
 
 > **Généré** par `thedev-manifest` depuis les tags `# @thedev` des scripts `bin/`.
-> Ne pas éditer à la main. Régénérer : `thedev-manifest --write`. 20 commandes.
+> Ne pas éditer à la main. Régénérer : `thedev-manifest --write`. 26 commandes.
 
 ## Modèle mental
 
@@ -18,6 +18,7 @@ Un **crun** = un pane long-running lancé dans la sandbox. Les espaces s'échang
 - **aside-button** — barre + pour ajouter un Claude aside a la stack
 - **claude-aside** — ouvre un Claude secondaire empile (aside) sans toucher la session
 - **claude-pane** — lance le Claude principal d'un pane (surcouche prompt, remote-control, auto-open liens)
+- **dev-quit-impact** — liste, en clair, ce que « fermer cet espace » va tuer/détacher.
 - **dev-quit-menu** — menu de fermeture propre de la session
 - **editor-pane** — pane nvim de la code page (badge VPS)
 - **git-pane** — pane git-centric (alias g/gs)
@@ -33,8 +34,9 @@ Un **crun** = un pane long-running lancé dans la sandbox. Les espaces s'échang
 - **crun** — lance et gere tout process long-running dans la sandbox (dedup, vivacite, crun alive)
 
 ### Liens cross-machine
-- **mission** — envoie une mission a un espace distant et attend le resultat (--model)
+- **mission** — envoie une mission a un espace distant (async par defaut, result/list/cancel)
 - **ship** — pousse un dossier local vers une machine (rsync, respecte gitignore)
+- **thedev-autos** — état des automatisations thedev de CETTE machine (timers systemd --user)
 - **thedev-link** — ouvre un espace aux missions entrantes (watcher inbox, modele via Model:)
 - **thedev-status** — board cross-machine compact (espaces ouverts, missions en cours, cruns)
 
@@ -45,17 +47,14 @@ Un **crun** = un pane long-running lancé dans la sandbox. Les espaces s'échang
 - **tsnode** — expose un service local 127.0.0.1 en HTTPS public (Tailscale Funnel)
 
 ### Infra
+- **claude-window-usage** — % d'utilisation de la fenêtre de rate-limit Max 5x (5h/7d) — GRATUIT
 - **heartbeat-run** — heartbeat autonome (DORMANT, coupe 2026-06 pour cout)
 - **thedev-manifest** — genere le manifest de thedev depuis les tags @thedev des scripts bin/
+- **thedev-metrics** — métriques limitantes locales (RAM/disque/load) — source unique
 
-## Capacités composables
-
-Ce que tu peux *faire* en combinant les briques (au-delà des commandes prises une à une) :
-
-- **Exposer n'importe quel site/service en public, via un VPS** : `ship <vps> .` (pousse le code) → `mission <vps>/<espace> "lance-le bindé sur 127.0.0.1:<port> puis tsnode <nom> <port>"` → URL `https://<nom>.<tailnet>.ts.net` publique (Tailscale Funnel, sans ouvrir de port ni toucher au reste du serveur). Marche même depuis une machine sans IP publique.
-- **Déléguer un vrai chantier à une autre machine** : `mission [--model <m>] <machine>/<espace> "…"` — le Claude distant peut lui-même lancer un workflow (armée d'agents), sur l'abonnement. `TIMEOUT=0` pour un chantier long.
-- **Voir l'état de tout le parc d'un coup d'œil** : `thedev-status` (espaces ouverts, missions en cours, cruns vivants/morts par machine) sans ssh manuel.
-- **Plusieurs Claude en parallèle dans un espace** + les **retrouver après un quit** (asides + registre de reprise).
+### Autres
+- **feed** (veille) — déclenche un feed (cron-as-mission) : dépose une mission locale dans l'inbox
+- **tg** (veille) — envoie texte/photo sur Telegram (Bot API, curl) — livraison des feeds & alertes
 
 ## Dépendances externes
 

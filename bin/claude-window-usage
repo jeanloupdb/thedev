@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# @thedev infra % d'utilisation de la fenêtre de rate-limit Max 5x (5h/7d) — GRATUIT
+# Source : endpoint OAuth interne que Claude Code utilise lui-même
+#   GET https://api.anthropic.com/api/oauth/usage   (Bearer = token abonnement)
+# C'est un GET de MÉTADONNÉES : zéro inférence, zéro token, zéro crédit (≠ claude -p).
+#   défaut  : JSON brut (depuis le cache)
+#   --pct   : "5h <n> 7d <n>" (floor), pour thedev-metrics
+# Rafraîchi en FOND (jamais bloquant) si le cache dépasse TTL ; lock anti-stampede.
+# Token lu dans ~/.claude/.credentials.json (.claudeAiOauth) — JAMAIS loggé. Échec
+# silencieux (pas de token / hors-ligne / 401) → aucune sortie (la barre n'affiche rien).
+set -u
+CRED="$HOME/.claude/.credentials.json"
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/claude-window-usage.json"
+TTL=90
+
+fresh() { [ -f "$CACHE" ] && [ $(( $(date +%s) - $(stat -c %Y "$CACHE" 2>/dev/null || echo 0) )) -lt "$TTL" ]; }
+
+fetch() {   # met à jour le cache (appelé en fond)
+  command -v jq >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 || return
+  local tok; tok=$(jq -r '.claudeAiOauth.accessToken // empty' "$CRED" 2>/dev/null)
+  [ -n "$tok" ] || return
+  local resp; resp=$(curl -sS -m 10 \
+    -H "Authorization: Bearer $tok" -H "anthropic-beta: oauth-2025-04-20" \
+    https://api.anthropic.com/api/oauth/usage 2>/dev/null)
+  printf '%s' "$resp" | jq -e '.five_hour.utilization' >/dev/null 2>&1 || return
+  mkdir -p "$(dirname "$CACHE")"; printf '%s' "$resp" > "$CACHE"
+}
+
+# Rafraîchi en fond si périmé (un seul à la fois via flock), sans bloquer l'appelant.
+if ! fresh; then
+  mkdir -p "$(dirname "$CACHE")"
+  ( flock -n 9 && fetch ) 9>"$CACHE.lock" >/dev/null 2>&1 &
+fi
+[ -f "$CACHE" ] || exit 0   # pas encore de donnée → silencieux
+
+case "${1:-}" in
+  --pct) jq -r '"5h \(.five_hour.utilization|floor) 7d \(.seven_day.utilization|floor)"' "$CACHE" 2>/dev/null ;;
+  *)     cat "$CACHE" 2>/dev/null ;;
+esac

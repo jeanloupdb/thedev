@@ -583,7 +583,9 @@ class Picker:
                 m = []
                 for ln in out.splitlines():
                     p = ln.split("\t")
-                    if p[0] == "RAM" and len(p) >= 2:
+                    if p[0] == "CLAUDE" and len(p) >= 3:
+                        m.append(("CLAUDE", p[1], int(p[2])))
+                    elif p[0] == "RAM" and len(p) >= 2:
                         m.append(("RAM", int(p[1])))
                     elif p[0] == "DISK" and len(p) >= 3:
                         m.append(("DISK", p[1], int(p[2])))
@@ -991,7 +993,10 @@ class Picker:
             for it in self.metrics:
                 if segs:
                     segs.append((" · ", curses.A_DIM))
-                if it[0] == "RAM":
+                if it[0] == "CLAUDE":
+                    win, p = it[1], it[2]
+                    segs.append(("Claude %s %d%%" % (win, p), pcol(p)))
+                elif it[0] == "RAM":
                     p = it[1]; f = int(round(p * 5 / 100))
                     segs.append(("RAM %s %d%%" % ("▓" * f + "░" * (5 - f), p), pcol(p)))
                 elif it[0] == "DISK":
@@ -1153,9 +1158,12 @@ class Picker:
                 else:
                     icon, icol = "●", self.YEL
                 dossier = a.get("espace") or os.path.basename((a.get("cwd") or "").rstrip("/")) or "?"
-                seg_line([("  " + ("▸ " if sel else "  "), 0), (icon + " ", icol),
-                          ("%s.%s." % (a["machine"], dossier), curses.A_DIM),
-                          (a["name"], self.MAG | curses.A_BOLD)])
+                segs = [("  " + ("▸ " if sel else "  "), 0), (icon + " ", icol),
+                        ("%s.%s." % (a["machine"], dossier), curses.A_DIM),
+                        (a["name"], self.MAG | curses.A_BOLD)]
+                if a.get("desc"):                       # la petite phrase qui explique l'auto
+                    segs.append(("  — " + a["desc"], curses.A_DIM))
+                seg_line(segs)
                 if sel:
                     try:
                         self.scr.chgat(y[0] - 1, 2, W - 4, curses.A_REVERSE)
