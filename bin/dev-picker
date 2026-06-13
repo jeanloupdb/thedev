@@ -811,9 +811,16 @@ class Picker:
                     rows.extend(rc_rows)
             # épinglé tout en bas du panneau (footer) : écran d'infos pratiques
             with self.rc_lock:
-                na = None if self.autos is None else len(self.autos)
-            rows.append({"kind": "act", "id": "autos", "footer": True,
-                         "text": "automatisation" + ("" if na is None else " [%d]" % na)})
+                if self.autos is None:
+                    nop = ninact = None
+                else:
+                    nop = sum(1 for a in self.autos
+                              if a["state"] in ("active", "running") and a.get("open"))
+                    ninact = len(self.autos) - nop
+            # bouton masqué s'il n'y a aucune automatisation (mais affiché pendant le chargement)
+            if nop is None or (nop + ninact) > 0:
+                rows.append({"kind": "act", "id": "autos", "footer": True,
+                             "text": "automatisations", "nop": nop, "ninact": ninact})
             rows.append({"kind": "act", "id": "infos", "text": "ⓘ infos", "footer": True})
             return rows
         rows = [
@@ -896,14 +903,32 @@ class Picker:
         return off
 
     def _auto_count(self, machine, cwd):
-        """Nombre d'automatisations rattachées à (machine, cwd) — pour le badge magenta.
+        """(total, arrêtées) des automatisations rattachées à (machine, cwd) — pour le badge.
         Matching par CWD (le dossier de l'espace) et non par nom : robuste même si le nom
-        de session diffère du basename du cwd."""
+        de session diffère du basename du cwd. Le 2e nombre alimente le ○ rouge (timer stoppé)."""
         c = (cwd or "").rstrip("/")
         if not c:
-            return 0
-        return sum(1 for a in (self.autos or [])
-                   if a.get("machine") == machine and (a.get("cwd") or "").rstrip("/") == c)
+            return (0, 0)
+        rel = [a for a in (self.autos or [])
+               if a.get("machine") == machine and (a.get("cwd") or "").rstrip("/") == c]
+        ns = sum(1 for a in rel
+                 if not (a["state"] in ("active", "running") and a.get("open")))
+        return (len(rel), ns)
+
+    def _auto_badge(self, machine, cwd):
+        """Segments du badge auto pour une ligne de session, même affichage que le footer :
+        ● N opérationnelles (violet) + ○ M inactives (rouge). Rien si aucune auto rattachée ;
+        pas de puce pour un compteur nul."""
+        na, ns = self._auto_count(machine, cwd)
+        if not na:
+            return []
+        nop = na - ns
+        segs = []
+        if nop:
+            segs.append(("  ● %d" % nop, self.MAG | curses.A_BOLD))
+        if ns:
+            segs.append(("  ○ %d" % ns, self.RED | curses.A_BOLD))
+        return segs
 
     def render_row(self, r, is_sel):
         """Retourne une liste de segments [(texte, attr), …]."""
@@ -919,9 +944,7 @@ class Picker:
             if r.get("remote"):
                 segs += [("remote", curses.A_DIM), (".", 0)]
             segs += [(r["name"], 0), ("  (%d)" % r.get("nclaude", 0), curses.A_DIM)]
-            na = self._auto_count(r["host"], r.get("cwd", ""))
-            if na:
-                segs.append(("  [%d]" % na, self.MAG))
+            segs += self._auto_badge(r["host"], r.get("cwd", ""))
             return segs
         if r["kind"] == "input":
             return [("    ▸ " + r.get("text", "") + "▏", self.GREEN | curses.A_BOLD)]
@@ -932,8 +955,14 @@ class Picker:
         if r["kind"] == "act":
             if r.get("id") == "update_dev":   # mise à jour dispo : jaune, bien visible
                 return [(p + r["text"], self.YEL | curses.A_BOLD)]
-            if r.get("id") == "autos":        # automatisations : couleur dédiée (magenta)
-                return [(p + r["text"], self.MAG | curses.A_BOLD)]
+            if r.get("id") == "autos":        # automatisations : ● violet opérationnelles + ○ rouge inactives
+                segs = [(p + r["text"], self.MAG | curses.A_BOLD)]
+                nop, ninact = r.get("nop"), r.get("ninact")
+                if nop:                       # pas de puce opérationnelle si 0
+                    segs.append(("  ● %d" % nop, self.MAG | curses.A_BOLD))
+                if ninact:                    # pas de puce inactive si 0
+                    segs.append(("  ○ %d" % ninact, self.RED | curses.A_BOLD))
+                return segs
             segs = [(p + r["text"], self.GREEN)]
             if r.get("err"):                  # serveur injoignable : croix + raison en gris
                 segs += [("  ✗ ", curses.A_DIM), (r["err"], curses.A_DIM)]
@@ -951,9 +980,7 @@ class Picker:
         if self.vps:                  # sur un VPS : ces sessions sont « remote » (préfixe gris)
             segs.append(("remote.", curses.A_DIM))
         segs.append((w["name"], (self.CYAN | curses.A_BOLD) if live else self.pcolor(w["name"])))
-        na = self._auto_count("local", w.get("cwd", ""))
-        if na:
-            segs.append(("  [%d]" % na, self.MAG))
+        segs += self._auto_badge("local", w.get("cwd", ""))
         return segs
 
     def header_line(self):
@@ -984,29 +1011,33 @@ class Picker:
             col += len(tag) + 1
         if self.msg:
             self.scr.addnstr(H - 1, col, self.msg, max(0, W - col - 1), self.YEL)
-        # bande des métriques limitantes, alignée à droite : RAM (barre) · disque · load,
-        # colorées par sévérité (vert<70 · jaune<88 · rouge sinon). Skippée si pas la place.
+        # bande des métriques limitantes (droite) : une JAUGE par métrique → on lit le
+        # niveau d'un coup d'œil, colonnes séparées par │, couleur par sévérité.
         if self.metrics:
             def pcol(p):
                 return self.GREEN if p < 70 else (self.YEL if p < 88 else self.RED)
+            def gauge(p):                       # % 0-100 → barre 4 cases █/░
+                f = max(0, min(4, int(round(p * 4 / 100))))
+                return "█" * f + "░" * (4 - f)
             segs = []
             for it in self.metrics:
                 if segs:
-                    segs.append((" · ", curses.A_DIM))
+                    segs.append((" │ ", curses.A_DIM))
                 if it[0] == "CLAUDE":
                     win, p = it[1], it[2]
-                    segs.append(("Claude %s %d%%" % (win, p), pcol(p)))
+                    segs.append(("Claude %s %s %d%%" % (win, gauge(p), p), pcol(p)))
                 elif it[0] == "RAM":
-                    p = it[1]; f = int(round(p * 5 / 100))
-                    segs.append(("RAM %s %d%%" % ("▓" * f + "░" * (5 - f), p), pcol(p)))
+                    p = it[1]
+                    segs.append(("RAM %s %d%%" % (gauge(p), p), pcol(p)))
                 elif it[0] == "DISK":
                     mnt, p = it[1], it[2]
-                    lbl = "disque" if mnt == "/" else "disque " + mnt
-                    segs.append(("%s %d%%" % (lbl, p), pcol(p)))
+                    lbl = "disque" if mnt == "/" else mnt
+                    segs.append(("%s %s %d%%" % (lbl, gauge(p), p), pcol(p)))
                 elif it[0] == "LOAD":
                     v, n = it[1], it[2]
+                    f = max(0, min(4, int(round(v / n * 4))))
                     c = self.GREEN if v < n * 0.7 else (self.YEL if v < n else self.RED)
-                    segs.append(("load %s" % v, c))
+                    segs.append(("load %s %s" % ("█" * f + "░" * (4 - f), v), c))
             total = sum(len(t) for t, _ in segs)
             x = W - 2 - total
             if x > col + 1:               # ne pas écraser le badge/msg
@@ -1141,9 +1172,10 @@ class Picker:
                 self.ai = len(autos) - 1
             if self.ai < -1:
                 self.ai = -1
-            # Une ligne compacte par auto : <server>.<dossier>.<nom violet>. L'icône colorée
-            # résume l'état (○ rouge arrêté · ● vert actif+accès · ● jaune actif sans accès).
-            # Le détail (état/accès, prochain, action) ne se déplie QUE sur la sélection.
+            # Une ligne compacte par auto : <server>.<dossier>.<nom violet>. État BINAIRE :
+            # opérationnelle (● vert) = timer actif ET Claude présent ; sinon arrêtée (○ rouge).
+            # Pas d'état intermédiaire : sans Claude, le feed ne se lance pas → autant la dire
+            # arrêtée. Le détail (cause + action) ne se déplie QUE sur la sélection.
             for a in autos:
                 if y[0] >= H - 2:
                     break
@@ -1151,12 +1183,11 @@ class Picker:
                 sel = (idx == self.ai)
                 actif = a["state"] in ("active", "running")
                 acces = bool(a.get("open"))
-                if not actif:
-                    icon, icol = "○", self.RED
-                elif acces:
+                op = actif and acces                      # opérationnelle ssi les deux sont bons
+                if op:
                     icon, icol = ("►" if a["state"] == "running" else "●"), self.GREEN
                 else:
-                    icon, icol = "●", self.YEL
+                    icon, icol = "○", self.RED
                 dossier = a.get("espace") or os.path.basename((a.get("cwd") or "").rstrip("/")) or "?"
                 segs = [("  " + ("▸ " if sel else "  "), 0), (icon + " ", icol),
                         ("%s.%s." % (a["machine"], dossier), curses.A_DIM),
@@ -1169,18 +1200,19 @@ class Picker:
                         self.scr.chgat(y[0] - 1, 2, W - 4, curses.A_REVERSE)
                     except curses.error:
                         pass
-                    seg_line([("        ", 0),
-                              ("actif" if actif else "arrêté", self.GREEN if actif else self.RED),
-                              (" · accès ", curses.A_DIM),
-                              ("ok" if acces else "ko", self.GREEN if acces else self.RED),
-                              ("   ·   prochain %s" % a["next"], curses.A_DIM)])
-                    if not actif:
-                        line("        ↵ réactiver", self.CYAN | curses.A_BOLD)
-                    elif not acces:
-                        line("        ▲ relance un thedev dans %s sur %s (↵)" % (a.get("cwd") or "?", a["machine"]),
-                             self.YEL | curses.A_BOLD)
-                    else:
+                    if op:
+                        seg_line([("        ", 0), ("opérationnelle", self.GREEN),
+                                  ("   ·   prochain %s" % a["next"], curses.A_DIM)])
                         line("        ↵ rejoindre", curses.A_DIM)
+                    else:
+                        cause = "timer stoppé" if not actif else "pas de Claude dans l'espace"
+                        seg_line([("        ", 0), ("arrêtée", self.RED | curses.A_BOLD),
+                                  (" — " + cause, curses.A_DIM)])
+                        if not actif:
+                            line("        ↵ réactiver le timer", self.CYAN | curses.A_BOLD)
+                        else:
+                            line("        ▲ relance un thedev dans %s sur %s (↵)" % (a.get("cwd") or "?", a["machine"]),
+                                 self.YEL | curses.A_BOLD)
         self._autos_flat = flat
         self.draw_status(H, W)
         self.scr.noutrefresh()

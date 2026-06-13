@@ -38,19 +38,21 @@ G=$'\033[1;32m'; Y=$'\033[1;33m'; R=$'\033[1;31m'; D=$'\033[2m'; Z=$'\033[0m'
 col_pct() { if   [ "${1:-0}" -lt 70 ] 2>/dev/null; then printf '%s' "$G"
            elif [ "${1:-0}" -lt 88 ] 2>/dev/null; then printf '%s' "$Y"
            else printf '%s' "$R"; fi; }
-bar() { local p=${1:-0} f=$(( (${1:-0}*5+50)/100 )) i s=""; for ((i=0;i<5;i++)); do [ "$i" -lt "$f" ] && s+="▓" || s+="░"; done; printf '%s' "$s"; }
+barn()   { local f=${1:-0} i s=""; [ "$f" -lt 0 ] && f=0; [ "$f" -gt 4 ] && f=4; for ((i=0;i<4;i++)); do [ "$i" -lt "$f" ] && s+="█" || s+="░"; done; printf '%s' "$s"; }
+barpct() { barn "$(( (${1:-0}*4+50)/100 ))"; }   # % 0-100 → barre 4 cases
 
 out=""
-add() { [ -n "$out" ] && out+="${D} · ${Z}"; out+="$1"; }
-[ -n "$CLAUDE5H" ] && add "$(col_pct "$CLAUDE5H")Claude 5h ${CLAUDE5H}%${Z}"
-[ -n "$RAM" ] && add "$(col_pct "$RAM")RAM $(bar "$RAM") ${RAM}%${Z}"
+add() { [ -n "$out" ] && out+="${D} │ ${Z}"; out+="$1"; }   # colonnes (│) plutôt que phrase (·)
+[ -n "$CLAUDE5H" ] && add "$(col_pct "$CLAUDE5H")Claude 5h $(barpct "$CLAUDE5H") ${CLAUDE5H}%${Z}"
+[ -n "$RAM" ] && add "$(col_pct "$RAM")RAM $(barpct "$RAM") ${RAM}%${Z}"
 for d in "${DISKS[@]}"; do
-  m="${d%%:*}"; p="${d##*:}"; lbl="disque"; [ "$m" = "/" ] || lbl="disque $m"
-  add "$(col_pct "$p")${lbl} ${p}%${Z}"
+  m="${d%%:*}"; p="${d##*:}"; lbl="disque"; [ "$m" = "/" ] || lbl="$m"
+  add "$(col_pct "$p")${lbl} $(barpct "$p") ${p}%${Z}"
 done
 if [ -n "$LOAD" ]; then
   lc=$(awk -v l="$LOAD" -v n="$ncpu" 'BEGIN{ if(l<n*0.7)print"g"; else if(l<n)print"y"; else print"r" }')
+  lf=$(awk -v l="$LOAD" -v n="$ncpu" 'BEGIN{f=int(l/n*4+0.5); if(f<0)f=0; if(f>4)f=4; print f}')
   case "$lc" in g) c=$G;; y) c=$Y;; *) c=$R;; esac
-  add "${c}load ${LOAD}${Z}"
+  add "${c}load $(barn "$lf") ${LOAD}${Z}"
 fi
 printf '%s' "$out"
