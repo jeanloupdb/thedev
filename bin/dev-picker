@@ -189,51 +189,74 @@ def _read_json(path):
 
 
 def gather_infos(vps, update_available, head):
-    import socket
-    import time
-    info = {}
+    """Données du dashboard Infos. Renvoie une LISTE de sections [(titre, [items])],
+    items = str (ligne dim) ou ('gauge', label, pct, détail) ou ('kv', clé, valeur)."""
+    import socket, time, shutil
+    sections = []
 
-    # --- Contexte & version ---
-    hostname = (subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip()
-                if True else "") or socket.gethostname()
+    # ── thedev ──
+    hostname = subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip() or socket.gethostname()
+    ncmd = "?"
     try:
-        ip = subprocess.run(["hostname", "-I"], capture_output=True, text=True,
-                            timeout=2).stdout.split()
-        ip = ip[0] if ip else ""
-    except Exception:
-        ip = ""
-    maj = "mise à jour dispo (⟳)" if update_available else "à jour"
-    info["Contexte & version"] = [
-        "hôte : %s" % (("VPS · " + vps) if vps else "local"),
-        "machine : %s%s" % (hostname, ("  ·  " + ip) if ip else ""),
-        "config : %s  (%s)" % (head or "?", maj),
-    ]
-
-    # --- État live ---
-    claudes = [p for p in (l.split("\t") for l in _read_file("~/.cache/dev-claudes").splitlines())
-               if len(p) >= 7 and p[0] and p[6].strip() == "0"]
-    busy = 0
-    try:
-        now = time.time()
-        bd = os.path.expanduser("~/.cache/dev-claude-busy")
-        busy = sum(1 for fn in os.listdir(bd) if now - os.path.getmtime(os.path.join(bd, fn)) < 1800)
+        out = subprocess.run([os.path.expanduser("~/.local/bin/thedev-manifest"), "--scripts"],
+                             capture_output=True, text=True, timeout=4).stdout
+        ncmd = str(len([x for x in out.splitlines() if x.strip()]))
     except Exception:
         pass
-    agents = [l for l in _read_file("~/.cache/claude-agents").splitlines() if l.strip()]
-    daemon = _read_json("~/.claude/daemon-auth-status.json")
-    workers = (_read_json("~/.claude/daemon/roster.json").get("workers") or {})
-    rc = {"auth_required": "auth requise (à appairer)", "": "inactif",
-          "ready": "prêt", "active": "actif"}.get(daemon.get("status", ""), daemon.get("status") or "inactif")
-    info["État live"] = [
-        "%d session(s)   ·   %d Claude%s   ·   %d crun" % (
-            len(live_sessions()), len(claudes), ("  (%d busy)" % busy) if busy else "", len(agents)),
-        "remote control : %s%s" % (rc, ("  ·  %d exposée(s)" % len(workers)) if isinstance(workers, dict) and workers else ""),
-    ]
+    claudes = [p for p in (l.split("\t") for l in _read_file("~/.cache/dev-claudes").splitlines())
+               if len(p) >= 7 and p[0] and p[6].strip() == "0"]
+    nesp = len({p[1] for p in claudes})
+    ncrun = len([l for l in _read_file("~/.cache/claude-agents").splitlines() if l.strip()])
+    nsess = len(live_sessions())
+    autos_local = fetch_autos("local")
+    nact = sum(1 for a in autos_local if a.get("state") in ("active", "running"))
+    maj = ("⟳ maj dispo", "yel") if update_available else ("à jour", "grn")
+    sections.append(("thedev", [
+        ("kv", "version", "%s   " % (head or "?")),
+        ("kv", "à jour", maj),
+        ("kv", "commandes", "%s" % ncmd),
+        ("kv", "espaces", "%d ouvert(s) · %d session(s) zellij" % (nesp, nsess)),
+        ("kv", "actifs", "%d Claude · %d crun · %d/%d auto" % (len(claudes), ncrun, nact, len(autos_local))),
+    ]))
 
-    # --- Santé système ---
-    # Items « gauge » = (type, label, pct, détail) → barre visuelle dans draw_infos.
+    # ── Claude (plan + fenêtre Max 5x via endpoint OAuth) ──
+    conf = _read_json("~/.claude.json")
+    acc = conf.get("oauthAccount", {})
+    cl = []
+    if acc:
+        plan = {"claude_max": "Max", "claude_pro": "Pro", "claude_team": "Team"}.get(
+            acc.get("organizationType", ""), acc.get("organizationType", "") or "?")
+        mult = next((x for x in ("20x", "5x") if x in acc.get("organizationRateLimitTier", "")), "")
+        cl.append(("kv", "plan", "Claude %s %s" % (plan, mult)))
+    try:
+        subprocess.run([os.path.expanduser("~/.local/bin/claude-window-usage")],
+                       capture_output=True, timeout=6)
+    except Exception:
+        pass
+    win = _read_json("~/.cache/claude-window-usage.json")
+    fh = win.get("five_hour") or {}
+    if fh.get("utilization") is not None:
+        reset = (fh.get("resets_at") or "")[11:16]
+        cl.append(("gauge", "fenêtre 5h", fh["utilization"], ("reset " + reset) if reset else ""))
+    sd = win.get("seven_day") or {}
+    if sd.get("utilization") is not None:
+        cl.append(("gauge", "7 jours", sd["utilization"], ""))
+    if not cl:
+        cl.append("(pas de compte Claude détecté)")
+    sections.append(("Claude", cl))
+
+    # ── système ──
     health = []
-    import shutil
+    try:
+        mem = {}
+        for ln in _read_file("/proc/meminfo").splitlines():
+            k, _, v = ln.partition(":")
+            mem[k] = int(v.split()[0]) if v.split() else 0
+        tot, avail = mem.get("MemTotal", 0) / 1e6, mem.get("MemAvailable", 0) / 1e6
+        if tot:
+            health.append(("gauge", "RAM", 100 * (tot - avail) / tot, "%.1f / %.1f Go" % (tot - avail, tot)))
+    except Exception:
+        pass
     for mnt in ("/", "/data"):
         if mnt != "/" and not os.path.isdir(mnt):
             continue
@@ -243,65 +266,15 @@ def gather_infos(vps, update_available, head):
         except Exception:
             pass
     try:
-        mem = {}
-        for line in _read_file("/proc/meminfo").splitlines():
-            k, _, v = line.partition(":")
-            mem[k] = int(v.split()[0]) if v.split() else 0
-        tot, avail = mem.get("MemTotal", 0) / 1e6, mem.get("MemAvailable", 0) / 1e6
-        if tot:
-            health.append(("gauge", "RAM", 100 * (tot - avail) / tot, "%.1f / %.1f Go" % (tot - avail, tot)))
-    except Exception:
-        pass
-    try:
         la = _read_file("/proc/loadavg").split()[:3]
         up = float(_read_file("/proc/uptime").split()[0])
         d, h, m = int(up // 86400), int(up % 86400 // 3600), int(up % 3600 // 60)
-        health.append("charge %s   ·   up %s%dh%02d" % (" ".join(la), ("%dj " % d) if d else "", h, m))
+        health.append(("kv", "charge", "%s   ·   up %s%dh%02d" % (" ".join(la), ("%dj " % d) if d else "", h, m)))
     except Exception:
         pass
-    info["Santé système"] = health
+    sections.append(("système", health))
 
-    # --- Abonnement Claude (~/.claude.json) ---
-    conf = _read_json("~/.claude.json")
-    acc = conf.get("oauthAccount", {})
-    sub = []
-    if acc:
-        plan = {"claude_max": "Max", "claude_pro": "Pro", "claude_team": "Team"}.get(
-            acc.get("organizationType", ""), acc.get("organizationType", "") or "?")
-        tier = acc.get("organizationRateLimitTier", "")
-        mult = next((x for x in ("20x", "5x") if x in tier), "")
-        sub.append("plan : Claude %s%s" % (plan, (" " + mult) if mult else ""))
-        if acc.get("organizationName"):
-            sub.append("compte : %s" % acc["organizationName"])
-        end = (conf.get("cachedGrowthBookFeatures", {})
-                   .get("tengu_saffron_lattice", {}).get("planLimitsEndDate", ""))
-        if end:
-            sub.append("limites du plan jusqu'au %s" % end[:10])
-    else:
-        sub.append("(pas de compte Claude détecté)")
-    info["Abonnement Claude"] = sub
-
-    # --- Usage Claude (~/.claude/stats-cache.json) ---
-    # NB : stats-cache n'est PAS recalculé en continu par Claude — il peut dater
-    # de plusieurs jours/semaines. On affiche donc la VRAIE période enregistrée +
-    # la date du cache (pas un trompeur « 7 derniers jours »).
-    stats = _read_json("~/.claude/stats-cache.json")
-    days = [d for d in (stats.get("dailyActivity") or []) if d.get("date")]
-    usage = []
-    if days:
-        usage.append("%d jours enregistrés (%s → %s)" % (len(days), days[0]["date"], days[-1]["date"]))
-        usage.append("%d messages · %d sessions · %d appels d'outils" % (
-            sum(d.get("messageCount", 0) for d in days),
-            sum(d.get("sessionCount", 0) for d in days),
-            sum(d.get("toolCallCount", 0) for d in days)))
-        lc = stats.get("lastComputedDate", "")
-        usage.append("cache local du %s · /usage dans Claude pour le live"
-                     % (lc[:10] if lc else "?"))
-    else:
-        usage.append("(pas de stats locales — /usage dans Claude pour le live)")
-    info["Usage Claude"] = usage
-
-    return info
+    return sections
 
 
 # ----------------------------------------------------------------------------
@@ -1093,23 +1066,57 @@ class Picker:
         except curses.error:
             pass
         line("", 0)
+        HINT = {"grn": self.GREEN, "yel": self.YEL, "red": self.RED}
+        def header(t):                            # titre de section : ◆ TITRE
+            line("", 0) if y[0] > 4 else None
+            seg_line([("◆ ", self.CYAN), (t, self.CYAN | curses.A_BOLD)])
+        def kvline(k, txt, attr=0):               # clé en retrait alignée · valeur
+            seg_line([("   %-12s " % k, curses.A_DIM), (str(txt), attr)])
+        def render_parc():                        # machines distantes (worker RC du picker)
+            if not self.rc_hosts or y[0] >= H - 2:
+                return
+            with self.rc_lock:
+                rc = dict(self.rc_data)
+            header("parc")
+            kvline("local", "● %d session(s)" % len(live_sessions()), self.GREEN)
+            for host in self.rc_hosts:
+                if y[0] >= H - 1:
+                    break
+                d = rc.get(host) or {"loading": True}
+                if d.get("loading"):
+                    kvline(host, "…", curses.A_DIM)
+                elif d.get("error"):
+                    kvline(host, "○ %s" % d["error"], self.RED)
+                else:
+                    sess = d.get("sessions", [])
+                    if sess:
+                        np = sum(len(s.get("panes", [])) for s in sess)
+                        kvline(host, "● %d session(s) · %d Claude" % (len(sess), np), self.GREEN)
+                    else:
+                        kvline(host, "○ aucune session", self.YEL)
+
         if data is None:
             line("chargement…", curses.A_DIM)
         else:
-            for sec in ("Contexte & version", "État live", "Santé système",
-                        "Abonnement Claude", "Usage Claude"):
-                rows = data.get(sec)
-                if not rows or y[0] >= H - 2:
-                    continue
-                line(sec, self.CYAN | curses.A_BOLD)
+            for title, rows in data:              # data = liste de sections (titre, items)
+                if y[0] >= H - 2:
+                    break
+                header(title)
                 for it in rows:
                     if y[0] >= H - 1:
                         break
                     if isinstance(it, tuple) and it and it[0] == "gauge":
                         gauge(it[1], it[2], it[3])
+                    elif isinstance(it, tuple) and it and it[0] == "kv":
+                        v = it[2]
+                        if isinstance(v, tuple):
+                            kvline(it[1], v[0], HINT.get(v[1], 0))
+                        else:
+                            kvline(it[1], v)
                     else:
                         line("  " + str(it), curses.A_DIM)
-                y[0] += 1
+                if title == "Claude":             # le parc s'insère après Claude
+                    render_parc()
         self.draw_status(H, W)
         self.scr.noutrefresh()
         curses.doupdate()
