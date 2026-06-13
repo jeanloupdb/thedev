@@ -39,28 +39,44 @@ Serveur : `./install.sh --vps=<label>`. Dépendances : zellij, claude, nvim, pyt
 
 ## Ce que tu peux faire
 
-**🤖 Travailler avec l'IA**
-- **Plusieurs Claude en parallèle** dans un même espace de projet
-- Claude en **autonomie** (permissions en bypass) : il agit sans te demander à chaque étape
-- Des **panes auto-nommés** par sujet pour t'y retrouver entre 10 Claude
-- **Retrouver tes Claude** là où tu les avais laissés après avoir fermé
+<table>
+<tr>
+<td width="50%" valign="top">
 
-**🖧 Piloter tes machines**
-- **Déléguer une mission** à un autre ordi / un VPS : il bosse pour toi, sur ton abonnement
-- **Choisir le modèle** d'une mission (Fable / Opus / Sonnet…)
-- **Voir l'état de tout ton parc** d'un coup d'œil (sessions, missions, process) sans ssh
-- **Piloter une session VPS depuis l'app Claude** (téléphone / web), automatiquement
-- **Pousser un dossier** vers une machine en une commande
+### 🛰️ Déléguer à tes machines
+**Envoie une mission à un VPS** — il bosse pour toi, en autonomie, sur ton abonnement (pas d'API facturée).
+<br><br>
+<sub>Choisis le modèle (Fable / Opus / Sonnet) · vois l'état de tout ton parc d'un coup d'œil · pilote une session VPS depuis l'app Claude · pousse un dossier en une commande.</sub>
 
-**⚙️ Automatiser & exposer**
-- Faire **tourner des habitudes** par l'IA sur ton VPS (automatisations programmées, alertes Telegram)
-- **Exposer un site/service local en HTTPS public** via ton VPS — sans ouvrir un seul port (Tailscale)
-- Lancer et gérer **tout process long** (serveur, build, agent) dans une sandbox
+</td>
+<td width="50%" valign="top">
 
-**🎛️ Garder le contrôle**
-- Ton **usage Claude** (fenêtre Max 5x) + **RAM** + **CPU** sous les yeux en permanence, discret
-- Une page **Infos / dashboard** : version, parc, usage, santé système
-- **Tout sur ton abonnement** : pas de crédits, pas de port, pas de clé
+### 🌐 Expose un site, 0 port
+**Mets un site/service local en HTTPS public** via ton VPS, sans ouvrir un seul port (Tailscale).
+<br><br>
+<sub>Fais tourner des habitudes par l'IA sur ton serveur (automatisations programmées, alertes Telegram) · lance tout process long dans une sandbox.</sub>
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### 🤖 Une équipe de Claude
+**Plusieurs Claude en parallèle** dans un même espace, en autonomie (permissions bypass).
+<br><br>
+<sub>Panes auto-nommés par sujet pour t'y retrouver · retrouve tes Claude là où tu les avais laissés après un quit.</sub>
+
+</td>
+<td width="50%" valign="top">
+
+### 🎛️ Tout sous les yeux
+**Ton usage Claude (Max 5x) + RAM + CPU** affichés en permanence, discrètement.
+<br><br>
+<sub>Page Infos / dashboard (version, parc, santé système) · tout sur ton abonnement : 0 crédit, 0 port, 0 clé.</sub>
+
+</td>
+</tr>
+</table>
 
 ## Comment c'est organisé
 
