@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# @thedev infra métriques limitantes locales (RAM/disque/load) — source unique
+# Affichées en permanence : l'accueil (ligne du bas) et la ligne « ＋ Nouveau Claude ».
+#   thedev-metrics            bande ANSI colorée (vert<70 · jaune<88 · rouge sinon)
+#   thedev-metrics --raw      valeurs machine, 1/ligne (pour le picker, qui colore en curses)
+# RAM% et disque% = couperets DURS (OOM / écritures qui échouent). load = saturation
+# (à comparer aux cœurs). L'usage Claude n'est PAS lisible localement → `/usage` dans Claude.
+set -u
+ncpu=$(nproc 2>/dev/null || echo 1)
+
+ram_pct()  { awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} END{ if(t) printf "%.0f", 100*(t-a)/t }' /proc/meminfo 2>/dev/null; }
+disk_pct() { df -P "$1" 2>/dev/null | awk 'NR==2{gsub(/%/,"",$5); print $5}'; }
+load1()    { awk '{print $1}' /proc/loadavg 2>/dev/null; }
+
+RAM=$(ram_pct)
+DISKS=()
+for m in / /data; do
+  { [ "$m" = "/" ] || [ -d "$m" ]; } || continue
+  p=$(disk_pct "$m"); [ -n "$p" ] && DISKS+=("$m:$p")
+done
+LOAD=$(load1)
+
+if [ "${1:-}" = "--raw" ]; then
+  [ -n "$RAM" ] && printf 'RAM\t%s\n' "$RAM"
+  for d in "${DISKS[@]}"; do printf 'DISK\t%s\t%s\n' "${d%%:*}" "${d##*:}"; done
+  [ -n "$LOAD" ] && printf 'LOAD\t%s\t%s\n' "$LOAD" "$ncpu"
+  exit 0
+fi
+
+# --- bande ANSI (défaut) ---
+G=$'\033[1;32m'; Y=$'\033[1;33m'; R=$'\033[1;31m'; D=$'\033[2m'; Z=$'\033[0m'
+col_pct() { if   [ "${1:-0}" -lt 70 ] 2>/dev/null; then printf '%s' "$G"
+           elif [ "${1:-0}" -lt 88 ] 2>/dev/null; then printf '%s' "$Y"
+           else printf '%s' "$R"; fi; }
+bar() { local p=${1:-0} f=$(( (${1:-0}*5+50)/100 )) i s=""; for ((i=0;i<5;i++)); do [ "$i" -lt "$f" ] && s+="▓" || s+="░"; done; printf '%s' "$s"; }
+
+out=""
+[ -n "$RAM" ] && out+="$(col_pct "$RAM")RAM $(bar "$RAM") ${RAM}%${Z}"
+for d in "${DISKS[@]}"; do
+  m="${d%%:*}"; p="${d##*:}"; lbl="disque"; [ "$m" = "/" ] || lbl="disque $m"
+  out+="${D} · ${Z}$(col_pct "$p")${lbl} ${p}%${Z}"
+done
+if [ -n "$LOAD" ]; then
+  lc=$(awk -v l="$LOAD" -v n="$ncpu" 'BEGIN{ if(l<n*0.7)print"g"; else if(l<n)print"y"; else print"r" }')
+  case "$lc" in g) c=$G;; y) c=$Y;; *) c=$R;; esac
+  out+="${D} · ${Z}${c}load ${LOAD}${Z}"
+fi
+printf '%s' "$out"

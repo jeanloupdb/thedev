@@ -6,15 +6,21 @@
 
 g=$'\033[1;32m'; d=$'\033[2m'; r=$'\033[0m'
 while :; do
-  # 1 seule ligne : on réécrit en place (\r + efface jusqu'au bout), pas de \n
-  printf '\r\033[K %s＋ Nouveau Claude%s   %s[Entrée] ouvrir%s' "$g" "$r" "$d" "$r"
-  IFS= read -r line || { sleep 1; continue; }
-  case "$line" in
-    q|Q) : ;;
-    *)
-      # remonter dans la stack pour que le nouveau Claude s'y empile (pas dans la barre)
-      zellij action move-focus up 2>/dev/null
-      claude-aside
-      ;;
-  esac
+  # 1 seule ligne : « ＋ Nouveau Claude » à gauche + métriques limitantes à droite
+  # (RAM/disque/load, source unique thedev-metrics). On réécrit en place (\r + efface).
+  metrics="$(thedev-metrics 2>/dev/null)"
+  printf '\r\033[K %s＋ Nouveau Claude%s  %s[Entrée]%s   %s' "$g" "$r" "$d" "$r" "$metrics"
+  # read avec timeout : la ligne se rafraîchit toutes les 3 s même sans frappe.
+  if IFS= read -t 3 -r line; then
+    case "$line" in
+      q|Q) : ;;
+      *)
+        # remonter dans la stack pour que le nouveau Claude s'y empile (pas dans la barre)
+        zellij action move-focus up 2>/dev/null
+        claude-aside
+        ;;
+    esac
+  else
+    [ "$?" -le 128 ] && sleep 1   # EOF/erreur (pas un timeout) → évite la boucle folle
+  fi
 done
