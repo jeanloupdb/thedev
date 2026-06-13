@@ -270,8 +270,7 @@ def gather_infos(vps, update_available, head):
         load1 = float(_read_file("/proc/loadavg").split()[0])
         ncpu = os.cpu_count() or 1
         pct = min(100.0, load1 / ncpu * 100)
-        etat = "tranquille" if load1 < ncpu * 0.7 else ("chargé" if load1 < ncpu else "saturé")
-        health.append(("gauge", "charge CPU", pct, "%.1f / %d cœurs · %s" % (load1, ncpu, etat)))
+        health.append(("gauge", "charge CPU", pct, "%.1f / %d cœurs" % (load1, ncpu)))
     except Exception:
         pass
     try:
