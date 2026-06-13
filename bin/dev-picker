@@ -931,10 +931,13 @@ class Picker:
             if r.get("id") == "autos":        # automatisations : ● violet opérationnelles + ○ rouge inactives
                 segs = [(p + r["text"], self.MAG | curses.A_BOLD)]
                 nop, ninact = r.get("nop"), r.get("ninact")
-                if nop:                       # pas de puce opérationnelle si 0
-                    segs.append(("  ● %d" % nop, self.MAG | curses.A_BOLD))
-                if ninact:                    # pas de puce inactive si 0
-                    segs.append(("  ○ %d" % ninact, self.RED | curses.A_BOLD))
+                if nop is None:               # autos pas encore récupérées → chargement
+                    segs.append(("  chargement…", curses.A_DIM))
+                else:
+                    if nop:                   # pas de puce opérationnelle si 0
+                        segs.append(("  ● %d" % nop, self.MAG | curses.A_BOLD))
+                    if ninact:                # pas de puce inactive si 0
+                        segs.append(("  ○ %d" % ninact, self.RED | curses.A_BOLD))
                 return segs
             segs = [(p + r["text"], self.GREEN)]
             if r.get("err"):                  # serveur injoignable : croix + raison en gris
@@ -1025,98 +1028,120 @@ class Picker:
     def draw_infos(self):
         self.scr.erase()
         H, W = self.scr.getmaxyx()
-        self.scr.addnstr(0, 2, "INFOS", W - 4, self.CYAN | curses.A_BOLD)
+        DIM = curses.A_DIM
+        G, Y, R, C = self.GREEN, self.YEL, self.RED, self.CYAN
+        # ── en-tête : titre (gauche) + bouton Retour sélectionné (droite) ──
+        self.scr.addnstr(0, 2, "INFOS", W - 4, C | curses.A_BOLD)
+        back = "[ ‹ Retour ]"
         try:
-            self.scr.addnstr(1, 2, "─" * (W - 4), W - 4, curses.A_DIM)
+            self.scr.addnstr(0, max(8, W - 2 - len(back)), back, len(back), C | curses.A_REVERSE | curses.A_BOLD)
+            self.scr.addnstr(1, 2, "─" * (W - 4), W - 4, DIM)
         except curses.error:
             pass
         with self.rc_lock:
             data = self.infos_data
-        y = [3]
-        def line(text, attr=0, col=2):
-            if 0 <= y[0] < H - 1 and W - col - 1 > 0:
+            rc = dict(self.rc_data)
+
+        def put(row, x0, segs, xmax):             # segments colorés sur une ligne
+            x = x0
+            for t, a in segs:
+                if x >= xmax:
+                    break
                 try:
-                    self.scr.addnstr(y[0], col, text, W - col - 1, attr)
+                    self.scr.addnstr(row, x, t, xmax - x, a)
                 except curses.error:
                     pass
-            y[0] += 1
-        def seg_line(segs):                       # une ligne, plusieurs segments colorés
-            if 0 <= y[0] < H - 1:
-                x = 2
-                for text, attr in segs:
-                    if W - x - 1 <= 0:
-                        break
-                    try:
-                        self.scr.addnstr(y[0], x, text, W - x - 1, attr)
-                    except curses.error:
-                        pass
-                    x += len(text)
-            y[0] += 1
-        def gauge(label, pct, detail):            # barre visuelle, couleur selon le niveau
+                x += len(t)
+        def box(top, left, w, h, title):          # panneau encadré, titre dans le bord haut
+            try:
+                self.scr.addnstr(top, left, "╭─ ", w, DIM)
+                self.scr.addnstr(top, left + 3, title, w, C | curses.A_BOLD)
+                tx = left + 3 + len(title)
+                self.scr.addnstr(top, tx, " " + "─" * max(0, left + w - 2 - tx) + "╮", max(0, left + w - tx), DIM)
+                for r in range(1, h - 1):
+                    self.scr.addnstr(top + r, left, "│", 1, DIM)
+                    self.scr.addnstr(top + r, left + w - 1, "│", 1, DIM)
+                self.scr.addnstr(top + h - 1, left, "╰" + "─" * (w - 2) + "╯", w, DIM)
+            except curses.error:
+                pass
+
+        def gauge_row(label, pct, detail, innerw):
             pct = max(0.0, min(100.0, float(pct)))
-            wbar = 18; fill = int(round(pct / 100 * wbar))
-            col = self.GREEN if pct < 70 else (self.YEL if pct < 88 else self.RED)
-            seg_line([("  %-11s " % label, curses.A_DIM),
-                      ("█" * fill, col), ("░" * (wbar - fill), curses.A_DIM),
-                      ("  %3.0f%%" % pct, col), ("   " + detail, curses.A_DIM)])
-        # bouton Retour — toujours sélectionné (seul élément navigable de l'écran)
-        seg_line([("  ▸ ", 0), ("‹ Retour", self.CYAN | curses.A_BOLD)])
-        try:
-            self.scr.chgat(y[0] - 1, 2, W - 4, curses.A_REVERSE)
-        except curses.error:
-            pass
-        line("", 0)
-        HINT = {"grn": self.GREEN, "yel": self.YEL, "red": self.RED}
-        def header(t):                            # titre de section : ◆ TITRE
-            line("", 0) if y[0] > 4 else None
-            seg_line([("◆ ", self.CYAN), (t, self.CYAN | curses.A_BOLD)])
-        def kvline(k, txt, attr=0):               # clé en retrait alignée · valeur
-            seg_line([("   %-12s " % k, curses.A_DIM), (str(txt), attr)])
-        def render_parc():                        # machines distantes (worker RC du picker)
-            if not self.rc_hosts or y[0] >= H - 2:
-                return
-            with self.rc_lock:
-                rc = dict(self.rc_data)
-            header("parc")
-            kvline("local", "● %d session(s)" % len(live_sessions()), self.GREEN)
+            barw = max(6, innerw - 24)
+            fill = int(round(pct / 100 * barw))
+            col = G if pct < 70 else (Y if pct < 88 else R)
+            return [(" %-9s " % label, DIM), ("█" * fill, col), ("░" * (barw - fill), DIM),
+                    (" %3.0f%%" % pct, col | curses.A_BOLD), ("  " + detail, DIM)]
+        def kv_row(k, v):
+            if isinstance(v, tuple):
+                txt, attr = v[0], {"grn": G, "yel": Y, "red": R}.get(v[1], 0)
+            else:
+                txt, attr = v, 0
+            return [(" %-11s " % k, DIM), (str(txt), attr)]
+        def items_to_rows(items, innerw):
+            rows = []
+            for it in items:
+                if isinstance(it, tuple) and it[0] == "gauge":
+                    rows.append(gauge_row(it[1], it[2], it[3], innerw))
+                elif isinstance(it, tuple) and it[0] == "kv":
+                    rows.append(kv_row(it[1], it[2]))
+                else:
+                    rows.append([(" " + str(it), DIM)])
+            return rows
+        def parc_rows():
+            rows = [[(" %-9s " % "local", DIM), ("● ", G), ("%d session(s)" % len(live_sessions()), G)]]
             for host in self.rc_hosts:
-                if y[0] >= H - 1:
-                    break
                 d = rc.get(host) or {"loading": True}
                 if d.get("loading"):
-                    kvline(host, "…", curses.A_DIM)
+                    rows.append([(" %-9s " % host, DIM), ("…", DIM)])
                 elif d.get("error"):
-                    kvline(host, "○ %s" % d["error"], self.RED)
+                    rows.append([(" %-9s " % host, DIM), ("○ ", R), (str(d["error"]), R)])
                 else:
-                    sess = d.get("sessions", [])
-                    if sess:
-                        np = sum(len(s.get("panes", [])) for s in sess)
-                        kvline(host, "● %d session(s) · %d Claude" % (len(sess), np), self.GREEN)
+                    s = d.get("sessions", [])
+                    if s:
+                        np = sum(len(x.get("panes", [])) for x in s)
+                        rows.append([(" %-9s " % host, DIM), ("● ", G), ("%d session · %d Claude" % (len(s), np), G)])
                     else:
-                        kvline(host, "○ aucune session", self.YEL)
+                        rows.append([(" %-9s " % host, DIM), ("○ ", Y), ("aucune session", Y)])
+            return rows
 
         if data is None:
-            line("chargement…", curses.A_DIM)
-        else:
-            for title, rows in data:              # data = liste de sections (titre, items)
-                if y[0] >= H - 2:
-                    break
-                header(title)
-                for it in rows:
-                    if y[0] >= H - 1:
-                        break
-                    if isinstance(it, tuple) and it and it[0] == "gauge":
-                        gauge(it[1], it[2], it[3])
-                    elif isinstance(it, tuple) and it and it[0] == "kv":
-                        v = it[2]
-                        if isinstance(v, tuple):
-                            kvline(it[1], v[0], HINT.get(v[1], 0))
-                        else:
-                            kvline(it[1], v)
-                    else:
-                        line("  " + str(it), curses.A_DIM)
-                if title == "Claude":             # le parc s'insère après Claude
-                    render_parc()
+            try:
+                self.scr.addnstr(3, 2, "chargement…", W - 4, DIM)
+            except curses.error:
+                pass
+            self.draw_status(H, W)
+            self.scr.noutrefresh()
+            curses.doupdate()
+            return
+
+        # ── disposition 2 colonnes ──
+        sec = {t: rows for t, rows in data}
+        colw = (W - 5) // 2
+        innerw = colw - 4
+        leftx, rightx = 2, 2 + colw + 1
+        top0 = 3
+
+        def draw_panel(top, left, title, rows):
+            h = len(rows) + 2
+            box(top, left, colw, h, title)
+            for i, segs in enumerate(rows):
+                put(top + 1 + i, left + 2, segs, left + colw - 1)
+            return top + h + 1            # +1 d'espacement
+
+        # colonne gauche : thedev · parc
+        yL = top0
+        if "thedev" in sec:
+            yL = draw_panel(yL, leftx, "thedev", items_to_rows(sec["thedev"], innerw))
+        if self.rc_hosts:
+            yL = draw_panel(yL, leftx, "parc", parc_rows())
+        # colonne droite : Claude · système
+        yR = top0
+        if "Claude" in sec:
+            yR = draw_panel(yR, rightx, "Claude · Max 5x", items_to_rows(sec["Claude"], innerw))
+        if "système" in sec:
+            yR = draw_panel(yR, rightx, "système", items_to_rows(sec["système"], innerw))
+
         self.draw_status(H, W)
         self.scr.noutrefresh()
         curses.doupdate()
@@ -1390,7 +1415,7 @@ class Picker:
             self.draw()
             # getch non bloquant tant qu'il y a qqch à rafraîchir (liste RC live,
             # check git en fond, ou écran infos en cours de chargement) ; sinon bloque.
-            poll = bool(self.rc_hosts) or self.git_checking or self.local_refreshing or (self.metrics is not None) or (self.mode == "infos" and self.infos_data is None) or (self.mode == "autos" and self.autos is None)
+            poll = bool(self.rc_hosts) or self.git_checking or self.local_refreshing or (self.metrics is not None) or (self.mode == "infos" and self.infos_data is None) or (self.autos is None)
             self.scr.timeout(400 if poll else -1)
             try:
                 ch = self.scr.getch()
