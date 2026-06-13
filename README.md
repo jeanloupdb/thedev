@@ -46,33 +46,51 @@ Serveur : `./install.sh --vps=<label>`. Dépendances : zellij, claude, nvim, pyt
 ### 🛰️ Déléguer à tes machines
 **Envoie une mission à un VPS** — il bosse pour toi, en autonomie, sur ton abonnement (pas d'API facturée).
 <br><br>
-<sub>Choisis le modèle (Fable / Opus / Sonnet) · vois l'état de tout ton parc d'un coup d'œil · pilote une session VPS depuis l'app Claude · pousse un dossier en une commande.</sub>
+<sub>Choisis le modèle (Fable / Opus / Sonnet) · board de tout ton parc · pilote une session VPS depuis l'app Claude · `ship` un dossier en une commande.</sub>
 
 </td>
 <td width="50%" valign="top">
 
-### 🌐 Expose un site, 0 port
-**Mets un site/service local en HTTPS public** via ton VPS, sans ouvrir un seul port (Tailscale).
+### ⏰ Routines & veilles
+**Une routine ou une veille que l'IA fait tourner sur ton VPS** — et que tu gères depuis thedev, en local.
 <br><br>
-<sub>Fais tourner des habitudes par l'IA sur ton serveur (automatisations programmées, alertes Telegram) · lance tout process long dans une sandbox.</sub>
+<sub>Vois d'un coup d'œil si elle tourne, relance-la en 1 clic depuis l'accueil · livraisons & alertes sur Telegram.</sub>
 
 </td>
 </tr>
 <tr>
 <td width="50%" valign="top">
 
+### 🌐 Expose un site, 0 port
+**Mets un site/service local en HTTPS public** via ton VPS, sans ouvrir un seul port (Tailscale).
+<br><br>
+<sub>Une URL publique en composant `ship` → `mission` → `tsnode`. Rien à toucher côté réseau.</sub>
+
+</td>
+<td width="50%" valign="top">
+
 ### 🤖 Une équipe de Claude
 **Plusieurs Claude en parallèle** dans un même espace, en autonomie (permissions bypass).
 <br><br>
-<sub>Panes auto-nommés par sujet pour t'y retrouver · retrouve tes Claude là où tu les avais laissés après un quit.</sub>
+<sub>Panes auto-nommés par sujet · retrouve tes Claude là où tu les avais laissés après un quit.</sub>
 
 </td>
+</tr>
+<tr>
 <td width="50%" valign="top">
 
 ### 🎛️ Tout sous les yeux
 **Ton usage Claude (Max 5x) + RAM + CPU** affichés en permanence, discrètement.
 <br><br>
-<sub>Page Infos / dashboard (version, parc, santé système) · tout sur ton abonnement : 0 crédit, 0 port, 0 clé.</sub>
+<sub>Page Infos / dashboard (version, parc, santé système) · tout sur l'abonnement : 0 crédit, 0 port, 0 clé.</sub>
+
+</td>
+<td width="50%" valign="top">
+
+### 📦 Process longs isolés
+**Lance et gère tout process long** (serveur, build, watcher, agent) dans une sandbox.
+<br><br>
+<sub>Déduplication, vivacité, logs — sans jamais polluer ta session de dev.</sub>
 
 </td>
 </tr>
