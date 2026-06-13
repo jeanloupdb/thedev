@@ -1019,25 +1019,26 @@ class Picker:
                 return self.GREEN if p < 70 else (self.YEL if p < 88 else self.RED)
             segs = []
             for it in self.metrics:
-                s = None
+                s = None                              # [(libellé DIM), (valeur COLORÉE)]
                 if it[0] == "CLAUDE":
                     win, p = it[1], it[2]
-                    s = ("Claude %s %d%%" % (win, p), pcol(p))
+                    s = [("Claude %s " % win, curses.A_DIM), ("%d%%" % p, pcol(p))]
                 elif it[0] == "RAM":
-                    s = ("RAM %d%%" % it[1], pcol(it[1]))
+                    p = it[1]
+                    s = [("RAM ", curses.A_DIM), ("%d%%" % p, pcol(p))]
                 elif it[0] == "DISK":
                     mnt, p = it[1], it[2]
                     if mnt == "/":                       # racine seulement (compact)
-                        s = ("disque %d%%" % p, pcol(p))
+                        s = [("disque ", curses.A_DIM), ("%d%%" % p, pcol(p))]
                 elif it[0] == "LOAD":
                     v, n = it[1], it[2]
                     c = self.GREEN if v < n * 0.7 else (self.YEL if v < n else self.RED)
-                    s = ("load %s" % v, c)
+                    s = [("load ", curses.A_DIM), ("%s" % v, c)]
                 if s is None:
                     continue
                 if segs:
                     segs.append((" │ ", curses.A_DIM))
-                segs.append(s)
+                segs.extend(s)
             total = sum(len(t) for t, _ in segs)
             x = W - 2 - total
             if x > col + 1:               # ne pas écraser le badge/msg

@@ -39,17 +39,17 @@ col_pct() { if   [ "${1:-0}" -lt 70 ] 2>/dev/null; then printf '%s' "$G"
            elif [ "${1:-0}" -lt 88 ] 2>/dev/null; then printf '%s' "$Y"
            else printf '%s' "$R"; fi; }
 out=""
-add() { [ -n "$out" ] && out+="${D} │ ${Z}"; out+="$1"; }   # colonnes │ ; la COULEUR = la jauge
-[ -n "$CLAUDE5H" ] && add "$(col_pct "$CLAUDE5H")Claude 5h ${CLAUDE5H}%${Z}"
-[ -n "$RAM" ] && add "$(col_pct "$RAM")RAM ${RAM}%${Z}"
+add() { [ -n "$out" ] && out+="${D} │ ${Z}"; out+="$1"; }   # colonnes │ ; libellé DIM, valeur COLORÉE
+[ -n "$CLAUDE5H" ] && add "${D}Claude 5h ${Z}$(col_pct "$CLAUDE5H")${CLAUDE5H}%${Z}"
+[ -n "$RAM" ] && add "${D}RAM ${Z}$(col_pct "$RAM")${RAM}%${Z}"
 for d in "${DISKS[@]}"; do
   m="${d%%:*}"; p="${d##*:}"
   [ "$m" = "/" ] || continue          # bande compacte : disque racine seulement (/data → écran Infos)
-  add "$(col_pct "$p")disque ${p}%${Z}"
+  add "${D}disque ${Z}$(col_pct "$p")${p}%${Z}"
 done
 if [ -n "$LOAD" ]; then
   lc=$(awk -v l="$LOAD" -v n="$ncpu" 'BEGIN{ if(l<n*0.7)print"g"; else if(l<n)print"y"; else print"r" }')
   case "$lc" in g) c=$G;; y) c=$Y;; *) c=$R;; esac
-  add "${c}load ${LOAD}${Z}"
+  add "${D}load ${Z}${c}${LOAD}${Z}"
 fi
 printf '%s' "$out"
