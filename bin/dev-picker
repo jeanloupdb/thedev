@@ -1011,33 +1011,38 @@ class Picker:
             col += len(tag) + 1
         if self.msg:
             self.scr.addnstr(H - 1, col, self.msg, max(0, W - col - 1), self.YEL)
-        # bande des métriques limitantes (droite) : une JAUGE par métrique → on lit le
-        # niveau d'un coup d'œil, colonnes séparées par │, couleur par sévérité.
+        # bande des métriques limitantes (droite) : niveau en 1 caractère (▁..█) +
+        # couleur par sévérité, colonnes │. Compact pour tenir sur la ligne. /data
+        # est laissé à l'écran Infos (jauges complètes).
         if self.metrics:
+            LV = "▁▂▃▄▅▆▇█"
             def pcol(p):
                 return self.GREEN if p < 70 else (self.YEL if p < 88 else self.RED)
-            def gauge(p):                       # % 0-100 → barre 4 cases █/░
-                f = max(0, min(4, int(round(p * 4 / 100))))
-                return "█" * f + "░" * (4 - f)
+            def lvl(p):
+                return LV[max(0, min(7, int(round(p / 100 * 7))))]
             segs = []
             for it in self.metrics:
-                if segs:
-                    segs.append((" │ ", curses.A_DIM))
+                s = None
                 if it[0] == "CLAUDE":
                     win, p = it[1], it[2]
-                    segs.append(("Claude %s %s %d%%" % (win, gauge(p), p), pcol(p)))
+                    s = ("Claude %s %s%d%%" % (win, lvl(p), p), pcol(p))
                 elif it[0] == "RAM":
                     p = it[1]
-                    segs.append(("RAM %s %d%%" % (gauge(p), p), pcol(p)))
+                    s = ("RAM %s%d%%" % (lvl(p), p), pcol(p))
                 elif it[0] == "DISK":
                     mnt, p = it[1], it[2]
-                    lbl = "disque" if mnt == "/" else mnt
-                    segs.append(("%s %s %d%%" % (lbl, gauge(p), p), pcol(p)))
+                    if mnt == "/":                       # racine seulement (compact)
+                        s = ("%s %s%d%%" % (mnt, lvl(p), p), pcol(p))
                 elif it[0] == "LOAD":
                     v, n = it[1], it[2]
-                    f = max(0, min(4, int(round(v / n * 4))))
+                    i = max(0, min(7, int(round(v / n * 7))))
                     c = self.GREEN if v < n * 0.7 else (self.YEL if v < n else self.RED)
-                    segs.append(("load %s %s" % ("█" * f + "░" * (4 - f), v), c))
+                    s = ("load %s%s" % (LV[i], v), c)
+                if s is None:
+                    continue
+                if segs:
+                    segs.append((" │ ", curses.A_DIM))
+                segs.append(s)
             total = sum(len(t) for t, _ in segs)
             x = W - 2 - total
             if x > col + 1:               # ne pas écraser le badge/msg
