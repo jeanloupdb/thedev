@@ -266,10 +266,18 @@ def gather_infos(vps, update_available, head):
         except Exception:
             pass
     try:
-        la = _read_file("/proc/loadavg").split()[:3]
+        # charge = jauge VS nombre de cœurs (1 cœur saturé = charge 1). pct = load/cœurs.
+        load1 = float(_read_file("/proc/loadavg").split()[0])
+        ncpu = os.cpu_count() or 1
+        pct = min(100.0, load1 / ncpu * 100)
+        etat = "tranquille" if load1 < ncpu * 0.7 else ("chargé" if load1 < ncpu else "saturé")
+        health.append(("gauge", "charge CPU", pct, "%.1f / %d cœurs · %s" % (load1, ncpu, etat)))
+    except Exception:
+        pass
+    try:
         up = float(_read_file("/proc/uptime").split()[0])
         d, h, m = int(up // 86400), int(up % 86400 // 3600), int(up % 3600 // 60)
-        health.append(("kv", "charge", "%s   ·   up %s%dh%02d" % (" ".join(la), ("%dj " % d) if d else "", h, m)))
+        health.append(("kv", "uptime", "%s%dh%02d" % (("%dj " % d) if d else "", h, m)))
     except Exception:
         pass
     sections.append(("système", health))
@@ -457,7 +465,7 @@ class Picker:
         self.live = live_sessions()   # sessions zellij vivantes (basename du cwd)
         self.vps = vps_label()        # non-vide si on tourne sur un serveur distant
         self.mode = "sessions"        # 'sessions' | 'browser'
-        self.focus = "left"           # 'left' | 'right'
+        self.focus = "right"          # 'left' | 'right' — démarre sur ACTIONS (quitter présélectionné)
         self.filt = ""
         self.bdir = cur_dir
         self.li = 0                   # index sélection gauche (dans selectables)
@@ -755,12 +763,15 @@ class Picker:
             rows = []
             # En tête si la config locale est en retard sur son git d'origine
             # (détecté en fond par _git_check ; clic → git pull côté dev()).
-            if self.update_available:
-                rows.append({"kind": "act", "id": "update_dev", "text": "⟳ mettre à jour thedev"})
-            # Sur un serveur : bouton pour revenir au laptop (= quitter le picker
-            # distant → la session SSH se termine → on retombe sur le picker local).
+            # 1ʳᵉ action, présélectionnée à l'ouverture (cf. focus="right", ri=0) : quitter.
+            # Sur un serveur → revenir au laptop (la session SSH se termine, on retombe sur
+            # le picker local) ; en local → sortir du picker vers le shell.
             if self.vps:
                 rows.append({"kind": "act", "id": "quit_vps", "text": "← quitter le VPS"})
+            else:
+                rows.append({"kind": "act", "id": "quit", "text": "⏻ quitter thedev"})
+            if self.update_available:
+                rows.append({"kind": "act", "id": "update_dev", "text": "⟳ mettre à jour thedev"})
             rows.append({"kind": "act", "id": "new_here",
                          "text": "Nouvelle session ici · %s" % self.cur_dir})
             rows.append({"kind": "act", "id": "browse", "text": "Nouvelle session ailleurs"})
@@ -1083,7 +1094,7 @@ class Picker:
         LBL = 12                                   # largeur de libellé fixe → barres alignées
         def gauge_row(label, pct, detail, contentw):
             pct = max(0.0, min(100.0, float(pct)))
-            detail = (detail or "")[:16]
+            detail = (detail or "")[:28]
             # largeur de barre CONSTANTE (réserve fixe pour % + détail) → toutes les
             # pistes ont la même longueur et le % tombe à la même colonne.
             barw = max(8, min(30, contentw - (LBL + 2) - 6 - 18))
@@ -1408,7 +1419,7 @@ class Picker:
         if aid == "update_dev":      # met à jour la config (git pull) côté dev()
             self.decision = ("UPDATE",)
             return "quit"
-        if aid == "quit_vps":        # quitte le picker SANS décision → retour au laptop
+        if aid in ("quit", "quit_vps"):  # quitte le picker SANS décision → shell (local) / retour laptop (vps)
             self.decision = None
             return "quit"
         if aid == "new_here":
