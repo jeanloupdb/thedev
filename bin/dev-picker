@@ -188,6 +188,21 @@ def _read_json(path):
         return {}
 
 
+def load_propals():
+    """Propositions de tâches pour les agents autonomes. Lues du fichier produit en amont
+    par le « proposeur » : ~/.cache/thedev/proposals.json. Renvoie une liste de dicts
+    {titre, pourquoi, machine, priorite, action, cree_le} (toujours une liste, jamais None
+    en cas d'absence/erreur — l'écran distingue « pas encore réfléchi » via le None initial)."""
+    path = os.path.expanduser("~/.cache/thedev/proposals.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return []
+    items = data.get("propositions", data) if isinstance(data, dict) else data
+    return [p for p in items if isinstance(p, dict) and p.get("titre")] if isinstance(items, list) else []
+
+
 def gather_infos(vps, update_available, head):
     """Données du dashboard Infos. Renvoie une LISTE de sections [(titre, [items])],
     items = str (ligne dim) ou ('gauge', label, pct, détail) ou ('kv', clé, valeur)."""
@@ -492,6 +507,11 @@ class Picker:
         self._autos_flat = []         # automatisations sélectionnables (rempli par draw_autos)
         self.confirm_del = None       # auto en attente de confirmation de suppression
         threading.Thread(target=self._autos_worker, daemon=True).start()
+        # Propositions de tâches (écran dédié, porte d'entrée des agents autonomes) :
+        # lues d'un fichier JSON produit en amont par le « proposeur » (pas généré ici).
+        self.propals = load_propals()  # liste de propositions (lue du JSON du proposeur)
+        self.pi = -1                  # sélection écran propositions (-1 = bouton Retour)
+        self._propals_flat = []
         # Mise à jour de la config : la machine est-elle en retard sur le git d'où
         # vient sa config dev ? Si oui → bouton « mettre à jour » en tête des actions.
         self.update_available = False
@@ -552,6 +572,12 @@ class Picker:
         self.mode = "infos"
         self.infos_data = None
         threading.Thread(target=self._gather_infos, daemon=True).start()
+
+    def enter_propals(self):
+        self.mode = "propals"
+        self.pi = -1                  # bouton Retour sélectionné par défaut
+        self._propals_flat = []
+        self.propals = load_propals()  # fichier local → lecture immédiate
 
     def _local_worker(self):
         # self.live (sessions zellij vivantes → marqueurs « ● en cours ») est figé
@@ -819,6 +845,11 @@ class Picker:
             if nop is None or (nop + ninact) > 0:
                 rows.append({"kind": "act", "id": "autos", "footer": True,
                              "text": "automatisations", "nop": nop, "ninact": ninact})
+            # juste sous les automatisations : porte d'entrée des agents autonomes
+            # (propositions de tâches). Compteur si des propositions attendent.
+            npr = len(self.propals) if isinstance(self.propals, list) else None
+            rows.append({"kind": "act", "id": "propals", "text": "propositions",
+                         "footer": True, "n": npr})
             rows.append({"kind": "act", "id": "infos", "text": "ⓘ infos", "footer": True})
             return rows
         rows = [
@@ -963,6 +994,12 @@ class Picker:
                         segs.append(("  ● %d" % nop, self.MAG | curses.A_BOLD))
                     if ninact:                # pas de puce inactive si 0
                         segs.append(("  ○ %d" % ninact, self.RED | curses.A_BOLD))
+                return segs
+            if r.get("id") == "propals":      # propositions de tâches : jaune (idée), compteur si en attente
+                segs = [(p + "✦ " + r["text"], self.YEL | curses.A_BOLD)]
+                n = r.get("n")
+                if n:
+                    segs.append(("  %d" % n, self.YEL | curses.A_BOLD))
                 return segs
             segs = [(p + r["text"], self.GREEN)]
             if r.get("err"):                  # serveur injoignable : croix + raison en gris
@@ -1302,9 +1339,96 @@ class Picker:
         self.scr.noutrefresh()
         curses.doupdate()
 
+    def draw_propals(self):
+        self.scr.erase()
+        H, W = self.scr.getmaxyx()
+        self.scr.addnstr(0, 2, "PROPOSITIONS DE TÂCHES", W - 4, self.CYAN | curses.A_BOLD)
+        try:
+            self.scr.addnstr(1, 2, "─" * (W - 4), W - 4, curses.A_DIM)
+        except curses.error:
+            pass
+        try:
+            self.scr.addnstr(2, 2, "↵ lancer l'agent · Esc revenir", W - 4, curses.A_DIM)
+        except curses.error:
+            pass
+        propals = self.propals if isinstance(self.propals, list) else []
+        y = [4]
+        def line(text, attr=0, col=2):
+            if 0 <= y[0] < H - 1 and W - col - 1 > 0:
+                try:
+                    self.scr.addnstr(y[0], col, text, W - col - 1, attr)
+                except curses.error:
+                    pass
+            y[0] += 1
+        def seg_line(segs):
+            if 0 <= y[0] < H - 1:
+                x = 2
+                for text, attr in segs:
+                    if W - x - 1 <= 0:
+                        break
+                    try:
+                        self.scr.addnstr(y[0], x, text, W - x - 1, attr)
+                    except curses.error:
+                        pass
+                    x += len(text)
+            y[0] += 1
+        # bouton Retour — 1er élément navigable, sélectionné par défaut
+        bsel = (self.pi == -1)
+        seg_line([("  " + ("▸ " if bsel else "  "), 0), ("‹ Retour", self.CYAN | curses.A_BOLD)])
+        if bsel:
+            try:
+                self.scr.chgat(y[0] - 1, 2, W - 4, curses.A_REVERSE)
+            except curses.error:
+                pass
+        line("", 0)
+        flat = []
+        if not propals:
+            self.pi = -1
+            line("(aucune proposition pour l'instant)", curses.A_DIM)
+            line("", 0)
+            line("Le « proposeur » analysera ton parc et ta base de connaissance pour", curses.A_DIM)
+            line("suggérer ici des agents autonomes à lancer (ex. reprendre le git d'un", curses.A_DIM)
+            line("projet sur un VPS, mener une mission complexe, te renvoyer le rapport).", curses.A_DIM)
+            line("", 0)
+            line("Pas encore branché — porte d'entrée posée.", curses.A_DIM)
+        else:
+            if self.pi >= len(propals):
+                self.pi = len(propals) - 1
+            if self.pi < -1:
+                self.pi = -1
+            for pr in propals:
+                if y[0] >= H - 2:
+                    break
+                idx = len(flat); flat.append(pr)
+                sel = (idx == self.pi)
+                prio = (pr.get("priorite") or "").lower()
+                pcol = self.RED if prio in ("haute", "high") else \
+                       (self.YEL if prio in ("moyenne", "medium") else self.GREEN)
+                machine = pr.get("machine") or "?"
+                segs = [("  " + ("▸ " if sel else "  "), 0), ("● ", pcol),
+                        (pr["titre"], curses.A_BOLD),
+                        ("   → %s" % machine, curses.A_DIM)]
+                seg_line(segs)
+                if sel:
+                    try:
+                        self.scr.chgat(y[0] - 1, 2, W - 4, curses.A_REVERSE)
+                    except curses.error:
+                        pass
+                    why = pr.get("pourquoi")
+                    if why:
+                        line("        " + why, curses.A_DIM)
+                    line("        ↵ lancer (bientôt : ship le git + mission → rapport)", self.YEL | curses.A_BOLD)
+        self._propals_flat = flat
+        self.draw_status(H, W)
+        self.scr.noutrefresh()
+        curses.doupdate()
+
     def draw(self):
         if self.mode == "autos":
             self.draw_autos()
+            return
+        if self.mode == "propals":
+            self.draw_propals()
             return
         if self.mode == "infos":
             self.draw_infos()
@@ -1326,7 +1450,7 @@ class Picker:
 
     # --- navigation ------------------------------------------------------
     def clamp(self):
-        if self.mode in ("infos", "autos"):
+        if self.mode in ("infos", "autos", "propals"):
             return
         ln = len(self.selectable_idx(self.left_rows()))
         rn = len(self.selectable_idx(self.right_rows()))
@@ -1411,6 +1535,9 @@ class Picker:
         aid = it.get("id")
         if aid == "autos":           # écran des automatisations (Esc pour revenir)
             self.enter_autos()
+            return
+        if aid == "propals":         # écran des propositions de tâches (Esc pour revenir)
+            self.enter_propals()
             return
         if aid == "infos":           # écran d'infos pratiques (Esc pour revenir)
             self.enter_infos()
@@ -1551,6 +1678,26 @@ class Picker:
                     a = self._autos_flat[self.ai]
                     self.confirm_del = a
                     self.msg = "supprimer « %s » à tout jamais ? y = oui, autre = non" % a["name"]
+                continue
+            if self.mode == "propals":              # écran propositions : navigable comme autos
+                n = len(self._propals_flat)
+                if n == 0:
+                    self.pi = -1
+                if ch == 27:
+                    self.mode = "sessions"; self.focus = "left"
+                    self.li = self.ri = 0; self.loff = 0
+                elif ch == curses.KEY_UP:
+                    self.pi = self.pi - 1
+                    if self.pi < -1: self.pi = n - 1
+                elif ch == curses.KEY_DOWN:
+                    self.pi = self.pi + 1
+                    if self.pi > n - 1: self.pi = -1
+                elif ch in (curses.KEY_ENTER, 10, 13) and self.pi == -1:
+                    self.mode = "sessions"; self.focus = "left"   # bouton Retour
+                    self.li = self.ri = 0; self.loff = 0
+                elif ch in (curses.KEY_ENTER, 10, 13) and 0 <= self.pi < n:
+                    # exécution (ship le git + mission → rapport) pas encore branchée
+                    self.msg = "lancement des agents proposés : à brancher (proposeur + exécution)"
                 continue
             if self.mode == "infos":                # écran infos : bouton Retour (↵) ou Esc
                 if ch in (27, curses.KEY_ENTER, 10, 13):
