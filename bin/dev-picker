@@ -1083,12 +1083,14 @@ class Picker:
         LBL = 12                                   # largeur de libellé fixe → barres alignées
         def gauge_row(label, pct, detail, contentw):
             pct = max(0.0, min(100.0, float(pct)))
-            detail = (detail or "")[:14]
-            barw = max(8, min(34, contentw - (LBL + 2) - 6 - len(detail) - 2))
+            detail = (detail or "")[:16]
+            # largeur de barre CONSTANTE (réserve fixe pour % + détail) → toutes les
+            # pistes ont la même longueur et le % tombe à la même colonne.
+            barw = max(8, min(30, contentw - (LBL + 2) - 6 - 18))
             fill = int(round(pct / 100 * barw))
             col = G if pct < 70 else (Y if pct < 88 else R)
             return [(" %-*s " % (LBL, label), DIM), ("█" * fill, col), ("░" * (barw - fill), DIM),
-                    (" %3.0f%%" % pct, col | curses.A_BOLD), ("  " + detail, DIM)]
+                    (" %3.0f%% " % pct, col | curses.A_BOLD), (" " + detail, DIM)]
         def kv_row(k, v):
             if isinstance(v, tuple):
                 txt, attr = v[0], {"grn": G, "yel": Y, "red": R}.get(v[1], 0)
