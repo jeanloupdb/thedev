@@ -80,7 +80,7 @@ Serveur : `./install.sh --vps=<label>`. Dépendances : zellij, claude, nvim, pyt
 <td width="50%" valign="top">
 
 ### 🎛️ Tout sous les yeux
-**Ton usage Claude (Max 5x) + RAM + CPU** affichés en permanence, discrètement.
+**Ton usage Claude (fenêtre 5h) + RAM + CPU** affichés en permanence, discrètement.
 <br><br>
 <sub>Page Infos / dashboard (version, parc, santé système) · tout sur l'abonnement : 0 crédit, 0 port, 0 clé.</sub>
 
