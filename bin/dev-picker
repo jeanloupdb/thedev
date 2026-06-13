@@ -1363,7 +1363,8 @@ class Picker:
         except curses.error:
             pass
         try:
-            self.scr.addnstr(2, 2, "↵ lancer l'agent · Esc revenir", W - 4, curses.A_DIM)
+            self.scr.addnstr(2, 2, "une action par projet actif · ↑↓ naviguer · Esc revenir",
+                             W - 4, curses.A_DIM)
         except curses.error:
             pass
         propals = self.propals if isinstance(self.propals, list) else []
@@ -1410,6 +1411,8 @@ class Picker:
                 self.pi = len(propals) - 1
             if self.pi < -1:
                 self.pi = -1
+            # colonne « projet » alignée (largeur = plus long contexte, bornée à 22)
+            projw = min(22, max((len(pr.get("contexte") or "") for pr in propals), 0))
             for pr in propals:
                 if y[0] >= H - 2:
                     break
@@ -1418,10 +1421,12 @@ class Picker:
                 prio = (pr.get("priorite") or "").lower()
                 pcol = self.RED if prio in ("haute", "high") else \
                        (self.YEL if prio in ("moyenne", "medium") else self.GREEN)
-                machine = pr.get("machine") or "?"
-                segs = [("  " + ("▸ " if sel else "  "), 0), ("● ", pcol),
-                        (pr["titre"], curses.A_BOLD),
-                        ("   → %s" % machine, curses.A_DIM)]
+                ctx = pr.get("contexte") or ""
+                ctx_disp = (ctx[:projw - 1] + "…") if projw and len(ctx) > projw else ctx.ljust(projw)
+                segs = [("  " + ("▸ " if sel else "  "), 0),
+                        ("● ", pcol),                                   # ● = priorité
+                        (ctx_disp + "  ", self.pcolor(ctx) | curses.A_BOLD),  # projet, couleur stable
+                        (pr.get("titre", ""), curses.A_BOLD if sel else 0)]
                 seg_line(segs)
                 if sel:
                     try:
@@ -1430,8 +1435,11 @@ class Picker:
                         pass
                     why = pr.get("pourquoi")
                     if why:
-                        line("        " + why, curses.A_DIM)
-                    line("        ↵ lancer (bientôt : ship le git + mission → rapport)", self.YEL | curses.A_BOLD)
+                        line("       " + why, curses.A_DIM)
+                    mach = pr.get("machine") or "local"
+                    if mach != "local":
+                        line("       sur " + mach, curses.A_DIM)
+                    line("       ↵ bientôt : ouvrir ce projet", curses.A_DIM)
         self._propals_flat = flat
         self.draw_status(H, W)
         self.scr.noutrefresh()

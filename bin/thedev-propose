@@ -19,10 +19,10 @@ MAX=10
 command -v jq >/dev/null 2>&1 || { echo "thedev-propose: jq requis" >&2; exit 1; }
 
 props=()
-add() {  # $1 titre  $2 pourquoi  $3 priorite(haute|moyenne|basse)  $4 action(hint)
-  props+=("$(jq -nc --arg t "$1" --arg p "$2" --arg pr "$3" --arg a "$4" \
+add() {  # $1 titre  $2 contexte(projet/repo)  $3 pourquoi  $4 priorite(haute|moyenne|basse)  $5 action
+  props+=("$(jq -nc --arg t "$1" --arg ctx "$2" --arg p "$3" --arg pr "$4" --arg a "$5" \
                     --arg m "$MACHINE" --arg c "$NOW" \
-    '{titre:$t, pourquoi:$p, priorite:$pr, action:$a, machine:$m, cree_le:$c}')")
+    '{titre:$t, contexte:$ctx, pourquoi:$p, priorite:$pr, action:$a, machine:$m, cree_le:$c}')")
 }
 
 # (A) todos non cochés — les tâches que TU as écrites (le signal le plus fort, zéro bruit).
@@ -37,11 +37,11 @@ for f in "$DEV_ROOT/todo.md" "$DEV_ROOT/PROJECTS.md" \
   if grep -qE '^### ' "$f" 2>/dev/null; then
     while IFS=$'\t' read -r proj task; do
       [ -n "$task" ] || continue
-      add "${proj:+$proj — }$task" "Prochain pas non coché — $base" "moyenne" "open:$(dirname "$f")"
+      add "$task" "$proj" "prochain pas non coché ($base)" "moyenne" "open:$(dirname "$f")"
     done < <(awk '
       BEGIN{active=1}
       /^##[[:space:]]/  { c=tolower($0); active=(index(c,"abandonn")==0 && index(c,"pause")==0); next }
-      /^###[[:space:]]/ { proj=$0; sub(/^###[[:space:]]+/,"",proj); seen=0; next }
+      /^###[[:space:]]/ { proj=$0; sub(/^###[[:space:]]+/,"",proj); sub(/[[:space:]]*\(.*$/,"",proj); seen=0; next }
       active && !seen && /^[[:space:]]*[-*][[:space:]]\[[[:space:]]\][[:space:]]/ {
         t=$0; sub(/^[[:space:]]*[-*][[:space:]]\[[[:space:]]\][[:space:]]+/,"",t); sub(/[[:space:]]+$/,"",t)
         print proj "\t" t; seen=1
@@ -49,7 +49,7 @@ for f in "$DEV_ROOT/todo.md" "$DEV_ROOT/PROJECTS.md" \
   else
     while IFS= read -r task; do
       [ -n "$task" ] || continue
-      add "$task" "À faire — $base" "moyenne" "open:$(dirname "$f")"
+      add "$task" "" "à faire ($base)" "moyenne" "open:$(dirname "$f")"
     done < <(grep -hE '^[[:space:]]*[-*] \[ \] ' "$f" 2>/dev/null \
                | sed -E 's/^[[:space:]]*[-*] \[ \] //; s/[[:space:]]+$//' | head -6)
   fi
@@ -61,7 +61,7 @@ while IFS= read -r gd; do
   git -C "$repo" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1 || continue
   n="$(git -C "$repo" rev-list --count '@{u}..HEAD' 2>/dev/null)"
   [ -n "$n" ] && [ "$n" -gt 0 ] 2>/dev/null \
-    && add "Pousser $n commit(s) — $name" "$name a $n commit(s) locaux non poussés" "moyenne" "push:$repo"
+    && add "pousser $n commit(s)" "$name" "$n commit(s) locaux non poussés" "moyenne" "push:$repo"
 done < <(find "$DEV_ROOT" -maxdepth 3 -type d -name .git -not -path '*/node_modules/*' 2>/dev/null | head -40)
 
 # (C) automatisations thedev en échec (à réparer en priorité)
@@ -71,7 +71,7 @@ if command -v systemctl >/dev/null 2>&1; then
     svc="${unit%.service}"
     desc="$(systemctl --user show "$unit" -p Description --value 2>/dev/null)"
     case "$desc" in *[Tt]hedev*) ;; *) continue ;; esac
-    add "Réparer l'automatisation « $svc »" "Le service $unit est en échec" "haute" "auto:$svc"
+    add "réparer (service en échec)" "$svc" "le service $unit est en échec" "haute" "auto:$svc"
   done < <(systemctl --user list-units --type=service --state=failed --no-legend 2>/dev/null | awk '{print $1}')
 fi
 
