@@ -7,6 +7,9 @@
 # (à comparer aux cœurs). Usage Claude (fenêtre Max 5x) = claude-window-usage (endpoint
 # OAuth interne, GRATUIT) — le couperet le plus limitant pour le travail d'agents.
 set -u
+# claude-window-usage vit dans ~/.local/bin, absent du PATH d'un ssh non-interactif
+# → on le garantit (sinon l'usage Claude disparaît de la bande à distance).
+export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
 ncpu=$(nproc 2>/dev/null || echo 1)
 
 ram_pct()  { awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} END{ if(t) printf "%.0f", 100*(t-a)/t }' /proc/meminfo 2>/dev/null; }
