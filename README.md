@@ -15,7 +15,7 @@
 
 </div>
 
-> [!TIP]
+> [!IMPORTANT]
 > La puissance d'un agent cloud, **chez toi** : **0 crédit API · 0 port ouvert · 0 clé**. Ton infra, tes machines, tes règles — et c'est lisible/auditable (bash + fichiers).
 
 ## ⚡ Installer (avec l'IA, en 1 minute)
