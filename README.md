@@ -94,6 +94,16 @@ Serveur : `./install.sh --vps=<label>`. Dépendances : zellij, claude, nvim, pyt
 
 </td>
 </tr>
+<tr>
+<td colspan="2" valign="top">
+
+### 🔒 Tes secrets ne passent jamais par le chat
+**Une clé API, un mot de passe, un token à fournir ?** L'IA t'ouvre un **pane sandbox dédié** où tu **colles directement** — prompt masqué, le secret part vers la machine cible par stdin (`chmod 600`, hors git), **jamais** dans la conversation ni l'historique.
+<br><br>
+<sub>L'IA confirme par la taille/les permissions du fichier, jamais par son contenu — elle ne voit pas la valeur. Le réflexe par défaut pour tout ce qui est confidentiel.</sub>
+
+</td>
+</tr>
 </table>
 
 ## Comment c'est organisé
