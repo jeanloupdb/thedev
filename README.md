@@ -37,74 +37,29 @@ git clone https://github.com/jeanloupdb/thedev.git ~/thedev && cd ~/thedev
 Serveur : `./install.sh --vps=<label>`. Dépendances : zellij, claude, nvim, python3, git, jq, fzf, inotify-tools.
 </details>
 
-## Ce que tu peux faire
+## Fonctionnalités
 
-<table>
-<tr>
-<td width="50%" valign="top">
+| Fonctionnalité | Ce que ça fait |
+|---|---|
+| 🖥️ **Multi-machines** | Claude sur ton poste et tes serveurs, réunis en un seul espace de travail. |
+| 📨 **Missions** | Envoie une tâche d'une machine à une autre — le résultat revient (« change ça sur mon serveur »). |
+| 👁️ **Vue du parc** | Tous tes Claude et leur état (actif ● / arrêté ○) en un coup d'œil, organisés. |
+| 🔌 **Reprise 1 clic** | Reprends n'importe quelle session, locale ou distante, en un clic. |
+| 🧩 **Multi-Claude** | Autant de Claude que voulu par session, ouverts et fermés à volonté. |
+| 🏷️ **Auto-nommage** | Les panes Claude se nomment seuls, en direct, au fil du sujet. |
+| 📁 **1 dossier = 1 session** | Modèle simple et lisible, pas de boîte noire. |
+| 🔒 **Secrets hors chat** | Onglet dédié pour saisir mot de passe / clé / sudo — l'IA ne les voit jamais. |
+| 🖧 **Tes terminaux** | Vois les logs en direct, tape une commande sans passer par l'IA. |
+| 🙈 **Page « my space »** | Un terminal rien qu'à toi, hors de portée de Claude. |
+| 📊 **Ressources en direct** | Usage Claude, RAM, disque, CPU affichés en permanence. |
+| ⚡ **Alt+R** | Ta conso RAM en direct, pour bosser sans saturer. |
+| 🌑 **Léger** | TUI minimaliste, thème noir — optimisé batterie et RAM. |
+| ⏰ **Automatisations distantes** | Confie à un serveur une tâche rejouée dans le temps, par un Claude dédié. |
+| 🌐 **Exposition 0 port** | Via Tailscale, ton VPS publie un site en HTTPS à la demande. |
+| 🛰️ **Headless** | Tourne en arrière-plan, pleine puissance sans interface — parfait pour laisser un Claude sur un serveur. |
+| 💳 **Sur ton abo** | Fonctionne sur ton abonnement Claude (sans API) → coût réduit. |
 
-### 🛰️ Déléguer à tes machines
-**Envoie une mission à un VPS** — il bosse pour toi, en autonomie, sur ton abonnement (pas d'API facturée).
-<br><br>
-<sub>Choisis le modèle (Fable / Opus / Sonnet) · board de tout ton parc · pilote une session VPS depuis l'app Claude · `ship` un dossier en une commande.</sub>
-
-</td>
-<td width="50%" valign="top">
-
-### ⏰ Routines & veilles
-**Une routine ou une veille que l'IA fait tourner sur ton VPS** — et que tu gères depuis thedev, en local.
-<br><br>
-<sub>Vois d'un coup d'œil si elle tourne, relance-la en 1 clic depuis l'accueil · livraisons & alertes sur Telegram.</sub>
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-
-### 🌐 Expose un site, 0 port
-**Mets un site/service local en HTTPS public** via ton VPS, sans ouvrir un seul port (Tailscale).
-<br><br>
-<sub>Une URL publique en composant `ship` → `mission` → `tsnode`. Rien à toucher côté réseau.</sub>
-
-</td>
-<td width="50%" valign="top">
-
-### 🤖 Une équipe de Claude
-**Plusieurs Claude en parallèle** dans un même espace, en autonomie (permissions bypass).
-<br><br>
-<sub>Panes auto-nommés par sujet · retrouve tes Claude là où tu les avais laissés après un quit.</sub>
-
-</td>
-</tr>
-<tr>
-<td width="50%" valign="top">
-
-### 🎛️ Tout sous les yeux
-**Ton usage Claude (fenêtre 5h) + RAM + CPU** affichés en permanence, discrètement.
-<br><br>
-<sub>Page Infos / dashboard (version, parc, santé système) · tout sur l'abonnement : 0 crédit, 0 port, 0 clé.</sub>
-
-</td>
-<td width="50%" valign="top">
-
-### 📦 Process longs isolés
-**Lance et gère tout process long** (serveur, build, watcher, agent) dans une sandbox.
-<br><br>
-<sub>Déduplication, vivacité, logs — sans jamais polluer ta session de dev.</sub>
-
-</td>
-</tr>
-<tr>
-<td colspan="2" valign="top">
-
-### 🔒 Tes secrets ne passent jamais par le chat
-**Une clé API, un mot de passe, un token à fournir ?** L'IA t'ouvre un **pane sandbox dédié** où tu **colles directement** — prompt masqué, le secret part vers la machine cible par stdin (`chmod 600`, hors git), **jamais** dans la conversation ni l'historique.
-<br><br>
-<sub>L'IA confirme par la taille/les permissions du fichier, jamais par son contenu — elle ne voit pas la valeur. Le réflexe par défaut pour tout ce qui est confidentiel.</sub>
-
-</td>
-</tr>
-</table>
+<sub>Ex. d'automatisation : « sur mon VPS, chaque matin, génère un article + son podcast audio et envoie-moi le lien sur Telegram. »</sub>
 
 ## Comment c'est organisé
 
