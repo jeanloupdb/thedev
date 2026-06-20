@@ -38,7 +38,7 @@ thedev parie sur le second. Donc **chaque saut de capacité modèle est un vent 
 
 ## Principes de conception
 
-1. **Moteur-agnostique** *(direction, pas état actuel)*. thedev orchestre un moteur ; il n'EST pas le moteur. Réduire les dépendances dures aux internals d'un CLI précis, pour qu'un changement de moteur n'impose pas une réécriture.
+1. **Moteur-agnostique** *(direction, pas état actuel)*. thedev orchestre un moteur ; il n'EST pas le moteur. Réduire les dépendances dures aux internals d'un CLI précis, pour qu'un changement de moteur n'impose pas une réécriture. État des lieux du couplage actuel et plan d'abstraction : [`ENGINE-COUPLING.md`](ENGINE-COUPLING.md).
 2. **Primitives qui survivent.** Miser sur les briques ops/sysadmin qui vaudront autant dans cinq ans qu'aujourd'hui : l'**espace** (unité de travail), la **vue de flotte**, la **mission** (dispatch entre machines), le **crun** (tâche longue), les **secrets isolés**, la **conscience coût/quota**.
 3. **Consommer le cerveau, pas le reconstruire.** Mémoire native, planification, autonomie, multimodal : quand les labos les livrent, thedev les *expose*, il ne les réimplémente pas.
 4. **Humain aux commandes.** Tout ce qui est irréversible, coûteux ou sensible reste sous décision humaine. Secrets hors chat. Une fermeture qui montre d'abord ce qu'elle coupe.
