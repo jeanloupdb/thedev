@@ -57,19 +57,20 @@ case "$verb" in
     engine_list "$cwd" "$all" "$json"
     ;;
   read)
-    id="${1:-}"; shift 2>/dev/null || true
-    last=1 role=assistant json=0   # défaut : dernier message assistant (= résultat de mission)
+    id="" last=1 role=assistant json=0 ref=""   # défaut : dernier message assistant (= résultat de mission)
     while [ $# -gt 0 ]; do
       case "$1" in
-        --last) last=1; shift ;;
-        --all)  last=0; shift ;;
-        --role) role="$2"; shift 2 ;;
-        --json) json=1; shift ;;
-        *)      shift ;;
+        --last)       last=1; shift ;;
+        --all)        last=0; shift ;;
+        --role)       role="$2"; shift 2 ;;
+        --json)       json=1; shift ;;
+        --transcript) ref="$2"; shift 2 ;;
+        --*)          shift ;;
+        *)            [ -n "$id" ] || id="$1"; shift ;;
       esac
     done
-    [ -n "$id" ] || { echo "engine read: ID requis" >&2; exit 1; }
-    engine_read "$id" "$last" "$role" "$json"
+    [ -n "$id" ] || [ -n "$ref" ] || { echo "engine read: ID ou --transcript requis" >&2; exit 1; }
+    engine_read "$id" "$last" "$role" "$json" "$ref"
     ;;
   usage)
     json=0; [ "${1:-}" = --json ] && json=1
@@ -104,7 +105,7 @@ engine — façade moteur-agnostique (backend via $THEDEV_ENGINE, défaut : clau
   engine launch  [--cwd D] [--model M] [--resume ID] [--init MSG|--init-file F] [-- EXTRA…]
   engine resume  ID [mêmes options que launch]
   engine list    [--cwd D] [--all] [--json]
-  engine read    ID [--last|--all] [--role assistant|user|any] [--json]
+  engine read    ID|--transcript REF [--last|--all] [--role assistant|user|any] [--json]
   engine usage   [--json]
   engine running [--id ID]
   engine event   TYPE --session ID --cwd D [--title T] [--transcript REF]

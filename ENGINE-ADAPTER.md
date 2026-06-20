@@ -7,9 +7,11 @@
 > **Statut** : implémenté dans `bin/engine` (dispatcher) + `lib/engine/claude.sh`
 > (backend Claude). Les verbes sortants (`launch`/`resume`/`list`/`read`/`usage`/
 > `running`) et le core de `engine event` sont des **wrappers fidèles** du
-> comportement actuel — testés sur données réelles. **Pas encore fait** : rebrancher
-> les call-sites historiques (`dev-picker`, `thedev-link`, hooks) sur `engine`
-> (l'étape de migration, plus risquée — voir « Ordre d'attaque »).
+> comportement actuel — testés sur données réelles.
+>
+> **Migrations faites** : `thedev-link` (résultat de mission) lit via `engine read
+> --transcript` — le schéma JSONL a quitté `thedev-link`. **Pas encore fait** :
+> `dev-picker` (`engine list`) et les hooks (`engine event`).
 
 ## Idée directrice
 
@@ -69,8 +71,10 @@ ID \t MTIME_ISO \t CWD \t BUSY \t TITLE
 
 ### `engine read` — lire le(s) message(s)
 ```bash
-engine read ID [--last] [--role assistant|user|any] [--json]
+engine read ID|--transcript REF [--last] [--role assistant|user|any] [--json]
 ```
+Lit par **id** (résolu par le backend) ou par **référence de transcript** directe
+(`--transcript`, pour un appelant qui a déjà la réf via un event).
 `--last` (défaut) = dernier message ; `--role assistant` (défaut) = filtre.
 `--last --role assistant` ⇒ **le texte assistant final = résultat de mission**.
 stdout = texte brut ; `--json` = `{role,text,ts}` en JSON-lines.
@@ -125,11 +129,11 @@ engine_install_hooks   # câble l'eventing natif → `engine event`   (appelé p
 ## Migration d'un site d'appel (avant / après)
 
 ```bash
-# Résultat de mission — thedev-link:207-219
+# Résultat de mission — thedev-link (FAIT)
 # AVANT (couplé au schéma JSONL de Claude) :
 jq -r 'select(.type=="assistant")|.message.content[]|select(.type=="text")|.text' "$transcript" | tail -1
 # APRÈS :
-engine read "$session_id" --last --role assistant
+engine read --transcript "$transcript" --last --role assistant
 ```
 ```bash
 # Découverte des espaces — dev-picker

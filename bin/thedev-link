@@ -16,6 +16,12 @@ set -u
 ROOT="$HOME/.cache/thedev"
 me="$(basename "$0")"
 
+# Adaptateur moteur (engine read …) résolu en VOISIN de ce script (relocatable) :
+# le watcher reçoit déjà $0 en chemin absolu (readlink -f). Permet d'extraire le
+# résultat d'une mission sans connaître le schéma de transcript du moteur.
+_self="$0"; case "$_self" in */*) ;; *) _self="$(command -v -- "$_self")" ;; esac
+ENGINE="$(dirname "$(readlink -f -- "$_self")")/engine"
+
 espace_name()  { printf '%s' "${ZELLIJ_SESSION_NAME:-$(basename "$(pwd -P)")}"; }
 machine_name() { cat "$HOME/.config/dev-vps" 2>/dev/null || hostname -s; }
 
@@ -214,8 +220,10 @@ EOF
     # du transcript : c'est sa réponse, capture déterministe (réplique le stdout
     # de claude -p, mais en interactif/abonnement).
     local last=""
-    if [ -s "$wdir/transcript.jsonl" ] && command -v jq >/dev/null 2>&1; then
-      last=$(jq -rs '[.[] | select(.type=="assistant") | .message.content[]? | select(.type=="text") | .text] | last // empty' "$wdir/transcript.jsonl" 2>/dev/null)
+    if [ -s "$wdir/transcript.jsonl" ]; then
+      # Capture déterministe via l'adaptateur moteur : thedev-link n'a plus à
+      # connaître le schéma JSONL de Claude Code (cf. ENGINE-ADAPTER.md).
+      last=$("$ENGINE" read --transcript "$wdir/transcript.jsonl" --last --role assistant 2>/dev/null)
     fi
     if [ -n "$last" ]; then
       printf 'Status: ok\nSource: transcript (fin: %s)\nFinished: %s\n\n%s\n' \

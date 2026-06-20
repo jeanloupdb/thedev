@@ -103,9 +103,13 @@ engine_list() {   # $1=want_cwd  $2=all  $3=json
 
 # Lit le(s) message(s) d'une session. last=1 → dernier seulement ; role filtre.
 # Reproduit le jq de thedev-link (capture déterministe du résultat de mission).
-engine_read() {   # $1=id  $2=last  $3=role  $4=json
-  local id="$1" last="$2" role="$3" json="$4" tp lastjson=false
-  tp=$(_cc_transcript_for "$id") || { echo "engine: session '$id' introuvable" >&2; return 1; }
+engine_read() {   # $1=id  $2=last  $3=role  $4=json  $5=ref (chemin transcript, optionnel)
+  local id="$1" last="$2" role="$3" json="$4" ref="${5:-}" tp lastjson=false
+  if [ -n "$ref" ]; then
+    tp="$ref"; [ -f "$tp" ] || { echo "engine: transcript '$tp' introuvable" >&2; return 1; }
+  else
+    tp=$(_cc_transcript_for "$id") || { echo "engine: session '$id' introuvable" >&2; return 1; }
+  fi
   command -v jq >/dev/null 2>&1 || { echo "engine: jq requis" >&2; return 1; }
   [ "$last" = 1 ] && lastjson=true
   if [ "$json" = 1 ]; then
