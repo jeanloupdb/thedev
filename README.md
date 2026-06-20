@@ -66,14 +66,15 @@ Légende : ✅ oui · 🟡 partiel / autre approche · ❌ non
 | 🛰️ **Headless** — tourne en arrière-plan sans interface sur un serveur | ✅ | ✅ | ✅ | ✅ |
 | 🌐 **Exposition 0 port** — publier un site HTTPS via Tailscale, sans ouvrir de port | ❌ | ❌ | 🟡 | ✅ |
 | 💳 **Sur ton abo** — fonctionne sur l'abonnement Claude, sans coût API | ❌¹ | ❌ | ❌¹ | ✅ |
-| 💬 **Multi-messageries** — piloter depuis WhatsApp / Telegram / Discord / Signal… | ✅ | ✅ | ❌ | 🟡 |
+| 💬 **Multi-messageries** — piloter depuis WhatsApp / Telegram / Discord / Signal… | ✅ | ✅ | ❌ | ❌² |
 | 🧠 **Mémoire persistante** — contexte cumulé entre projets/sessions | 🟡 | ✅ | ✅ | ❌ |
 | 🔧 **Self-improvement** — l'agent crée et améliore ses propres skills | 🟡 | ✅ | ✅ | ❌ |
 | 🔀 **Multi-modèles** — 200+ modèles, pas que Claude | ✅ | ✅ | ✅ | ❌ |
 | 📦 **Registre de skills** — installer des skills partagés par la communauté | ✅ | ✅ | ✅ | ❌ |
 | 🌐 **Automation navigateur / voix** — piloter un browser, entrées vocales | ✅ | 🟡 | 🟡 | ❌ |
 
-<sub>¹ OpenClaw et Ruflo fonctionnaient sur l'abonnement Claude (détournement de token / framework tiers) — Anthropic a bloqué cet usage le 4 avril 2026. thedev reste légitime via Claude Code interactif.</sub>
+<sub>¹ OpenClaw et Ruflo fonctionnaient sur l'abonnement Claude (détournement de token / framework tiers) — Anthropic a bloqué cet usage le 4 avril 2026. thedev reste légitime via Claude Code interactif.</sub><br>
+<sub>² thedev ne se pilote pas en textant un bot : son entrée à distance, c'est le **Remote Control de ta session Claude depuis l'app officielle** (voir Pilotage à distance). Telegram sert aux alertes/livraisons sortantes, pas de commande.</sub>
 
 <sub>Ex. d'automatisation : « sur mon VPS, chaque matin, génère un article + son podcast audio et envoie-moi le lien sur Telegram. »</sub>
 
