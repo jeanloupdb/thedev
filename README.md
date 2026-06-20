@@ -93,6 +93,7 @@ Une **machine** porte des **espaces** (1 projet chacun), chaque espace a des **p
 
 ## Aller plus loin
 
+- **Pourquoi thedev existe (le cap durable)** : [`VISION.md`](VISION.md)
 - **Toutes les commandes** : [`MANIFEST.md`](MANIFEST.md) (généré) ou `./bin/thedev-manifest`
 - **État du parc en direct** : `thedev-status` · **usage Claude** : la barre en bas
 
