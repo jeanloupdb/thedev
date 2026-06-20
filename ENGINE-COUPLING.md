@@ -70,6 +70,9 @@ adaptateur unique exposant **5 opérations**, concentré dans **4 fichiers**
 Plus un adaptateur secondaire pour l'usage/quota (#7). Le reste (vocabulaire,
 modèles, env) est cosmétique.
 
+> Les signatures bash de cet adaptateur (les 5 verbes + le contrat d'événements
+> entrant + l'ordre d'attaque) sont spécifiées dans [`ENGINE-ADAPTER.md`](ENGINE-ADAPTER.md).
+
 **Conclusion** : thedev n'est pas accidentellement couplé à Claude partout — son
 ossature (crun, missions, espaces) est saine. Mais sa **couche d'observation de
 l'agent** suppose Claude Code de bout en bout. Le chantier du principe n°1 est
