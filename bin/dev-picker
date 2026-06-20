@@ -513,6 +513,7 @@ class Picker:
         self.propals = load_propals()  # dernier instantané (lecture immédiate)
         self.pi = -1                  # sélection écran propositions (-1 = bouton Retour)
         self._propals_flat = []
+        self._propals_loading = True  # worker en vol → l'écran poll pour se rafraîchir
         threading.Thread(target=self._propals_worker, daemon=True).start()
         # Mise à jour de la config : la machine est-elle en retard sur le git d'où
         # vient sa config dev ? Si oui → bouton « mettre à jour » en tête des actions.
@@ -580,6 +581,7 @@ class Picker:
         self.pi = -1                  # bouton Retour sélectionné par défaut
         self._propals_flat = []
         self.propals = load_propals()  # instantané immédiat
+        self._propals_loading = True
         threading.Thread(target=self._propals_worker, daemon=True).start()  # régénère en fond
 
     def _propals_worker(self):
@@ -593,6 +595,7 @@ class Picker:
         res = load_propals()
         with self.rc_lock:
             self.propals = res
+        self._propals_loading = False
 
     def _local_worker(self):
         # self.live (sessions zellij vivantes → marqueurs « ● en cours ») est figé
@@ -620,7 +623,8 @@ class Picker:
                 for ln in out.splitlines():
                     p = ln.split("\t")
                     if p[0] == "CLAUDE" and len(p) >= 3:
-                        m.append(("CLAUDE", p[1], int(p[2])))
+                        el = p[3] if len(p) >= 4 else ""   # écoulé dans la fenêtre (ex. 4h03)
+                        m.append(("CLAUDE", p[1], int(p[2]), el))
                     elif p[0] == "RAM" and len(p) >= 2:
                         m.append(("RAM", int(p[1])))
                     elif p[0] == "DISK" and len(p) >= 3:
@@ -1075,7 +1079,9 @@ class Picker:
                 s = None                              # [(libellé DIM), (valeur COLORÉE)]
                 if it[0] == "CLAUDE":
                     win, p = it[1], it[2]
-                    s = [("Claude %s " % win, curses.A_DIM), ("%d%%" % p, pcol(p))]
+                    el = it[3] if len(it) >= 4 else ""
+                    label = ("$ %s/%s " % (el, win)) if el else "$ "
+                    s = [(label, curses.A_DIM), ("%d%%" % p, pcol(p))]
                 elif it[0] == "RAM":
                     p = it[1]
                     s = [("RAM ", curses.A_DIM), ("%d%%" % p, pcol(p))]
@@ -1412,7 +1418,7 @@ class Picker:
             if self.pi < -1:
                 self.pi = -1
             # colonne « projet » alignée (largeur = plus long contexte, bornée à 22)
-            projw = min(22, max((len(pr.get("contexte") or "") for pr in propals), 0))
+            projw = min(22, max((len(pr.get("contexte") or "") for pr in propals), default=0))
             for pr in propals:
                 if y[0] >= H - 2:
                     break
@@ -1626,7 +1632,7 @@ class Picker:
                 self.msg = "⚠ erreur d'affichage — voir ~/.cache/dev-picker-crash.log"
             # getch non bloquant tant qu'il y a qqch à rafraîchir (liste RC live,
             # check git en fond, ou écran infos en cours de chargement) ; sinon bloque.
-            poll = bool(self.rc_hosts) or self.git_checking or self.local_refreshing or (self.metrics is not None) or (self.mode == "infos" and self.infos_data is None) or (self.autos is None)
+            poll = bool(self.rc_hosts) or self.git_checking or self.local_refreshing or (self.metrics is not None) or (self.mode == "infos" and self.infos_data is None) or (self.autos is None) or (self.mode == "propals" and self._propals_loading)
             self.scr.timeout(400 if poll else -1)
             try:
                 ch = self.scr.getch()

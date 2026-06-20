@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# @thedev session ouvre un espace (local ou distant) DÉTACHÉ avec un Claude déjà briefé (prompt injecté)
+# space-open — ouvre un espace thedev en fire-and-forget : crée la session zellij (layout dev)
+# DÉTACHÉE (sans s'y attacher) et y démarre le Claude principal avec un prompt d'init.
+# Brique cœur de `new-project` / du hub concierge.
+#
+#   space-open <machine|local> <projet> [--init "<txt>" | --init-file <f>] [--dir <path>]
+#
+#   <machine>  'local' ou un alias ssh (ex. jlax)
+#   <projet>   nom de l'espace (= nom de session zellij = basename du cwd)
+#   --init     prompt injecté au Claude (sinon lu depuis --init-file, ou stdin si piped)
+#   --dir      cwd de l'espace (défaut : ~/projects/<projet>)
+#
+# Détaché : rend la main tout de suite. Rejoindre via `srv <projet>` (distant) ou `dev <projet>` (local).
+# La session démarre via la primitive `zellij -l <layout> attach <sess> -b` (background, sans client).
+set -euo pipefail
+
+die() { echo "space-open: $*" >&2; exit 1; }
+
+[ $# -ge 2 ] || die "usage: space-open <machine|local> <projet> [--init \"<txt>\" | --init-file <f>] [--dir <path>]"
+machine="$1"; proj="$2"; shift 2
+init=""; init_file=""; dir=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --init)      init="${2:-}"; shift 2 ;;
+    --init-file) init_file="${2:-}"; shift 2 ;;
+    --dir)       dir="${2:-}"; shift 2 ;;
+    *) die "option inconnue: $1" ;;
+  esac
+done
+
+[[ "$proj" =~ ^[A-Za-z0-9._-]+$ ]] || die "nom de projet invalide: '$proj' (alphanum . _ - seulement)"
+
+# Source du prompt : --init, sinon --init-file, sinon stdin (si piped)
+if [ -z "$init" ]; then
+  if [ -n "$init_file" ]; then
+    [ -f "$init_file" ] || die "fichier init introuvable: $init_file"
+    init="$(cat "$init_file")"
+  elif [ ! -t 0 ]; then
+    init="$(cat)"
+  fi
+fi
+
+layout="$HOME/.config/zellij/layouts/dev.kdl"
+
+if [ "$machine" = local ]; then
+  cwd="${dir:-$HOME/projects/$proj}"
+  if zellij list-sessions --no-formatting 2>/dev/null | grep -v EXITED | awk '{print $1}' | grep -qxF "$proj"; then
+    die "un espace '$proj' est déjà ouvert (local) — rejoins-le : dev $proj"
+  fi
+  mkdir -p "$cwd"
+  f=""
+  if [ -n "$init" ]; then
+    mkdir -p "$HOME/.cache/thedev"
+    f="$(mktemp "$HOME/.cache/thedev/init.XXXXXX")"
+    printf '%s\n' "$init" > "$f"
+  fi
+  ( cd "$cwd" && CLAUDE_PANE_INIT_FILE="$f" zellij -l "$layout" attach "$proj" -b )
+  echo "✓ espace '$proj' ouvert (local, détaché) — rejoins-le : dev $proj"
+  exit 0
+fi
+
+# --- Distant -------------------------------------------------------------------
+# Le prompt est encodé base64 (transit), et TOUT le script remote est lui-même encodé
+# base64 puis exécuté via `bash -lic '… | bash -s'` : PATH de login garanti + zéro quoting.
+b64init=""
+[ -n "$init" ] && b64init=$(printf '%s\n' "$init" | base64 -w0 2>/dev/null || printf '%s\n' "$init" | base64 | tr -d '\n')
+rdir="${dir:-\$HOME/projects/$proj}"   # \$HOME résolu côté distant si --dir absent
+
+remote_script=$(cat <<EOF
+set -e
+if zellij list-sessions --no-formatting 2>/dev/null | grep -v EXITED | awk '{print \$1}' | grep -qxF '$proj'; then
+  echo "space-open: un espace '$proj' est déjà ouvert sur $machine" >&2
+  exit 3
+fi
+mkdir -p "$rdir" "\$HOME/.cache/thedev"
+f=""
+if [ -n "$b64init" ]; then
+  f=\$(mktemp "\$HOME/.cache/thedev/init.XXXXXX")
+  printf %s "$b64init" | base64 -d > "\$f"
+fi
+cd "$rdir"
+CLAUDE_PANE_INIT_FILE="\$f" zellij -l "\$HOME/.config/zellij/layouts/dev.kdl" attach '$proj' -b
+EOF
+)
+
+b64cmd=$(printf '%s' "$remote_script" | base64 -w0 2>/dev/null || printf '%s' "$remote_script" | base64 | tr -d '\n')
+ssh -o ConnectTimeout=8 "$machine" "bash -lic 'printf %s $b64cmd | base64 -d | bash -s'" \
+  || die "échec ouverture distante sur '$machine' (code $?)"
+echo "✓ espace '$proj' ouvert (détaché) sur '$machine' — rejoins-le : srv $proj"

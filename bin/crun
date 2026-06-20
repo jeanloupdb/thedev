@@ -19,6 +19,8 @@ REGISTRY="$HOME/.cache/claude-agents"
 PID_DIR="$HOME/.cache/claude-agents-pids"
 DEFAULT_TAB="sandbox"
 HOME_TAB="code page"
+# Pane d'accueil de la sandbox : son id est publié par agents-welcome (par session).
+WELCOME_ID="$HOME/.cache/claude-welcome-${ZELLIJ_SESSION_NAME:-default}.id"
 
 mkdir -p "$(dirname "$REGISTRY")" "$PID_DIR"
 touch "$REGISTRY"
@@ -63,6 +65,34 @@ client_attached() { current_tab | grep -q .; }
 # de doublon en se fiant à un current_tab() vide.
 tab_exists() { zellij action dump-layout 2>/dev/null | grep -q "tab name=\"$1\""; }
 
+# Liste ordonnée des noms d'onglets (de gauche à droite), un par ligne.
+tab_names() {
+  zellij action dump-layout 2>/dev/null \
+    | grep -oE 'tab name="[^"]+"' | sed -E 's/tab name="([^"]+)"/\1/'
+}
+
+# `new-tab` ajoute TOUJOURS l'onglet en fin de liste — il n'existe pas d'« insérer
+# en position N ». Donc une sandbox recréée (après s'être vidée → zellij ferme les
+# onglets vides) renaît APRÈS « my space » → l'ordre s'intervertit. On la repousse
+# à gauche jusqu'à sa place : juste après HOME_TAB. `move-tab` agit sur l'onglet
+# focus, et `new-tab` vient justement de le focus → ça tombe juste.
+reposition_sandbox() {
+  local -a names; mapfile -t names < <(tab_names)
+  local i idx_sb=-1 idx_home=-1
+  for i in "${!names[@]}"; do
+    [ "${names[$i]}" = "$DEFAULT_TAB" ] && idx_sb=$i
+    [ "${names[$i]}" = "$HOME_TAB" ]    && idx_home=$i
+  done
+  [ "$idx_sb" -lt 0 ] && return 0
+  local target=$(( idx_home + 1 ))           # juste après code page (ou 0 si absent)
+  [ "$idx_home" -lt 0 ] && target=0
+  local steps=$(( idx_sb - target ))
+  while [ "$steps" -gt 0 ]; do
+    zellij action move-tab left >/dev/null 2>&1
+    steps=$(( steps - 1 ))
+  done
+}
+
 ensure_tab() {
   local tab="$1"
   if tab_exists "$tab"; then
@@ -71,6 +101,7 @@ ensure_tab() {
   else
     zellij action new-tab --name "$tab" >/dev/null 2>&1   # création (OK headless)
     sleep 0.4
+    [ "$tab" = "$DEFAULT_TAB" ] && reposition_sandbox     # sandbox → toujours en 2ᵉ
   fi
 }
 
@@ -128,11 +159,48 @@ agent_alive() {
   pgrep -f -- "$cmd" >/dev/null 2>&1
 }
 
+# --- Welcome pane : masqué quand ≥1 crun tourne, réaffiché quand la sandbox se vide ---
+# Le pane welcome n'est PAS dans le registre : il publie son id (agents-welcome écrit
+# $WELCOME_ID). On le ferme par id, on le respawn via la machinerie de ciblage normale.
+
+# Nombre d'agents (cruns) actuellement vivants dans le registre.
+live_count() {
+  local n rest c=0
+  while IFS=$'\t' read -r n rest; do
+    [ -z "$n" ] && continue
+    agent_alive "$n" && c=$((c+1))
+  done < "$REGISTRY"
+  printf '%s' "$c"
+}
+
+# Ferme le pane welcome (par son id publié). No-op s'il n'est pas là.
+hide_welcome() {
+  [ -f "$WELCOME_ID" ] || return 0
+  local wid; wid=$(cat "$WELCOME_ID" 2>/dev/null)
+  [ -n "$wid" ] && zellij action close-pane -p "$wid" >/dev/null 2>&1
+  rm -f "$WELCOME_ID"
+}
+
+# Réaffiche welcome SI plus aucun crun vivant ET welcome absent. Réutilise le
+# ciblage d'onglet de cmd_run (client fantôme headless + retour à l'onglet d'origine).
+show_welcome() {
+  [ "$(live_count)" -eq 0 ] || return 0
+  [ -f "$WELCOME_ID" ] && return 0
+  local origin attached=1
+  client_attached || { ensure_client && attached=1 || attached=0; }
+  origin=$(current_tab); [ -z "$origin" ] && origin="$HOME_TAB"
+  ensure_tab "$DEFAULT_TAB"
+  zellij run --name claude-welcome -- "$HOME/.local/bin/agents-welcome" >/dev/null 2>&1
+  [ "$attached" != 0 ] && zellij action go-to-tab-name "$origin" >/dev/null 2>&1
+  kill_phantom
+}
+
 # --- Commands ---
 
 cmd_run() {
   local tab="$DEFAULT_TAB"
   local floating=""
+  local closeonexit=""
   local name=""
   local -a cmd_args=()
 
@@ -140,6 +208,7 @@ cmd_run() {
     case "$1" in
       --tab) tab="$2"; shift 2 ;;
       --floating) floating="--floating"; shift ;;
+      -c|--close|--close-on-exit) closeonexit="--close-on-exit"; shift ;;  # pane éphémère : se ferme seul à la fin de la commande
       --) shift; cmd_args=("$@"); break ;;
       -*) die "Option inconnue : $1" ;;
       *) [ -z "$name" ] && name="$1" || cmd_args+=("$1"); shift ;;
@@ -173,9 +242,6 @@ cmd_run() {
 
   ensure_tab "$tab"
 
-  # Close welcome pane if present (single pane named "welcome" in agents tab)
-  close_welcome_if_present
-
   # Wrap the command in a bash that :
   #  1. prints the command itself (self-documenting pane)
   #  2. writes $$ to a pidfile — this PID will be the final process's PID
@@ -190,14 +256,17 @@ exec \"\$@\""
 
   local run_out pane_id
   if [ -n "$floating" ]; then
-    run_out=$(zellij run --name "claude-$name" --floating -- bash -c "$wrapper" -- "${cmd_args[@]}" 2>&1)
+    run_out=$(zellij run --name "claude-$name" --floating $closeonexit -- bash -c "$wrapper" -- "${cmd_args[@]}" 2>&1)
   else
-    run_out=$(zellij run --name "claude-$name" -- bash -c "$wrapper" -- "${cmd_args[@]}" 2>&1)
+    run_out=$(zellij run --name "claude-$name" $closeonexit -- bash -c "$wrapper" -- "${cmd_args[@]}" 2>&1)
   fi
   pane_id=$(printf '%s\n' "$run_out" | grep -oE 'terminal_[0-9]+' | head -1)
   [ -z "$pane_id" ] && pane_id="unknown"
 
   reg_add "$name" "$tab" "$pane_id" "${cmd_args[*]}"
+
+  # Masque le pane d'accueil : la sandbox a maintenant un vrai crun.
+  [ "$tab" = "$DEFAULT_TAB" ] && hide_welcome
 
   if [ "$attached" != 0 ]; then
     zellij action go-to-tab-name "$origin" 2>/dev/null || true
@@ -211,15 +280,6 @@ exec \"\$@\""
     info "agent '$name' démarré (pane $pane_id)"
   fi
   printf '   cmd: %s\n' "${cmd_args[*]}"
-}
-
-close_welcome_if_present() {
-  # Heuristic: if a pane named "claude-welcome" exists in the current tab, close it
-  if zellij action dump-layout 2>/dev/null | grep -q 'name="welcome"'; then
-    zellij action focus-pane-id welcome 2>/dev/null || true
-    # Better : we don't know its id, skip silently — the welcome pane will just stay
-    :
-  fi
 }
 
 cmd_list() {
@@ -274,6 +334,7 @@ cmd_kill() {
   [ -z "$name" ] && die "Usage: crun kill <name>"
   [ -z "$(reg_lookup "$name")" ] && die "Aucun agent nommé '$name'."
   cmd_kill_silent "$name"
+  show_welcome   # sandbox vide ? le pane d'accueil revient
   ok "agent '$name' tué."
 }
 
@@ -301,6 +362,7 @@ cmd_cleanup() {
   if [ "$closed" -eq 0 ]; then
     ok "Tous les agents sont vivants."
   else
+    show_welcome   # sandbox vidée ? le pane d'accueil revient
     ok "$closed agent(s) nettoyé(s)."
   fi
 }
@@ -340,6 +402,7 @@ Usage:
   crun <name> -- <cmd>              # lance dans la sandbox par défaut
   crun --tab <tab> <name> -- <cmd>  # tab custom (créée si absente)
   crun --floating <name> -- <cmd>   # pane flottant
+  crun --close <name> -- <cmd>      # pane éphémère : se ferme seul à la fin (-c)
   crun list                         # liste les agents (● vivant, ○ mort)
   crun logs <name>                  # lit l'écran d'un agent (diagnostiquer un mort)
   crun kill <name>                  # tue un agent par nom

@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# @thedev session crée un nouveau projet en déléguant le bootstrap à un Claude distant (VPS auto)
+# new-project — orchestrateur de création de projet. Choisit un VPS (le moins chargé), ouvre
+# un espace détaché via `space-open` avec un Claude briefé pour scaffolder le projet, et
+# inscrit l'entrée dans PROJECTS.md (registre local). Couche cadrage = skill `/new-project`.
+#
+#   new-project <nom> [--machine <host>] [--local] [--stack "<s>"] [--goal "<g>"] [--desc "<d>"]
+#
+#   <nom>       nom du projet (= espace zellij). alphanum . _ -
+#   --machine   force le VPS cible (sinon auto : le moins chargé de ~/.config/thedev-machines)
+#   --local     crée sur la machine locale (exception ; défaut = VPS)
+#   --stack     stack souhaitée (sinon le Claude distant propose selon l'objectif)
+#   --goal      objectif du projet (1 phrase)
+#   --desc      description courte (pour PROJECTS.md)
+#
+# Délégation : c'est le Claude distant qui fait git init / CLAUDE.md / scaffold / `/start`.
+set -euo pipefail
+
+die() { echo "new-project: $*" >&2; exit 1; }
+
+[ $# -ge 1 ] || die "usage: new-project <nom> [--machine <host>] [--local] [--stack \"…\"] [--goal \"…\"] [--desc \"…\"]"
+nom="$1"; shift
+machine=""; want_local=""; stack=""; goal=""; desc=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --machine) machine="${2:-}"; shift 2 ;;
+    --local)   want_local=1; shift ;;
+    --stack)   stack="${2:-}"; shift 2 ;;
+    --goal)    goal="${2:-}"; shift 2 ;;
+    --desc)    desc="${2:-}"; shift 2 ;;
+    *) die "option inconnue: $1" ;;
+  esac
+done
+
+[[ "$nom" =~ ^[A-Za-z0-9._-]+$ ]] || die "nom invalide: '$nom' (alphanum . _ - seulement)"
+
+PROJECTS_MD="${PROJECTS_MD:-$HOME/jlal_perso/perso/PROJECTS.md}"
+# Garde-fou : pas de doublon dans le registre
+if [ -f "$PROJECTS_MD" ] && grep -qE "^### $nom( |\$)" "$PROJECTS_MD"; then
+  die "un projet '### $nom' est déjà dans le registre ($PROJECTS_MD)"
+fi
+
+# --- 1. Cible (machine) -------------------------------------------------------
+if [ -n "$want_local" ]; then
+  machine=local
+elif [ -z "$machine" ]; then
+  # Auto : sonde chaque VPS de thedev-machines, choisit la charge (miss+cruns) minimale.
+  machines_file="$HOME/.config/thedev-machines"
+  [ -f "$machines_file" ] || die "auto-choix impossible : $machines_file absent (utilise --machine ou --local)"
+  best=""; best_load=999999
+  echo "→ choix du VPS (sonde thedev-status)…" >&2
+  while IFS= read -r m; do
+    m="${m%%#*}"; m="$(echo "$m" | xargs)"   # strip commentaire + espaces
+    [ -n "$m" ] || continue
+    # -n : ne pas consommer le stdin de la boucle (le fichier des machines)
+    load=$(ssh -n -o ConnectTimeout=8 "$m" "bash -lic 'thedev-status __probe'" 2>/dev/null \
+            | awk -F'\t' '$1=="S"{print $3+$4; exit}')
+    if [ -z "$load" ]; then
+      echo "   $m : injoignable, ignoré" >&2; continue
+    fi
+    echo "   $m : charge $load" >&2
+    if [ "$load" -lt "$best_load" ]; then best_load="$load"; best="$m"; fi
+  done < "$machines_file"
+  [ -n "$best" ] || die "aucun VPS joignable (utilise --local pour créer en local)"
+  machine="$best"
+  echo "→ VPS choisi : $machine (charge $best_load)" >&2
+fi
+
+# --- 2. Brief du Claude distant ----------------------------------------------
+brief=$(mktemp "${TMPDIR:-/tmp}/newproj-brief.XXXXXX")
+trap 'rm -f "$brief"' EXIT
+{
+  echo "Tu démarres un NOUVEAU projet « $nom » dans le dossier courant (vide) sur cette machine."
+  [ -n "$stack" ] && echo "Stack souhaitée : $stack." || echo "Stack : à toi de proposer la plus adaptée à l'objectif."
+  [ -n "$goal" ] && echo "Objectif : $goal."
+  [ -n "$desc" ] && echo "Description : $desc."
+  cat <<'EOF'
+
+Ta mission est le BOOTSTRAP du projet (le démarrage propre, PAS une feature complète) :
+1. git init.
+2. Crée un CLAUDE.md à la racine (but du projet, stack, comment le lancer) — convention : tout projet actif a son CLAUDE.md.
+3. Scaffold minimal de la stack (arborescence, fichiers de conf, dépendances de base).
+4. Lance la commande /start pour générer .claude/rules/start.md (stack + commandes de lancement).
+5. Laisse au moins une todo « next step » claire (dans le CLAUDE.md ou un TODO).
+Fais un premier commit quand c'est prêt. Reste SYNCHRONE (jamais de Workflow/agent détaché).
+Ne déploie rien et ne lance pas de serveur tant qu'on ne te le demande pas.
+EOF
+} > "$brief"
+
+# --- 3. Ouvre l'espace détaché briefé ----------------------------------------
+command -v space-open >/dev/null || die "brique 'space-open' introuvable (PATH)"
+space-open "$machine" "$nom" --init-file "$brief"
+
+# --- 4. Inscrit PROJECTS.md (registre local) ---------------------------------
+if [ -f "$PROJECTS_MD" ]; then
+  if [ "$machine" = local ]; then chemin="~/projects/$nom"; else chemin="$machine:~/projects/$nom"; fi
+  entryf=$(mktemp "${TMPDIR:-/tmp}/newproj-entry.XXXXXX")
+  {
+    echo "### $nom"
+    echo "- **Chemin** : \`$chemin\`"
+    echo "- **Stack** : ${stack:-à définir (bootstrap en cours)}"
+    echo "- **Description** : ${desc:-${goal:-Nouveau projet (bootstrap en cours).}}"
+    [ -n "$goal" ] && echo "- **Objectif actuel** : $goal"
+    echo "- **Statut** : \`actif\`"
+    echo "- **Avancement** : 0%"
+    echo "- **Todo** :"
+    echo "  - [ ] Bootstrap en cours sur $machine (scaffold + /start) — vérifier puis affiner"
+  } > "$entryf"
+  tmp=$(mktemp)
+  awk -v ef="$entryf" '
+    { print }
+    /^## Projets actifs$/ && !done {
+      print ""
+      while ((getline line < ef) > 0) print line
+      done=1
+    }
+  ' "$PROJECTS_MD" > "$tmp" 2>/dev/null && mv "$tmp" "$PROJECTS_MD" \
+    && echo "✓ inscrit dans PROJECTS.md (### $nom)" \
+    || echo "⚠ inscription PROJECTS.md échouée — à ajouter à la main" >&2
+  rm -f "$entryf" "$tmp" 2>/dev/null || true
+else
+  echo "⚠ $PROJECTS_MD absent — entrée non inscrite" >&2
+fi
+
+echo "✓ projet '$nom' lancé sur '$machine'."

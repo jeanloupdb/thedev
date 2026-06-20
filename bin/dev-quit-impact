@@ -10,13 +10,13 @@ IND='              '   # indentation : aligne sous le mot « FERMER » du menu
 
 join_dot(){ local out="" p; for p in "$@"; do out="${out:+$out · }$p"; done; printf '%s' "$out"; }
 
-# Ce qui est TUÉ : missions/crons en cours, agents sandbox, watcher.
+# Ce qui est TUÉ : missions/crons en cours, cruns sandbox, watcher.
 kill_parts=()
 nm=$(find "$ROOT/spaces/$esp/work" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)
 [ "${nm:-0}" -gt 0 ] && kill_parts+=("$nm mission$([ "$nm" -gt 1 ] && echo s)")
 if command -v crun >/dev/null 2>&1; then
   na=$(crun list 2>/dev/null | awk '/^● /{ if ($2 !~ /^link-/ && $2 !~ /^mission-/) c++ } END{print c+0}')
-  [ "${na:-0}" -gt 0 ] && kill_parts+=("$na agent$([ "$na" -gt 1 ] && echo s)")
+  [ "${na:-0}" -gt 0 ] && kill_parts+=("$na crun$([ "$na" -gt 1 ] && echo s)")
 fi
 
 # Watcher vivant ? On ne le liste PAS (plomberie interne, présent dans tout thedev) :

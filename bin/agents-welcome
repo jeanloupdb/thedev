@@ -15,6 +15,13 @@ if [ -f "$HOME/.config/dev-vps" ] && [ -n "${ZELLIJ_PANE_ID:-}" ]; then
   ( sleep 3; zellij action rename-pane -p "$ZELLIJ_PANE_ID" "$vps_label" 2>/dev/null ) &
 fi
 
+# Expose l'id de CE pane pour que crun puisse le masquer (quand un crun tourne)
+# et le réafficher (quand la sandbox se vide). Cf. crun: hide_welcome/show_welcome.
+if [ -n "${ZELLIJ_PANE_ID:-}" ]; then
+  mkdir -p "$HOME/.cache"
+  printf '%s\n' "$ZELLIJ_PANE_ID" > "$HOME/.cache/claude-welcome-${ZELLIJ_SESSION_NAME:-default}.id" 2>/dev/null || true
+fi
+
 cat <<'EOF'
 
   ╭───────────────────────────────────────────────────────╮
