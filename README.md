@@ -41,26 +41,26 @@ Serveur : `./install.sh --vps=<label>`. Dépendances : zellij, claude, nvim, pyt
 
 | Fonctionnalité | Ce que ça fait |
 |---|---|
-| 🖥️ **Multi-machines** | Claude sur ton poste et tes serveurs, réunis en un seul espace de travail. |
-| 🚚 **Partage entre machines** | Claude partage des dossiers entiers entre tes machines — sécurisé, respecte ton `.gitignore`. |
-| 📨 **Missions** | Claude sur ton poste envoie une tâche à un Claude sur ton VPS (avec choix du modèle) et reçoit le retour. |
-| 📲 **Pilotage à distance** | Un thedev sur ton VPS lance Claude en Remote Control : pilote ton serveur depuis l'app Claude. |
 | 👁️ **Vue du parc** | Tous tes Claude et leur état (actif ● / arrêté ○) en un coup d'œil, organisés. |
-| 🔌 **Reprise 1 clic** | Reprends n'importe quelle session, locale ou distante, en un clic. |
 | 🧩 **Claude en renfort** | Une idée hors sujet en plein travail ? Ouvre autant de Claude que tu veux dans ton espace. |
+| 🔌 **Reprise 1 clic** | Reprends n'importe quelle session, locale ou distante, en un clic. |
 | 🏷️ **Auto-nommage** | Les panes Claude se nomment seuls, en direct, au fil du sujet. |
 | 📁 **1 dossier = 1 session** | Modèle simple et lisible, pas de boîte noire. |
+| 🖥️ **Multi-machines** | Claude sur ton poste et tes serveurs, réunis en un seul espace de travail. |
+| 📨 **Missions** | Claude sur ton poste envoie une tâche à un Claude sur ton VPS (avec choix du modèle) et reçoit le retour. |
+| 🚚 **Partage entre machines** | Claude partage des dossiers entiers entre tes machines — sécurisé, respecte ton `.gitignore`. |
+| 📲 **Pilotage à distance** | Un thedev sur ton VPS lance Claude en Remote Control : pilote ton serveur depuis l'app Claude. |
 | ▶️ **Commandes longues** | Claude ouvre un terminal thedev dédié pour les commandes dont tu veux le retour — `npm start`, builds, watchers. |
-| 🔒 **Secrets hors chat** | Onglet dédié pour saisir mot de passe / clé / sudo — l'IA ne les voit jamais. |
 | 🖧 **Tes terminaux** | Vois les logs en direct, tape une commande sans passer par l'IA. |
 | 🙈 **Page « my space »** | Un terminal rien qu'à toi, hors de portée de Claude. |
+| 🔒 **Secrets hors chat** | Onglet dédié pour saisir mot de passe / clé / sudo — l'IA ne les voit jamais. |
+| 🧹 **Fermeture propre** | Avant de fermer un espace, vois ce que ça va couper (Ctrl+Q) : laisse en arrière-plan ou stoppe. |
 | 📊 **Ressources en direct** | RAM, disque, CPU affichés en permanence — pour bosser sans saturer. |
 | ⏳ **Fenêtre Claude 5h** | Combien il te reste avant le rate-limit Max, en direct — gratuit, pas de surprises. |
-| 🧹 **Fermeture propre** | Avant de fermer un espace, vois ce que ça va couper (Ctrl+Q) : laisse en arrière-plan ou stoppe. |
 | 🌑 **Léger** | TUI minimaliste, thème noir — optimisé batterie et RAM. |
 | ⏰ **Automatisations distantes** | Confie à un serveur une tâche rejouée dans le temps, par un Claude dédié. |
-| 🌐 **Exposition 0 port** | Via Tailscale, ton VPS publie un site en HTTPS à la demande. |
 | 🛰️ **Headless** | Tourne en arrière-plan, pleine puissance sans interface — parfait pour laisser un Claude sur un serveur. |
+| 🌐 **Exposition 0 port** | Via Tailscale, ton VPS publie un site en HTTPS à la demande. |
 | 💳 **Sur ton abo** | Fonctionne sur ton abonnement Claude (sans API) → coût réduit. |
 
 <sub>Ex. d'automatisation : « sur mon VPS, chaque matin, génère un article + son podcast audio et envoie-moi le lien sur Telegram. »</sub>
