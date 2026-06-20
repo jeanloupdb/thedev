@@ -39,29 +39,39 @@ Serveur : `./install.sh --vps=<label>`. Dépendances : zellij, claude, nvim, pyt
 
 ## Fonctionnalités
 
-| Fonctionnalité | Ce que ça fait |
-|---|---|
-| 👁️ **Vue du parc** | Tous tes Claude et leur état (actif ● / arrêté ○) en un coup d'œil, organisés. |
-| 🧩 **Claude en renfort** | Une idée hors sujet en plein travail ? Ouvre autant de Claude que tu veux dans ton espace. |
-| 🔌 **Reprise 1 clic** | Reprends n'importe quelle session, locale ou distante, en un clic. |
-| 🏷️ **Auto-nommage** | Les panes Claude se nomment seuls, en direct, au fil du sujet. |
-| 📁 **1 dossier = 1 session** | Modèle simple et lisible, pas de boîte noire. |
-| 🖥️ **Multi-machines** | Claude sur ton poste et tes serveurs, réunis en un seul espace de travail. |
-| 📨 **Missions** | Claude sur ton poste envoie une tâche à un Claude sur ton VPS (avec choix du modèle) et reçoit le retour. |
-| 🚚 **Partage entre machines** | Claude partage des dossiers entiers entre tes machines — sécurisé, respecte ton `.gitignore`. |
-| 📲 **Pilotage à distance** | Un thedev sur ton VPS lance Claude en Remote Control : pilote ton serveur depuis l'app Claude. |
-| ▶️ **Commandes longues** | Claude ouvre un terminal thedev dédié pour les commandes dont tu veux le retour — `npm start`, builds, watchers. |
-| 🖧 **Tes terminaux** | Vois les logs en direct, tape une commande sans passer par l'IA. |
-| 🙈 **Page « my space »** | Un terminal rien qu'à toi, hors de portée de Claude. |
-| 🔒 **Secrets hors chat** | Onglet dédié pour saisir mot de passe / clé / sudo — l'IA ne les voit jamais. |
-| 🧹 **Fermeture propre** | Avant de fermer un espace, vois ce que ça va couper (Ctrl+Q) : laisse en arrière-plan ou stoppe. |
-| 📊 **Ressources en direct** | RAM, disque, CPU affichés en permanence — pour bosser sans saturer. |
-| ⏳ **Fenêtre Claude 5h** | Combien il te reste avant le rate-limit Max, en direct — gratuit, pas de surprises. |
-| 🌑 **Léger** | TUI minimaliste, thème noir — optimisé batterie et RAM. |
-| ⏰ **Automatisations distantes** | Confie à un serveur une tâche rejouée dans le temps, par un Claude dédié. |
-| 🛰️ **Headless** | Tourne en arrière-plan, pleine puissance sans interface — parfait pour laisser un Claude sur un serveur. |
-| 🌐 **Exposition 0 port** | Via Tailscale, ton VPS publie un site en HTTPS à la demande. |
-| 💳 **Sur ton abo** | Fonctionne sur ton abonnement Claude (sans API) → coût réduit. |
+Légende : ✅ oui · 🟡 partiel / autre approche · ❌ non
+
+| Fonctionnalité | 🦞 OpenClaw | 🪽 Hermes | 🖥️ **thedev** |
+|---|:---:|:---:|:---:|
+| 👁️ **Vue du parc** — tous tes Claude et leur état, organisés | 🟡 | 🟡 | ✅ |
+| 🧩 **Claude en renfort** — autant de Claude que voulu par espace | ✅ | ✅ | ✅ |
+| 🔌 **Reprise 1 clic** — reprendre une session locale ou distante | 🟡 | ✅ | ✅ |
+| 🏷️ **Auto-nommage** — les panes se nomment seuls au fil du sujet | ❌ | ❌ | ✅ |
+| 📁 **1 dossier = 1 session** — modèle simple, pas de boîte noire | ❌ | ❌ | ✅ |
+| 🖥️ **Multi-machines** — poste + serveurs en un seul espace | ❌ | 🟡 | ✅ |
+| 📨 **Missions** — envoyer une tâche à un Claude distant (choix du modèle) | 🟡 | ✅ | ✅ |
+| 🚚 **Partage entre machines** — dossiers entiers, respecte `.gitignore` | ❌ | ❌ | ✅ |
+| 📲 **Pilotage à distance** — piloter ton serveur depuis l'app | ✅ | ✅ | ✅ |
+| ▶️ **Commandes longues** — terminal dédié pour `npm start`, builds, watchers | ❌ | 🟡 | ✅ |
+| 🖧 **Tes terminaux** — voir les logs, taper une commande sans l'IA | ❌ | 🟡 | ✅ |
+| 🙈 **Page « my space »** — un terminal privé, hors de portée de Claude | ❌ | ❌ | ✅ |
+| 🔒 **Secrets hors chat** — saisir mdp / clé / sudo sans que l'IA les voie | ❌ | 🟡 | ✅ |
+| 🧹 **Fermeture propre** — voir ce qu'on coupe avant de fermer (Ctrl+Q) | ❌ | ❌ | ✅ |
+| 📊 **Ressources en direct** — RAM, disque, CPU affichés en permanence | ❌ | ❌ | ✅ |
+| ⏳ **Fenêtre Claude 5h** — % restant avant le rate-limit, gratuit | ❌ | ❌ | ✅ |
+| 🌑 **Léger** — TUI minimaliste, thème noir | ❌ | ✅ | ✅ |
+| ⏰ **Automatisations distantes** — tâches rejouées dans le temps sur un serveur | ✅ | ✅ | ✅ |
+| 🛰️ **Headless** — tourne en arrière-plan sans interface sur un serveur | ✅ | ✅ | ✅ |
+| 🌐 **Exposition 0 port** — publier un site HTTPS via Tailscale, sans ouvrir de port | ❌ | ❌ | ✅ |
+| 💳 **Sur ton abo** — fonctionne sur l'abonnement Claude, sans coût API | ❌¹ | ❌ | ✅ |
+| 💬 **Multi-messageries** — piloter depuis WhatsApp / Telegram / Discord / Signal… | ✅ | ✅ | 🟡 |
+| 🧠 **Mémoire persistante** — contexte cumulé entre projets/sessions | 🟡 | ✅ | ❌ |
+| 🔧 **Self-improvement** — l'agent crée et améliore ses propres skills | 🟡 | ✅ | ❌ |
+| 🔀 **Multi-modèles** — 200+ modèles, pas que Claude | ✅ | ✅ | ❌ |
+| 📦 **Registre de skills** — installer des skills partagés par la communauté | ✅ | ✅ | ❌ |
+| 🌐 **Automation navigateur / voix** — piloter un browser, entrées vocales | ✅ | 🟡 | ❌ |
+
+<sub>¹ OpenClaw fonctionnait sur l'abonnement Claude via un détournement de token — Anthropic l'a bloqué le 4 avril 2026. thedev reste légitime via Claude Code interactif.</sub>
 
 <sub>Ex. d'automatisation : « sur mon VPS, chaque matin, génère un article + son podcast audio et envoie-moi le lien sur Telegram. »</sub>
 
