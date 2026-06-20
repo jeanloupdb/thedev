@@ -47,16 +47,15 @@ Serveur : `./install.sh --vps=<label>`. Dépendances : zellij, claude, nvim, pyt
 | 📲 **Pilotage à distance** | Un thedev sur ton VPS lance Claude en Remote Control : pilote ton serveur depuis l'app Claude. |
 | 👁️ **Vue du parc** | Tous tes Claude et leur état (actif ● / arrêté ○) en un coup d'œil, organisés. |
 | 🔌 **Reprise 1 clic** | Reprends n'importe quelle session, locale ou distante, en un clic. |
-| 🧩 **Claude en renfort** | Une idée hors sujet en plein travail ? Ouvre autant de Claude que tu veux dans ton espace — pages auto-nommées. |
+| 🧩 **Claude en renfort** | Une idée hors sujet en plein travail ? Ouvre autant de Claude que tu veux dans ton espace. |
 | 🏷️ **Auto-nommage** | Les panes Claude se nomment seuls, en direct, au fil du sujet. |
 | 📁 **1 dossier = 1 session** | Modèle simple et lisible, pas de boîte noire. |
 | ▶️ **Commandes longues** | Claude ouvre un terminal thedev dédié pour les commandes dont tu veux le retour — `npm start`, builds, watchers. |
 | 🔒 **Secrets hors chat** | Onglet dédié pour saisir mot de passe / clé / sudo — l'IA ne les voit jamais. |
 | 🖧 **Tes terminaux** | Vois les logs en direct, tape une commande sans passer par l'IA. |
 | 🙈 **Page « my space »** | Un terminal rien qu'à toi, hors de portée de Claude. |
-| 📊 **Ressources en direct** | Usage Claude, RAM, disque, CPU affichés en permanence. |
+| 📊 **Ressources en direct** | RAM, disque, CPU affichés en permanence — pour bosser sans saturer. |
 | ⏳ **Fenêtre Claude 5h** | Combien il te reste avant le rate-limit Max, en direct — gratuit, pas de surprises. |
-| ⚡ **Alt+R** | Ta conso RAM en direct, pour bosser sans saturer. |
 | 🧹 **Fermeture propre** | Avant de fermer un espace, vois ce que ça va couper (Ctrl+Q) : laisse en arrière-plan ou stoppe. |
 | 🌑 **Léger** | TUI minimaliste, thème noir — optimisé batterie et RAM. |
 | ⏰ **Automatisations distantes** | Confie à un serveur une tâche rejouée dans le temps, par un Claude dédié. |
