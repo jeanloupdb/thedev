@@ -2,7 +2,14 @@
 
 > Conception du 2026-06-21. Interface bash qui découple thedev de Claude Code,
 > en réponse à l'audit [`ENGINE-COUPLING.md`](ENGINE-COUPLING.md) et au principe
-> n°1 de [`VISION.md`](VISION.md). C'est le **contrat**, pas l'implémentation.
+> n°1 de [`VISION.md`](VISION.md). C'est le **contrat**.
+>
+> **Statut** : implémenté dans `bin/engine` (dispatcher) + `lib/engine/claude.sh`
+> (backend Claude). Les verbes sortants (`launch`/`resume`/`list`/`read`/`usage`/
+> `running`) et le core de `engine event` sont des **wrappers fidèles** du
+> comportement actuel — testés sur données réelles. **Pas encore fait** : rebrancher
+> les call-sites historiques (`dev-picker`, `thedev-link`, hooks) sur `engine`
+> (l'étape de migration, plus risquée — voir « Ordre d'attaque »).
 
 ## Idée directrice
 

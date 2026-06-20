@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# @thedev moteur façade moteur-agnostique : lance/liste/lit/observe un agent (voir ENGINE-ADAPTER.md)
+# bin/engine — façade unique entre thedev et le moteur d'agent (aujourd'hui Claude
+# Code). But : découpler thedev des internals d'un moteur précis (VISION.md principe 1,
+# ENGINE-COUPLING.md). Frontière d'abstraction = le SCHÉMA : args stables en entrée,
+# sortie stable, quel que soit le backend ($THEDEV_ENGINE, lib/engine/<nom>.sh).
+# Exit : 0 ok · 2 non supporté par ce moteur · 1 erreur.
+set -u
+
+THEDEV_ENGINE="${THEDEV_ENGINE:-claude}"
+
+# Repo thedev résolu depuis l'emplacement RÉEL de ce script (relocatable, marche
+# même appelé via symlink depuis ~/.local/bin) — même idiome que claude-pane.
+_self="$0"; case "$_self" in */*) ;; *) _self="$(command -v -- "$_self")" ;; esac
+ROOT="$(cd "$(dirname "$(readlink -f -- "$_self")")/.." && pwd)"
+BACKEND="$ROOT/lib/engine/$THEDEV_ENGINE.sh"
+[ -f "$BACKEND" ] || { echo "engine: backend '$THEDEV_ENGINE' introuvable ($BACKEND)" >&2; exit 1; }
+# shellcheck source=/dev/null
+. "$BACKEND"
+
+verb="${1:-}"; shift 2>/dev/null || true
+
+case "$verb" in
+  launch|resume)
+    cwd="" model="" resume="" init="" initfile=""
+    [ "$verb" = resume ] && { resume="${1:-}"; shift 2>/dev/null || true; }
+    extra=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --cwd)            cwd="$2"; shift 2 ;;
+        --model)          model="$2"; shift 2 ;;
+        --resume)         resume="$2"; shift 2 ;;
+        --init)           init="$2"; shift 2 ;;
+        --init-file)      initfile="$2"; shift 2 ;;
+        --remote-control) shift 2 ;;   # auto sur VPS (claude-pane) — accepté, délégué
+        --system-append)  shift 2 ;;   # prompt zellij natif (claude-pane) — délégué
+        --)               shift; extra+=("$@"); break ;;
+        *)                extra+=("$1"); shift ;;
+      esac
+    done
+    engine_launch "$cwd" "$model" "$resume" "$init" "$initfile" -- ${extra[@]+"${extra[@]}"}
+    ;;
+  list)
+    cwd="" all=0 json=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --cwd)  cwd="$2"; shift 2 ;;
+        --all)  all=1; shift ;;
+        --json) json=1; shift ;;
+        *)      shift ;;
+      esac
+    done
+    if [ "$all" != 1 ]; then
+      [ -n "$cwd" ] || cwd="$(pwd -P)"
+      cwd="$(realpath "$cwd" 2>/dev/null || printf '%s' "$cwd")"
+    fi
+    engine_list "$cwd" "$all" "$json"
+    ;;
+  read)
+    id="${1:-}"; shift 2>/dev/null || true
+    last=1 role=assistant json=0   # défaut : dernier message assistant (= résultat de mission)
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --last) last=1; shift ;;
+        --all)  last=0; shift ;;
+        --role) role="$2"; shift 2 ;;
+        --json) json=1; shift ;;
+        *)      shift ;;
+      esac
+    done
+    [ -n "$id" ] || { echo "engine read: ID requis" >&2; exit 1; }
+    engine_read "$id" "$last" "$role" "$json"
+    ;;
+  usage)
+    json=0; [ "${1:-}" = --json ] && json=1
+    engine_usage "$json"
+    ;;
+  running)
+    id=""; [ "${1:-}" = --id ] && id="${2:-}"
+    engine_running "$id"
+    ;;
+  event)
+    type="${1:-}"; shift 2>/dev/null || true
+    session="" cwd="" title="" transcript=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --session)    session="$2"; shift 2 ;;
+        --cwd)        cwd="$2"; shift 2 ;;
+        --title)      title="$2"; shift 2 ;;
+        --transcript) transcript="$2"; shift 2 ;;
+        *)            shift ;;
+      esac
+    done
+    [ -n "$type" ] && [ -n "$session" ] || { echo "engine event: TYPE et --session requis" >&2; exit 1; }
+    engine_event "$type" "$session" "$cwd" "$title" "$transcript"
+    ;;
+  install-hooks)
+    engine_install_hooks
+    ;;
+  ""|-h|--help|help)
+    cat >&2 <<'USAGE'
+engine — façade moteur-agnostique (backend via $THEDEV_ENGINE, défaut : claude)
+
+  engine launch  [--cwd D] [--model M] [--resume ID] [--init MSG|--init-file F] [-- EXTRA…]
+  engine resume  ID [mêmes options que launch]
+  engine list    [--cwd D] [--all] [--json]
+  engine read    ID [--last|--all] [--role assistant|user|any] [--json]
+  engine usage   [--json]
+  engine running [--id ID]
+  engine event   TYPE --session ID --cwd D [--title T] [--transcript REF]
+                 TYPE ∈ session-start | busy | turn-end | session-end
+  engine install-hooks
+
+Exit : 0 ok · 2 non supporté par ce moteur · 1 erreur. Voir ENGINE-ADAPTER.md.
+USAGE
+    exit 1
+    ;;
+  *)
+    echo "engine: verbe inconnu '$verb' (engine --help)" >&2
+    exit 1
+    ;;
+esac
