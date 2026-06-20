@@ -13,7 +13,7 @@ N'exécute rien lui-même : imprime une décision sur stdout que `dev` applique 
 (rien + code ≠0 si annulé).
 """
 import curses
-import glob
+import datetime
 import json
 import os
 import re
@@ -21,7 +21,10 @@ import subprocess
 import sys
 import threading
 
-PROJECTS = os.path.expanduser("~/.claude/projects")
+# Adaptateur moteur (engine list …) résolu en VOISIN de ce script (relocatable) :
+# dev-picker n'a plus à connaître l'emplacement ni le schéma des transcripts du
+# moteur — il demande la liste des espaces à `engine`.
+ENGINE = os.path.join(os.path.dirname(os.path.realpath(__file__)), "engine")
 
 
 def vps_label():
@@ -321,54 +324,6 @@ def escape(path):
     return re.sub(r"[^a-zA-Z0-9]", "-", path)
 
 
-def flatten(content):
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return " ".join(
-            it.get("text", "") for it in content
-            if isinstance(it, dict) and it.get("type") == "text"
-        )
-    return ""
-
-
-def session_info(path):
-    """Extrait (cwd, titre, mtime) sans lire tout le fichier (têtes/queues)."""
-    try:
-        size = os.path.getsize(path)
-        with open(path, "rb") as f:
-            head = f.read(65536)
-            f.seek(max(0, size - 131072))
-            tail = f.read()
-        mtime = os.path.getmtime(path)
-    except OSError:
-        return None
-    cwd = ""
-    m = re.search(rb'"cwd":"([^"]*)"', head)
-    if m:
-        cwd = m.group(1).decode("utf-8", "replace")
-    title = ""
-    for line in tail.split(b"\n"):
-        if b'"type":"ai-title"' in line:
-            try:
-                title = json.loads(line).get("aiTitle", "") or title
-            except Exception:
-                pass
-    first = ""
-    for line in head.split(b"\n"):
-        if b'"type":"user"' in line:
-            try:
-                t = flatten(json.loads(line).get("message", {}).get("content"))
-            except Exception:
-                continue
-            if t and not t.lstrip().startswith("<command-"):
-                first = t
-                break
-    if not title:
-        title = re.sub(r"\s+", " ", first).strip()[:60] or "(session)"
-    return cwd, re.sub(r"\s+", " ", title).strip(), mtime
-
-
 def fmt_date(mtime):
     import time
     return time.strftime("%d %b", time.localtime(mtime))
@@ -402,35 +357,40 @@ def fuzzy(query, text):
     return 200 - gaps
 
 
+def _iso_epoch(iso):
+    """ISO-8601 (sortie de `engine list`) → epoch float, pour fmt_date/tri."""
+    try:
+        return datetime.datetime.fromisoformat(iso).timestamp()
+    except Exception:
+        return 0.0
+
+
 def load_workspaces():
-    """Historique des ESPACES de dev = un dossier (realpath) où on a déjà
-    travaillé. Dérivé des transcripts mais agrégé au niveau DOSSIER, pas
-    conversation : une entrée par dossier, dédupliquée par realpath (le symlink
-    ~/jlal_perso ↔ /data/jlal_perso ne crée donc plus de doublon). On retient
-    l'id de la DERNIÈRE conversation du dossier pour la reprise : un RESUME
-    relance le layout dev et reprend cette conversation (ou attache si la
-    session zellij tourne encore). Une session fermée — même de force — reste
-    ainsi retrouvable tant que son dossier a un transcript."""
-    groups = {}
-    for path in glob.glob(os.path.join(PROJECTS, "*", "*.jsonl")):
-        info = session_info(path)
-        if not info:
-            continue
-        cwd, _title, mtime = info
-        if not cwd:
+    """Historique des ESPACES de dev (un par dossier, dédup realpath) via
+    l'adaptateur moteur `engine list --all --json`. dev-picker n'a plus à
+    connaître l'emplacement ni le schéma des transcripts du moteur : il reçoit
+    {id, cwd, mtime, title, busy} et ne garde que ce dont l'affichage a besoin.
+    Une session fermée — même de force — reste retrouvable tant que son dossier
+    a un transcript."""
+    out = []
+    try:
+        res = subprocess.run([ENGINE, "list", "--all", "--json"],
+                             capture_output=True, text=True, timeout=10)
+    except Exception:
+        return out
+    for line in res.stdout.splitlines():
+        if not line.strip():
             continue
         try:
-            real = os.path.realpath(cwd)
-        except OSError:
-            real = cwd
-        sid = os.path.basename(path)[:-6]
-        g = groups.get(real)
-        if not g:
-            groups[real] = {"cwd": real, "name": os.path.basename(real),
-                            "id": sid, "mtime": mtime}
-        elif mtime > g["mtime"]:
-            g["mtime"], g["id"] = mtime, sid
-    return list(groups.values())
+            s = json.loads(line)
+        except Exception:
+            continue
+        cwd = s.get("cwd", "")
+        if not cwd:
+            continue
+        out.append({"cwd": cwd, "name": os.path.basename(cwd),
+                    "id": s.get("id", ""), "mtime": _iso_epoch(s.get("mtime", ""))})
+    return out
 
 
 def list_dirs(path):

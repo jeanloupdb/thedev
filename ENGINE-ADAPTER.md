@@ -9,9 +9,12 @@
 > `running`) et le core de `engine event` sont des **wrappers fidèles** du
 > comportement actuel — testés sur données réelles.
 >
-> **Migrations faites** : `thedev-link` (résultat de mission) lit via `engine read
-> --transcript` — le schéma JSONL a quitté `thedev-link`. **Pas encore fait** :
-> `dev-picker` (`engine list`) et les hooks (`engine event`).
+> **Migrations faites** : `thedev-link` (résultat de mission → `engine read
+> --transcript`) et `dev-picker` (découverte des espaces → `engine list --all
+> --json` ; le schéma JSONL et `~/.claude/projects` ont quitté le picker).
+> `engine list` est implémenté en un seul process python3 (~90 ms) pour ne pas
+> ralentir l'accueil. **Pas encore fait** : les hooks (`engine event`) et
+> `claude-pane` (`engine launch`).
 
 ## Idée directrice
 

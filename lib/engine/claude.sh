@@ -43,19 +43,6 @@ _cc_session_info() {   # $1=path  → "cwd\ttitle\tmtime" sur stdout, exit 1 sin
   printf '%s\t%s\t%s\n' "$cwd" "$title" "$mtime"
 }
 
-_cc_list_emit() {   # id mtime cwd title json
-  local id="$1" mtime="$2" cwd="$3" title="$4" json="$5" iso busy
-  iso=$(date -Iseconds -d "@$mtime" 2>/dev/null || printf '%s' "$mtime")
-  busy=0; [ -f "$CC_BUSY_DIR/$id" ] && busy=1
-  if [ "$json" = 1 ]; then
-    jq -cn --arg id "$id" --arg mtime "$iso" --arg cwd "$cwd" \
-           --arg busy "$busy" --arg title "$title" \
-      '{id:$id, mtime:$mtime, cwd:$cwd, busy:($busy=="1"), title:$title}'
-  else
-    printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$iso" "$cwd" "$busy" "$title"
-  fi
-}
-
 # ── Contrat moteur ───────────────────────────────────────────────────────────
 
 # Démarre une session (exec). Positionnels: cwd model resume init initfile -- extra…
@@ -74,31 +61,91 @@ engine_launch() {
 
 # Liste les sessions. all=1 → un espace par dossier (realpath, id = dernière conv) ;
 # sinon toutes les sessions du cwd demandé. Sortie TSV (ou JSON-lines si json=1).
+# Implémenté en UN seul process python3 (et non bash+jq par fichier) : le picker
+# l'appelle au démarrage, la latence compte — le bash par-fichier coûtait ~5 s.
 engine_list() {   # $1=want_cwd  $2=all  $3=json
-  local want_cwd="$1" all="$2" json="$3"
-  local f info cwd title mtime real id
-  declare -A best_id best_mt best_title
-  for f in "$CC_PROJECTS"/*/*.jsonl; do
-    [ -e "$f" ] || continue
-    info=$(_cc_session_info "$f") || continue
-    cwd=$(printf '%s' "$info" | cut -f1)
-    title=$(printf '%s' "$info" | cut -f2)
-    mtime=$(printf '%s' "$info" | cut -f3)
-    real=$(realpath "$cwd" 2>/dev/null || printf '%s' "$cwd")
-    id=$(basename "$f"); id="${id%.jsonl}"
-    if [ "$all" = 1 ]; then
-      if [ -z "${best_mt[$real]:-}" ] || [ "$mtime" -gt "${best_mt[$real]}" ]; then
-        best_mt[$real]="$mtime"; best_id[$real]="$id"; best_title[$real]="$title"
-      fi
-    elif [ "$real" = "$want_cwd" ]; then
-      _cc_list_emit "$id" "$mtime" "$real" "$title" "$json"
-    fi
-  done
-  if [ "$all" = 1 ]; then
-    for real in "${!best_mt[@]}"; do
-      _cc_list_emit "${best_id[$real]}" "${best_mt[$real]}" "$real" "${best_title[$real]}" "$json"
-    done
-  fi
+  python3 - "$1" "$2" "$3" "$CC_PROJECTS" "$CC_BUSY_DIR" <<'PY'
+import sys, os, re, json, glob, datetime
+want_cwd, allf, jsonf, projects, busydir = sys.argv[1], sys.argv[2]=="1", sys.argv[3]=="1", sys.argv[4], sys.argv[5]
+
+def flatten(content):
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(it.get("text", "") for it in content
+                        if isinstance(it, dict) and it.get("type") == "text")
+    return ""
+
+def session_info(path):
+    """(cwd, titre, mtime) sans tout lire (têtes/queues) — logique reprise telle
+    quelle de l'ancien dev-picker."""
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            head = f.read(65536)
+            f.seek(max(0, size - 131072))
+            tail = f.read()
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return None
+    m = re.search(rb'"cwd":"([^"]*)"', head)
+    if not m:
+        return None
+    cwd = m.group(1).decode("utf-8", "replace")
+    title = ""
+    for line in tail.split(b"\n"):
+        if b'"type":"ai-title"' in line:
+            try:
+                title = json.loads(line).get("aiTitle", "") or title
+            except Exception:
+                pass
+    if not title:
+        first = ""
+        for line in head.split(b"\n"):
+            if b'"type":"user"' in line:
+                try:
+                    t = flatten(json.loads(line).get("message", {}).get("content"))
+                except Exception:
+                    continue
+                if t and not t.lstrip().startswith("<command-"):
+                    first = t
+                    break
+        title = re.sub(r"\s+", " ", first).strip()[:60]
+    title = re.sub(r"\s+", " ", title).strip() or "(session)"
+    return cwd, title, mtime
+
+best, rows = {}, []
+for path in glob.glob(os.path.join(projects, "*", "*.jsonl")):
+    info = session_info(path)
+    if not info:
+        continue
+    cwd, title, mtime = info
+    if not cwd:
+        continue
+    try:
+        real = os.path.realpath(cwd)
+    except OSError:
+        real = cwd
+    sid = os.path.basename(path)[:-6]
+    if allf:
+        g = best.get(real)
+        if not g or mtime > g[1]:
+            best[real] = (sid, mtime, real, title)
+    elif real == want_cwd:
+        rows.append((sid, mtime, real, title))
+if allf:
+    rows = list(best.values())
+
+for sid, mtime, cwd, title in rows:
+    iso = datetime.datetime.fromtimestamp(mtime).astimezone().isoformat(timespec="seconds")
+    busy = os.path.exists(os.path.join(busydir, sid))
+    if jsonf:
+        print(json.dumps({"id": sid, "mtime": iso, "cwd": cwd, "busy": busy, "title": title},
+                         ensure_ascii=False))
+    else:
+        t = title.replace("\t", " ").replace("\n", " ")
+        print("\t".join([sid, iso, cwd, "1" if busy else "0", t]))
+PY
 }
 
 # Lit le(s) message(s) d'une session. last=1 → dernier seulement ; role filtre.
