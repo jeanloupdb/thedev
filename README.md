@@ -39,39 +39,41 @@ Serveur : `./install.sh --vps=<label>`. Dépendances : zellij, claude, nvim, pyt
 
 ## Fonctionnalités
 
+**thedev, c'est le OpenClaw / Ruflo / Hermes léger, sécurisé et Linux des devs** : pas un essaim d'agents API dans le cloud, mais ton terminal, tes machines, ton abonnement — auditable (bash + fichiers) et sans rien exposer.
+
 Légende : ✅ oui · 🟡 partiel / autre approche · ❌ non
 
-| Fonctionnalité | 🦞 OpenClaw | 🪽 Hermes | 🖥️ **thedev** |
-|---|:---:|:---:|:---:|
-| 👁️ **Vue du parc** — tous tes Claude et leur état, organisés | 🟡 | 🟡 | ✅ |
-| 🧩 **Claude en renfort** — autant de Claude que voulu par espace | ✅ | ✅ | ✅ |
-| 🔌 **Reprise 1 clic** — reprendre une session locale ou distante | 🟡 | ✅ | ✅ |
-| 🏷️ **Auto-nommage** — les panes se nomment seuls au fil du sujet | ❌ | ❌ | ✅ |
-| 📁 **1 dossier = 1 session** — modèle simple, pas de boîte noire | ❌ | ❌ | ✅ |
-| 🖥️ **Multi-machines** — poste + serveurs en un seul espace | ❌ | 🟡 | ✅ |
-| 📨 **Missions** — envoyer une tâche à un Claude distant (choix du modèle) | 🟡 | ✅ | ✅ |
-| 🚚 **Partage entre machines** — dossiers entiers, respecte `.gitignore` | ❌ | ❌ | ✅ |
-| 📲 **Pilotage à distance** — piloter ton serveur depuis l'app | ✅ | ✅ | ✅ |
-| ▶️ **Commandes longues** — terminal dédié pour `npm start`, builds, watchers | ❌ | 🟡 | ✅ |
-| 🖧 **Tes terminaux** — voir les logs, taper une commande sans l'IA | ❌ | 🟡 | ✅ |
-| 🙈 **Page « my space »** — un terminal privé, hors de portée de Claude | ❌ | ❌ | ✅ |
-| 🔒 **Secrets hors chat** — saisir mdp / clé / sudo sans que l'IA les voie | ❌ | 🟡 | ✅ |
-| 🧹 **Fermeture propre** — voir ce qu'on coupe avant de fermer (Ctrl+Q) | ❌ | ❌ | ✅ |
-| 📊 **Ressources en direct** — RAM, disque, CPU affichés en permanence | ❌ | ❌ | ✅ |
-| ⏳ **Fenêtre Claude 5h** — % restant avant le rate-limit, gratuit | ❌ | ❌ | ✅ |
-| 🌑 **Léger** — TUI minimaliste, thème noir | ❌ | ✅ | ✅ |
-| ⏰ **Automatisations distantes** — tâches rejouées dans le temps sur un serveur | ✅ | ✅ | ✅ |
-| 🛰️ **Headless** — tourne en arrière-plan sans interface sur un serveur | ✅ | ✅ | ✅ |
-| 🌐 **Exposition 0 port** — publier un site HTTPS via Tailscale, sans ouvrir de port | ❌ | ❌ | ✅ |
-| 💳 **Sur ton abo** — fonctionne sur l'abonnement Claude, sans coût API | ❌¹ | ❌ | ✅ |
-| 💬 **Multi-messageries** — piloter depuis WhatsApp / Telegram / Discord / Signal… | ✅ | ✅ | 🟡 |
-| 🧠 **Mémoire persistante** — contexte cumulé entre projets/sessions | 🟡 | ✅ | ❌ |
-| 🔧 **Self-improvement** — l'agent crée et améliore ses propres skills | 🟡 | ✅ | ❌ |
-| 🔀 **Multi-modèles** — 200+ modèles, pas que Claude | ✅ | ✅ | ❌ |
-| 📦 **Registre de skills** — installer des skills partagés par la communauté | ✅ | ✅ | ❌ |
-| 🌐 **Automation navigateur / voix** — piloter un browser, entrées vocales | ✅ | 🟡 | ❌ |
+| Fonctionnalité | 🦞 OpenClaw | 🪽 Hermes | 🌀 Ruflo | 🖥️ **thedev** |
+|---|:---:|:---:|:---:|:---:|
+| 👁️ **Vue du parc** — tous tes Claude et leur état, organisés | 🟡 | 🟡 | 🟡 | ✅ |
+| 🧩 **Claude en renfort** — autant de Claude que voulu par espace | ✅ | ✅ | ✅ | ✅ |
+| 🔌 **Reprise 1 clic** — reprendre une session locale ou distante | 🟡 | ✅ | 🟡 | ✅ |
+| 🏷️ **Auto-nommage** — les panes se nomment seuls au fil du sujet | ❌ | ❌ | ❌ | ✅ |
+| 📁 **1 dossier = 1 session** — modèle simple, pas de boîte noire | ❌ | ❌ | ❌ | ✅ |
+| 🖥️ **Multi-machines** — poste + serveurs en un seul espace | ❌ | 🟡 | ✅ | ✅ |
+| 📨 **Missions** — envoyer une tâche à un Claude distant (choix du modèle) | 🟡 | ✅ | 🟡 | ✅ |
+| 🚚 **Partage entre machines** — dossiers entiers, respecte `.gitignore` | ❌ | ❌ | ❌ | ✅ |
+| 📲 **Pilotage à distance** — piloter ton serveur depuis l'app | ✅ | ✅ | 🟡 | ✅ |
+| ▶️ **Commandes longues** — terminal dédié pour `npm start`, builds, watchers | ❌ | 🟡 | ❌ | ✅ |
+| 🖧 **Tes terminaux** — voir les logs, taper une commande sans l'IA | ❌ | 🟡 | ❌ | ✅ |
+| 🙈 **Page « my space »** — un terminal privé, hors de portée de Claude | ❌ | ❌ | ❌ | ✅ |
+| 🔒 **Secrets hors chat** — saisir mdp / clé / sudo sans que l'IA les voie | ❌ | 🟡 | ❌ | ✅ |
+| 🧹 **Fermeture propre** — voir ce qu'on coupe avant de fermer (Ctrl+Q) | ❌ | ❌ | ❌ | ✅ |
+| 📊 **Ressources en direct** — RAM, disque, CPU affichés en permanence | ❌ | ❌ | 🟡 | ✅ |
+| ⏳ **Fenêtre Claude 5h** — % restant avant le rate-limit, gratuit | ❌ | ❌ | ❌ | ✅ |
+| 🌑 **Léger** — TUI minimaliste, thème noir | ❌ | ✅ | ❌ | ✅ |
+| ⏰ **Automatisations distantes** — tâches rejouées dans le temps sur un serveur | ✅ | ✅ | ✅ | ✅ |
+| 🛰️ **Headless** — tourne en arrière-plan sans interface sur un serveur | ✅ | ✅ | ✅ | ✅ |
+| 🌐 **Exposition 0 port** — publier un site HTTPS via Tailscale, sans ouvrir de port | ❌ | ❌ | 🟡 | ✅ |
+| 💳 **Sur ton abo** — fonctionne sur l'abonnement Claude, sans coût API | ❌¹ | ❌ | ❌¹ | ✅ |
+| 💬 **Multi-messageries** — piloter depuis WhatsApp / Telegram / Discord / Signal… | ✅ | ✅ | ❌ | 🟡 |
+| 🧠 **Mémoire persistante** — contexte cumulé entre projets/sessions | 🟡 | ✅ | ✅ | ❌ |
+| 🔧 **Self-improvement** — l'agent crée et améliore ses propres skills | 🟡 | ✅ | ✅ | ❌ |
+| 🔀 **Multi-modèles** — 200+ modèles, pas que Claude | ✅ | ✅ | ✅ | ❌ |
+| 📦 **Registre de skills** — installer des skills partagés par la communauté | ✅ | ✅ | ✅ | ❌ |
+| 🌐 **Automation navigateur / voix** — piloter un browser, entrées vocales | ✅ | 🟡 | 🟡 | ❌ |
 
-<sub>¹ OpenClaw fonctionnait sur l'abonnement Claude via un détournement de token — Anthropic l'a bloqué le 4 avril 2026. thedev reste légitime via Claude Code interactif.</sub>
+<sub>¹ OpenClaw et Ruflo fonctionnaient sur l'abonnement Claude (détournement de token / framework tiers) — Anthropic a bloqué cet usage le 4 avril 2026. thedev reste légitime via Claude Code interactif.</sub>
 
 <sub>Ex. d'automatisation : « sur mon VPS, chaque matin, génère un article + son podcast audio et envoie-moi le lien sur Telegram. »</sub>
 
