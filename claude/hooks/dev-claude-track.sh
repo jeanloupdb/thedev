@@ -46,6 +46,18 @@ pane_busy_title() {   # $1 = 1 (en cours) | 0 (au repos)
   zellij action rename-pane -p "$ZELLIJ_PANE_ID" "$nm" 2>/dev/null
 }
 
+# Marque le tour « en cours » (calcule) : busy + marqueur enrichi pour pane-pulse
+# + animations. Au début d'un tour (UserPromptSubmit) ET à la reprise après un
+# QCM bloquant (PostToolUse AskUserQuestion).
+_mark_busy() {
+  "$ENGINE" event busy --session "$sid" --cwd "$cwd" 2>/dev/null
+  if is_managed_pane; then
+    printf '%s\t%s\n' "$ZELLIJ_PANE_ID" "${ZELLIJ_SESSION_NAME:-}" > "$BUSY_DIR/$sid" 2>/dev/null
+    pane_busy_title 1                                  # 1er frame : ◆ <nom>
+    setsid pane-pulse </dev/null >/dev/null 2>&1 &     # pulse ◆ du titre du pane (instance unique via flock)
+  fi
+}
+
 case "$ev" in
   SessionStart)
     # engine event tient le registre (+ sentinelle de mission) et renvoie le nom de
@@ -58,17 +70,9 @@ case "$ev" in
     fi
     ;;
   UserPromptSubmit)
-    # Un tour démarre → marqueur busy (état, via l'adaptateur). Pour un pane géré, on
-    # enrichit le marqueur avec <pane_id>\t<session> (pane-pulse anime le bon pane) et
-    # on lance le pulser ; pour un claude non géré, le marqueur vide de l'adaptateur
-    # suffit (le picker n'utilise que le NOM du fichier = sid).
-    "$ENGINE" event busy --session "$sid" --cwd "$cwd" 2>/dev/null
-    if is_managed_pane; then
-      printf '%s\t%s\n' "$ZELLIJ_PANE_ID" "${ZELLIJ_SESSION_NAME:-}" > "$BUSY_DIR/$sid" 2>/dev/null
-      pane_busy_title 1                                  # 1er frame : ◆ <nom>
-      setsid pane-pulse </dev/null >/dev/null 2>&1 &     # pulse ◆ du titre du pane (instance unique via flock)
-      setsid tab-pulse  </dev/null >/dev/null 2>&1 &     # ● <pages busy> dans la barre zjstatus (idem)
-    fi
+    # Un tour démarre → « calcule » (busy + animations). Pour un claude non géré,
+    # engine event busy pose juste le marqueur vide (le picker n'utilise que le sid).
+    _mark_busy
 
     # --- Nudge pane-name (stdout → contexte de Claude) — mécanisme propre au hook ---
     # Uniquement pour les panes gérés, jamais pour les missions.
@@ -113,12 +117,21 @@ case "$ev" in
     "$ENGINE" event session-end --session "$sid" --cwd "$cwd" 2>/dev/null
     pane_busy_title 0
     ;;
-  Notification)
-    # Claude attend une réponse/permission (question, permission…) → état « t'attend » :
-    # l'adaptateur pose le marqueur waiting et retire busy. Le pane cesse de pulser
-    # (il ne calcule plus, il TE bloque) ; le picker l'affiche distinctement.
-    "$ENGINE" event waiting --session "$sid" --cwd "$cwd" 2>/dev/null
-    pane_busy_title 0
+  PreToolUse)
+    # Claude va poser un QCM bloquant (AskUserQuestion) ou faire approuver un plan
+    # (ExitPlanMode) → il TE bloque, état « t'attend » (≠ « calcule »). Le matcher du
+    # hook restreint déjà à ces outils ; on revérifie tool_name par sécurité.
+    case "$(printf '%s' "$payload" | jq -r '.tool_name // empty' 2>/dev/null)" in
+      AskUserQuestion|ExitPlanMode)
+        "$ENGINE" event waiting --session "$sid" --cwd "$cwd" 2>/dev/null
+        pane_busy_title 0 ;;
+    esac
+    ;;
+  PostToolUse)
+    # Tu as répondu au QCM / approuvé le plan → Claude reprend : retour en « calcule ».
+    case "$(printf '%s' "$payload" | jq -r '.tool_name // empty' 2>/dev/null)" in
+      AskUserQuestion|ExitPlanMode) _mark_busy ;;
+    esac
     ;;
 esac
 exit 0
