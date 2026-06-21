@@ -40,19 +40,6 @@ git clone https://github.com/jeanloupdb/thedev.git ~/thedev && cd ~/thedev
 Serveur : `./install.sh --vps=<label>`. Dépendances : zellij, claude, nvim, python3, git, jq, fzf, inotify-tools.
 </details>
 
-## Comment c'est organisé
-
-```mermaid
-flowchart LR
-  M["machine"] --> E["espace<br/>(1 projet)"]
-  E --> CP["code page<br/>éditeur + pile de Claude"]
-  E --> SB["sandbox<br/>crun : process longs, agents"]
-  E --> MS["my space<br/>tes shells"]
-  E -. "mission" .-> V["autre machine / VPS"]
-```
-
-Une **machine** porte des **espaces** (1 projet chacun), chaque espace a des **pages** et des **panes**. Un **crun** = un process long dans la sandbox. Les espaces s'échangent des **missions**. Vocabulaire complet : [`NAMING.md`](NAMING.md).
-
 ## vs OpenClaw / Hermes / Ruflo
 
 Si tu connais ces outils : thedev en est le **cousin léger, sécurisé et Linux des devs** — pas un essaim d'agents API dans le cloud, mais ton terminal, tes machines, ton abonnement, auditable et sans rien exposer.
