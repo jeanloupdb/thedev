@@ -36,6 +36,34 @@ Plus les modèles deviennent forts, plus on fait tourner d'agents en parallèle,
 
 thedev parie sur le second. Donc **chaque saut de capacité modèle est un vent dans le dos, pas une menace.**
 
+## Diriger une armée d'agents (la doctrine de commandement)
+
+Le pari ci-dessus pose la question — *superviser, faire confiance, orchestrer N agents* — sans y répondre. Voici la réponse, et c'est l'inverse de ce que font les labos.
+
+**Décomposition descendante vs agrégation ascendante.** Un agent classique, face à une tâche trop grosse, **fabrique des exécutants sous lui** : éphémères, ils font un bout, rendent un résultat, meurent. L'arbre naît de la *tâche* et pousse vers le *bas*. thedev fait l'inverse : face à trop d'**équipes réelles** à commander, tu fabriques du **commandement au-dessus**. Les feuilles sont de vrais soldats qui bossent en continu sur de vrais projets ; les nœuds au-dessus ne *font* pas le travail, ils **répartissent l'attention** et **font circuler** — ordres vers le bas, renseignement vers le haut. On ne crée pas des sous-fifres, on crée des **chefs**.
+
+**Le plat n'est pas renversé : c'est la loi *dans* l'équipe.** Une session = une **équipe** = un groupe de soldats **pairs** qui bossent ensemble, sans chef interne. Permanent, inchangé. La hiérarchie ne descend **jamais** à l'intérieur d'une équipe ; elle organise les équipes **entre elles**. Un **chef** est au-dessus des équipes, pas dedans — et deux équipes sœurs restent pairs (elles ne se commandent pas l'une l'autre ; elles reportent à un chef, d'un autre rang). La grammaire d'armée **ajoute un axe vertical** au plat horizontal ; elle ne le remplace pas.
+
+**Une hiérarchie qui respire.** L'axe vertical n'est pas figé : il grandit et se replie avec la charge, symétrique sur trois axes.
+
+| Inspiration | Expiration |
+|---|---|
+| **Scinder** — span trop large → promouvoir un sous-chef | **Fusionner** — span trop maigre → replier, rendre les tours |
+| **Raid** — tu plonges dans une équipe, la chaîne s'informe et se range | **Retrait** — tu débriefes vers le haut, le chef reprend |
+| **Ordres** ↓ — l'intention du chef redescend | **Renseignement** ↑ — l'état remonte, agrégé et résumé |
+
+**Le général n'est jamais prisonnier de sa propre armée.** Deux privilèges absolus :
+- *Court-circuit libre* — tu prends la tête de n'importe quelle équipe sans demander à personne. Ta présence est un **fait**, pas une requête : la chaîne **s'informe** (drapeau de présence qui remonte) et **se range** (le chef responsable suspend ses ordres sur cette équipe), elle ne t'**autorise** pas.
+- *Disparition intelligente* — tu quittes en **flushant un débrief vers le haut** (ce que tu as changé, l'état, les ordres en cours) ; le drapeau tombe, le chef reprend avec le contexte. Jamais un départ muet : même une fermeture brutale flushe un débrief minimal.
+
+**Les murs, assumés.** Cette doctrine a un prix, et on le dit :
+- **Plafond d'abonnement** — chaque chef est une vraie session qui brûle des tours sur ton abo. L'armée ne peut pas grossir sans fin ; son coût permanent doit rester ∝ la charge. C'est *pourquoi* la fusion est vitale, pas optionnelle. « À l'infini » est un asymptote ; 2–3 étages, le réel.
+- **Latence de remontée** — l'info monte au *tour* de chaque nœud ; profondeur × cadence = fraîcheur de la vue au sommet.
+- **Hystérésis** — scinder à N, fusionner bien en dessous de M, sinon l'arbre oscille.
+- **Compression** — chaque étage résume ; le débrief **lie les artefacts** (transcript, fichiers) pour re-creuser sans perte. Avantage natif du socle bash + fichiers.
+
+**Le garde-fou.** Cette auto-organisation n'est *pas* l'autonomie qu'on refuse (cf. Non-buts) : elle ne décide jamais *quoi produire*, elle gère seulement *la portée de ton attention*. Tu es toujours la racine, l'intention part toujours de toi, tu peux toujours court-circuiter. La hiérarchie **sert** ta main, elle ne la **remplace** pas. Le jour où elle déciderait à ta place, ce serait un bug, pas une feature.
+
 ## Principes de conception
 
 1. **Moteur-agnostique** *(direction, pas état actuel)*. thedev orchestre un moteur ; il n'EST pas le moteur. Réduire les dépendances dures aux internals d'un CLI précis, pour qu'un changement de moteur n'impose pas une réécriture. État des lieux du couplage actuel et plan d'abstraction : [`ENGINE-COUPLING.md`](ENGINE-COUPLING.md).

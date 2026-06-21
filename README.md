@@ -25,7 +25,7 @@ Une armée trop libre ne sait plus où elle va, et ses soldats désertent jusqu'
 
 **Le socle**
 - 🖥️ **App TUI, en arrière-plan** — tout vit dans le terminal (zellij) ; ça tourne détaché : tu fermes, tu te rebranches, c'est toujours là
-- 📁 **Une session par dossier** — 1 projet = 1 espace, modèle simple
+- 📁 **Une session par dossier** — 1 projet = 1 équipe, modèle simple
 - 🤖 **Claude Code natif** — le moteur tourne en interactif, sur ton abonnement
 - 🐚 **Bash + fichiers** — la colle de l'outil : lisible, modifiable, auditable, pas de boîte noire
 - 🛡️ **Tailscale** — réseau privé entre tes machines, 0 port ouvert
@@ -38,7 +38,7 @@ Une armée trop libre ne sait plus où elle va, et ses soldats désertent jusqu'
 - 🔌 **Reprise 1 clic** — reprends une session locale ou distante
 
 **Tes machines, partout**
-- 🌍 **Multi-machines** — poste + serveurs dans un seul espace
+- 🌍 **Multi-machines** — poste + serveurs sous un même commandement
 - 📨 **Missions** — envoie une tâche à un Claude distant (au modèle de ton choix)
 - 🚚 **Partage entre machines** — des dossiers entiers, en respectant `.gitignore`
 - 📲 **Pilotage à distance** — pilote ton serveur depuis l'app
