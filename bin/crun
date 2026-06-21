@@ -113,6 +113,7 @@ ensure_tab() {
 PHANTOM_PID=""
 ensure_client() {
   command -v script >/dev/null 2>&1 || return 1
+  command -v setsid >/dev/null 2>&1 || return 1   # requis pour tuer le groupe fiablement
   local sess="${ZELLIJ_SESSION_NAME:-}"
   [ -n "$sess" ] || return 1
   # CRITIQUE : `zellij attach <sess>` lancé DEPUIS la session panique (« attach to the
@@ -120,7 +121,13 @@ ensure_client() {
   # $ZELLIJ est défini → sans ce env -u, le fantôme ne s'attachait JAMAIS et les panes
   # de mission/automatisation atterrissaient en code page (bug du détaché). On masque
   # l'appartenance à la session le temps de l'attach → zellij croit qu'on est dehors.
-  env -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID \
+  #
+  # setsid : le fantôme devient CHEF DE GROUPE → kill_phantom tue tout le GROUPE
+  # (script + zellij attach) de façon fiable, même si le client se fait reparenter
+  # sous init quand le `script` parent meurt en premier. L'ancien `pkill -P` le
+  # ratait alors → client fantôme orphelin RESTÉ ATTACHÉ qui forçait le serveur
+  # zellij à re-rendre en boucle (= CPU spin de la session veille, [[veille-session-cpu-spin]]).
+  setsid env -u ZELLIJ -u ZELLIJ_SESSION_NAME -u ZELLIJ_PANE_ID \
     script -q -c "zellij attach $sess" /dev/null </dev/null >/dev/null 2>&1 &
   PHANTOM_PID=$!
   trap kill_phantom EXIT
@@ -133,8 +140,8 @@ ensure_client() {
 }
 kill_phantom() {
   [ -n "${PHANTOM_PID:-}" ] || return 0
-  pkill -P "$PHANTOM_PID" 2>/dev/null   # le zellij attach enfant
-  kill "$PHANTOM_PID" 2>/dev/null       # le script parent
+  kill -TERM "-$PHANTOM_PID" 2>/dev/null   # tout le GROUPE (script + zellij attach), robuste au reparent
+  kill -TERM  "$PHANTOM_PID" 2>/dev/null   # filet de sécurité si pas chef de groupe
   PHANTOM_PID=""
 }
 
