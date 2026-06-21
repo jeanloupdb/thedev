@@ -23,15 +23,22 @@ Une armée trop libre ne sait plus où elle va, et ses soldats désertent jusqu'
 
 ## 🎖️ L'arsenal
 
+**Le socle**
+- 🖥️ **App TUI, en arrière-plan** — tout vit dans le terminal (zellij) ; ça tourne détaché : tu fermes, tu te rebranches, c'est toujours là
+- 📁 **Une session par dossier** — 1 projet = 1 espace, modèle simple
+- 🤖 **Claude Code natif** — le moteur tourne en interactif, sur ton abonnement
+- 🐚 **Bash + fichiers** — la colle de l'outil : lisible, modifiable, auditable, pas de boîte noire
+- 🛡️ **Tailscale** — réseau privé entre tes machines, 0 port ouvert
+- 🐧 **Linux + nvim** — pensé pour ton poste de dev, TUI minimaliste
+
 **Commander ton armée**
 - 👁️ **Vue du parc** — tous tes Claude et leur état d'un coup d'œil
 - 🧩 **Claude en renfort** — autant d'agents que tu veux par espace
 - 🏷️ **Auto-nommage** — les panes se nomment seuls au fil du sujet
 - 🔌 **Reprise 1 clic** — reprends une session locale ou distante
-- 📁 **1 dossier = 1 session** — modèle simple, pas de boîte noire
 
 **Tes machines, partout**
-- 🖥️ **Multi-machines** — poste + serveurs dans un seul espace
+- 🌍 **Multi-machines** — poste + serveurs dans un seul espace
 - 📨 **Missions** — envoie une tâche à un Claude distant (au modèle de ton choix)
 - 🚚 **Partage entre machines** — des dossiers entiers, en respectant `.gitignore`
 - 📲 **Pilotage à distance** — pilote ton serveur depuis l'app
@@ -50,7 +57,6 @@ Une armée trop libre ne sait plus où elle va, et ses soldats désertent jusqu'
 - 🔒 **Secrets hors chat** — mdp / clé / sudo sans que l'IA les voie
 - 🌐 **Exposition 0 port** — publie un site HTTPS via Tailscale, sans ouvrir de port
 - ⏳ **Fenêtre Claude 5h** — le % restant avant le rate-limit, en direct
-- 🌑 **Léger** — TUI minimaliste, thème noir
 
 <sub>Ex. d'automatisation : « sur mon VPS, chaque matin, génère un article + son podcast audio et envoie-moi le lien sur Telegram. »</sub>
 
