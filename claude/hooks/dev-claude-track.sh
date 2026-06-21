@@ -66,7 +66,8 @@ case "$ev" in
     if is_managed_pane; then
       printf '%s\t%s\n' "$ZELLIJ_PANE_ID" "${ZELLIJ_SESSION_NAME:-}" > "$BUSY_DIR/$sid" 2>/dev/null
       pane_busy_title 1                                  # 1er frame : ◆ <nom>
-      setsid pane-pulse </dev/null >/dev/null 2>&1 &     # pulser détaché (instance unique via flock)
+      setsid pane-pulse </dev/null >/dev/null 2>&1 &     # pulse ◆ du titre du pane (instance unique via flock)
+      setsid tab-pulse  </dev/null >/dev/null 2>&1 &     # ● <pages busy> dans la barre zjstatus (idem)
     fi
 
     # --- Nudge pane-name (stdout → contexte de Claude) — mécanisme propre au hook ---

@@ -626,8 +626,8 @@ class Picker:
         self._propals_loading = False
 
     def _blink_on(self):
-        # clignotement ~2 Hz, dérivé de l'horloge → indépendant du rythme de redraw.
-        return int(time.time() * 2) % 2 == 0
+        # clignotement ~1 s (même rythme que pane-pulse ◆↔◇), dérivé de l'horloge.
+        return int(time.time()) % 2 == 0
 
     def _refresh_busy(self):
         """Cwd (realpath) des espaces avec un Claude LOCAL en plein tour : marqueur
@@ -1078,8 +1078,8 @@ class Picker:
             # session distante l'est de toute façon.
             if r.get("claude_dead"):
                 dot = ("○ ", self.YEL | curses.A_BOLD)
-            elif r.get("busy"):                       # Claude en plein tour → point qui clignote
-                dot = ("● ", self.YEL | curses.A_BOLD) if self._blink_on() else ("  ", 0)
+            elif r.get("busy"):                       # Claude en plein tour → ●↔○ vert qui pulse
+                dot = ("● ", self.GREEN | curses.A_BOLD) if self._blink_on() else ("○ ", self.GREEN | curses.A_BOLD)
             else:
                 dot = ("● ", self.GREEN | curses.A_BOLD)
             segs = [(p, 0), dot, ("%s." % r["host"], 0)]
@@ -1132,8 +1132,8 @@ class Picker:
         #     06 Jun  gus_project  (fermé : nom coloré par projet)
         w = r["w"]
         live = r.get("live")
-        if live and w.get("cwd") in self.busy_cwds:   # actif + Claude en plein tour → clignote
-            dot = ("● ", self.YEL | curses.A_BOLD) if self._blink_on() else ("  ", 0)
+        if live and w.get("cwd") in self.busy_cwds:   # actif + Claude en plein tour → ●↔○ vert qui pulse
+            dot = ("● ", self.GREEN | curses.A_BOLD) if self._blink_on() else ("○ ", self.GREEN | curses.A_BOLD)
         elif live:
             dot = ("● ", self.GREEN)
         else:

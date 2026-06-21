@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# @thedev naming indicateur « ● <pages> » busy dans la barre zjstatus (clignote tant qu'un Claude répond)
+# tab-pulse — pousse dans zjstatus (widget pipe_busy) la liste CLIGNOTANTE des
+# PAGES (onglets) de CETTE session zellij où un Claude est « busy » (en plein
+# tour). S'auto-éteint quand plus aucun Claude n'est busy. Lancé détaché par le
+# hook dev-claude-track (UserPromptSubmit), instance unique par session (flock).
+#
+# Mapping pane busy → onglet, ROBUSTE (insensible à l'animation ◆/◇ du titre) :
+#   marqueur ~/.cache/dev-claude-busy/<sid> = <pane_id>\t<session> (sid = nom du fichier)
+#   sid → nom propre (dev-claude-reg, sans ◆/◇) → onglet (zellij dump-layout, jointure
+#   sur le nom + ses variantes ◆/◇, car dump-layout montre le titre courant animé).
+set -u
+ZS="${ZELLIJ_SESSION_NAME:-}"
+[ -n "$ZS" ] || exit 0
+BUSY_DIR="$HOME/.cache/dev-claude-busy"
+[ -d "$BUSY_DIR" ] || exit 0
+
+LOCK_DIR="$HOME/.cache/dev-claude-pulse"; mkdir -p "$LOCK_DIR" 2>/dev/null
+safe=$(printf '%s' "$ZS" | tr -c 'A-Za-z0-9._-' '_')
+exec 9>"$LOCK_DIR/$safe.tab.lock" 2>/dev/null || exit 0
+flock -n 9 2>/dev/null || exit 0   # un tab-pulse tourne déjà pour cette session
+
+# timeout : dans une session SANS le widget pipe_busy (ancien layout), `zellij pipe`
+# bloque en attendant un consommateur → on borne pour ne jamais pendre.
+push() { timeout 2 zellij pipe "zjstatus::pipe::pipe_busy::$1" >/dev/null 2>&1; }
+
+parity=0
+while :; do
+  # noms propres (+ variantes ◆/◇) des Claude busy de MA session
+  names=""
+  for f in "$BUSY_DIR"/*; do
+    [ -f "$f" ] || continue
+    IFS=$'\t' read -r _pid zs < "$f" 2>/dev/null || continue
+    [ "${zs:-}" = "$ZS" ] || continue
+    nm=$(dev-claude-reg get "$(basename "$f")" 2>/dev/null | cut -f4)
+    nm="${nm#◆ }"; nm="${nm#◇ }"
+    [ -n "$nm" ] && names="$names$nm
+◆ $nm
+◇ $nm
+"
+  done
+  if [ -z "$names" ]; then push " "; break; fi   # plus de busy → efface l'indicateur
+
+  # onglets contenant un de ces titres (dump-layout : tab name="X" { … pane … name="<titre>" … })
+  tabs=$(zellij action dump-layout 2>/dev/null | awk -v names="$names" '
+    BEGIN{ n=split(names,a,"\n"); for(i=1;i<=n;i++) if(a[i]!="") want[a[i]]=1 }
+    /tab name="/ { t=$0; sub(/.*tab name="/,"",t); sub(/".*/,"",t); cur=t; next }
+    /name="/    { nm=$0; sub(/.*name="/,"",nm); sub(/".*/,"",nm); if (nm in want) print cur }
+  ' | awk '!seen[$0]++')
+  [ -n "$tabs" ] || { push " "; sleep 1; continue; }
+
+  glyph="●"; [ "$parity" = 1 ] && glyph="○"   # clignotement ●↔○ (même pulse que les panes)
+  msg=$(printf '%s ' $tabs | sed 's/ *$//')
+  push "#[fg=#8ed68e,bold]$glyph $msg "       # vert (couleur thème), comme l'actif
+  parity=$(( 1 - parity ))
+  sleep 1
+done
+exit 0
