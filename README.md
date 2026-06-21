@@ -1,8 +1,8 @@
 <div align="center">
 
-# thedev
+# ⚔️ thedev
 
-**L'atelier de dev en terminal qui pilote toutes tes machines avec Claude — sur ton abonnement, sans rien exposer.**
+### Pars à la conquête du monde avec une armée d'agents.
 
 ![Claude Code](https://img.shields.io/badge/Claude_Code-natif-D97757?logo=anthropic&logoColor=white)
 ![zellij](https://img.shields.io/badge/zellij-base-2563EB)
@@ -10,13 +10,28 @@
 ![Bash](https://img.shields.io/badge/Bash-la_colle-4EAA25?logo=gnubash&logoColor=white)
 ![Abonnement](https://img.shields.io/badge/coût-abonnement_seul-22C55E)
 
-<!-- DÉMO : ajoute ici un GIF (vhs / asciinema → agg) du picker + du dashboard.
-     C'est l'élément le plus important above the fold — il manque encore. -->
+<!-- DÉMO — génère le GIF puis décommente la ligne dessous :  vhs demo.tape  →  demo.gif -->
+<!-- ![thedev — l'accueil : ton parc de Claude en un coup d'œil](demo.gif) -->
 
 </div>
 
+> **Sais-tu diriger des hommes ?** 3 ou 4, peut-être. Mais en 2030, avec l'IA, ce sera 100 ou 1000 : une armée obéissante et flexible, qui te connaît autant que tu la connais. **C'est thedev.**
+
+Une armée trop libre ne sait plus où elle va, et ses soldats désertent jusqu'à ce que plus personne n'écoute les ordres. Une armée trop cadrée, elle, étouffe la moindre initiative sous la procédure, les validations, la paperasse. Tout l'art du chef tient dans cet équilibre — **faire confiance à ses soldats sans jamais lâcher la chaîne de commandement.**
+
+**C'est ce chef que thedev te donne l'occasion de devenir.** Qu'ils soient 3 ou 300, tu connais chacun de tes soldats et tu sais où te placer dans la chaîne de commandement. Armée à coût fixe et réplicable plutôt que mercenaires payés au coup, la tienne tient sur ton **abonnement**, pas à l'API.
+
+> [!TIP]
+> **En clair** — fais bosser Claude sur tous tes projets et toutes tes machines : tu gardes la main, tu vois tout en direct, et rien n'est exposé.
+
+## Concrètement, tu fais quoi avec ?
+
+- **Un projet de zéro à fini** — tu ouvres un dossier, tu donnes l'objectif : Claude télécharge, code, lance les `docker`, te montre les logs en direct, et te rend le livrable (un PDF, un site qui tourne, un QR à scanner). Toi tu vérifies et tu valides.
+- **Tes serveurs, depuis ton poste** — tu bosses ton app en local pendant qu'un Claude sur ton VPS améliore le backend ; une *mission* transmet le contexte de l'un à l'autre, et le résultat revient.
+- **Plein d'agents, sous contrôle** — lance autant de Claude que tu veux : tu vois d'un coup d'œil lequel **calcule**, lequel **t'attend**, lequel **a fini** — et tu sautes à celui qui te bloque d'une touche.
+
 > [!IMPORTANT]
-> La puissance d'un agent cloud, **chez toi** : **0 crédit API · 0 port ouvert · 0 clé**. Ton infra, tes machines, tes règles — et c'est lisible/auditable (bash + fichiers).
+> La puissance d'un agent autonome, **chez toi** : **0 crédit API · 0 port ouvert · 0 clé**. Ça tourne sur **ton** abonnement Claude, sur **tes** machines — et c'est lisible/auditable (bash + fichiers, pas de boîte noire).
 
 ## ⚡ Installer (avec l'IA, en 1 minute)
 
@@ -37,9 +52,22 @@ git clone https://github.com/jeanloupdb/thedev.git ~/thedev && cd ~/thedev
 Serveur : `./install.sh --vps=<label>`. Dépendances : zellij, claude, nvim, python3, git, jq, fzf, inotify-tools.
 </details>
 
-## Fonctionnalités
+## Comment c'est organisé
 
-**thedev, c'est le OpenClaw / Ruflo / Hermes léger, sécurisé et Linux des devs** : pas un essaim d'agents API dans le cloud, mais ton terminal, tes machines, ton abonnement — auditable (bash + fichiers) et sans rien exposer.
+```mermaid
+flowchart LR
+  M["machine"] --> E["espace<br/>(1 projet)"]
+  E --> CP["code page<br/>éditeur + pile de Claude"]
+  E --> SB["sandbox<br/>crun : process longs, agents"]
+  E --> MS["my space<br/>tes shells"]
+  E -. "mission" .-> V["autre machine / VPS"]
+```
+
+Une **machine** porte des **espaces** (1 projet chacun), chaque espace a des **pages** et des **panes**. Un **crun** = un process long dans la sandbox. Les espaces s'échangent des **missions**. Vocabulaire complet : [`NAMING.md`](NAMING.md).
+
+## vs OpenClaw / Hermes / Ruflo
+
+Si tu connais ces outils : thedev en est le **cousin léger, sécurisé et Linux des devs** — pas un essaim d'agents API dans le cloud, mais ton terminal, tes machines, ton abonnement, auditable et sans rien exposer.
 
 Légende : ✅ oui · 🟡 partiel / autre approche · ❌ non
 
@@ -77,19 +105,6 @@ Légende : ✅ oui · 🟡 partiel / autre approche · ❌ non
 <sub>² thedev ne se pilote pas en textant un bot : son entrée à distance, c'est le **Remote Control de ta session Claude depuis l'app officielle** (voir Pilotage à distance). Telegram sert aux alertes/livraisons sortantes, pas de commande.</sub>
 
 <sub>Ex. d'automatisation : « sur mon VPS, chaque matin, génère un article + son podcast audio et envoie-moi le lien sur Telegram. »</sub>
-
-## Comment c'est organisé
-
-```mermaid
-flowchart LR
-  M["machine"] --> E["espace<br/>(1 projet)"]
-  E --> CP["code page<br/>éditeur + pile de Claude"]
-  E --> SB["sandbox<br/>crun : process longs, agents"]
-  E --> MS["my space<br/>tes shells"]
-  E -. "mission" .-> V["autre machine / VPS"]
-```
-
-Une **machine** porte des **espaces** (1 projet chacun), chaque espace a des **pages** et des **panes**. Un **crun** = un process long dans la sandbox. Les espaces s'échangent des **missions**. Vocabulaire complet : [`NAMING.md`](NAMING.md).
 
 ## Aller plus loin
 
