@@ -493,6 +493,7 @@ class Picker:
         self.live = live_sessions()   # sessions zellij vivantes (basename du cwd)
         self.busy_cwds = set()        # cwd (realpath) des espaces avec un Claude en plein tour
         self.waiting_cwds = set()     # … bloqué sur une question/permission (t'attend)
+        self.stuck_cwds = set()       # … en plein tour depuis > 10 min (probablement coincé)
         self._busy_ts = 0             # throttle de _refresh_busy
         self.vps = vps_label()        # non-vide si on tourne sur un serveur distant
         self.mode = "sessions"        # 'sessions' | 'browser'
@@ -563,6 +564,15 @@ class Picker:
             if curses.COLORS >= 256:
                 curses.init_pair(7, 252, 237)   # fg gris clair, bg gris sombre
                 self.SEL = curses.color_pair(7) | curses.A_BOLD
+        except curses.error:
+            pass
+        # orange vif (256 couleurs) pour « coincé » — distinct du jaune des morts ;
+        # repli sur jaune si le terminal n'a pas 256 couleurs.
+        self.ORANGE = self.YEL
+        try:
+            if curses.COLORS >= 256:
+                curses.init_pair(8, 208, -1)
+                self.ORANGE = curses.color_pair(8)
         except curses.error:
             pass
         # palette stable par projet (tags [projet] colorés différemment)
@@ -652,9 +662,22 @@ class Picker:
                 pass
             return out
 
-        busy = fresh_sids("~/.cache/dev-claude-busy")
+        busy, stuck = set(), set()
+        bdir = os.path.expanduser("~/.cache/dev-claude-busy")
+        try:
+            for f in os.listdir(bdir):
+                try:
+                    age = now - os.path.getmtime(os.path.join(bdir, f))
+                except OSError:
+                    continue
+                if age < 1800:
+                    busy.add(f)
+                    if age > 600:        # tour en cours depuis > 10 min → probablement coincé
+                        stuck.add(f)
+        except OSError:
+            pass
         wait = fresh_sids("~/.cache/dev-claude-waiting")
-        bc, wc = set(), set()
+        bc, wc, sc = set(), set(), set()
         if busy or wait:
             for line in _read_file("~/.cache/dev-claudes").splitlines():
                 p = line.split("\t")
@@ -666,9 +689,11 @@ class Picker:
                     c = p[1]
                 if p[0] in busy:
                     bc.add(c)
+                if p[0] in stuck:
+                    sc.add(c)
                 if p[0] in wait:
                     wc.add(c)
-        self.busy_cwds, self.waiting_cwds = bc, wc
+        self.busy_cwds, self.waiting_cwds, self.stuck_cwds = bc, wc, sc
 
     def _local_worker(self):
         # self.live (sessions zellij vivantes → marqueurs « ● en cours ») est figé
@@ -1145,6 +1170,8 @@ class Picker:
         live = r.get("live")
         if live and w.get("cwd") in self.waiting_cwds:   # t'attend (question/permission) → ◆ cyan fixe
             dot = ("◆ ", self.CYAN | curses.A_BOLD)
+        elif live and w.get("cwd") in self.stuck_cwds:   # calcule depuis > 10 min → coincé ? ● orange fixe
+            dot = ("● ", self.ORANGE | curses.A_BOLD)
         elif live and w.get("cwd") in self.busy_cwds:    # en plein tour → ●↔○ vert qui pulse
             dot = ("● ", self.GREEN | curses.A_BOLD) if self._blink_on() else ("○ ", self.GREEN | curses.A_BOLD)
         elif live:

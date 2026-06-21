@@ -1,17 +1,37 @@
 #!/usr/bin/env bash
 # @thedev naming saute au pane Claude qui « t'attend » (QCM bloquant) — bind Alt+W
-# Cherche un marqueur waiting de CETTE session zellij (contenu = <pane_id>\t<session>,
-# posé par le hook sur un AskUserQuestion) et focus le pane. Plusieurs en attente →
-# le premier trouvé. Lancé via `Run` (pane flottant éphémère qui se referme).
+# CYCLE : chaque appui passe au pane en attente SUIVANT (utile si plusieurs te
+# bloquent). Marqueur waiting = <pane_id>\t<session>, posé par le hook sur un
+# AskUserQuestion. Lancé via `Run` (pane flottant éphémère qui se referme).
 set -u
 ZS="${ZELLIJ_SESSION_NAME:-}"
 WAITING_DIR="$HOME/.cache/dev-claude-waiting"
 [ -n "$ZS" ] && [ -d "$WAITING_DIR" ] || exit 0
 
-for f in "$WAITING_DIR"/*; do
-  [ -f "$f" ] || continue
-  IFS=$'\t' read -r pid zs < "$f" 2>/dev/null || continue
-  [ -n "${pid:-}" ] && [ "${zs:-}" = "$ZS" ] || continue
-  zellij action focus-pane-id "$pid" 2>/dev/null && exit 0
-done
-exit 0
+# pane_id en attente de CETTE session, ordre stable (numérique)
+pids=$(
+  for f in "$WAITING_DIR"/*; do
+    [ -f "$f" ] || continue
+    IFS=$'\t' read -r pid zs < "$f" 2>/dev/null || continue
+    [ -n "${pid:-}" ] && [ "${zs:-}" = "$ZS" ] && printf '%s\n' "$pid"
+  done | sort -n -u
+)
+[ -n "$pids" ] || exit 0
+
+# état : dernier pane focusé pour cette session → on prend le SUIVANT (cycle)
+STATE_DIR="$HOME/.cache/dev-claude-goto"; mkdir -p "$STATE_DIR" 2>/dev/null
+safe=$(printf '%s' "$ZS" | tr -c 'A-Za-z0-9._-' '_')
+last=$(cat "$STATE_DIR/$safe" 2>/dev/null)
+
+target=""; found=0
+while IFS= read -r p; do
+  [ -n "$p" ] || continue
+  [ "$found" = 1 ] && { target="$p"; break; }
+  [ "$p" = "$last" ] && found=1
+done <<EOF
+$pids
+EOF
+[ -n "$target" ] || target=$(printf '%s\n' "$pids" | head -1)   # pas de 'last'/dernier → premier
+
+printf '%s' "$target" > "$STATE_DIR/$safe" 2>/dev/null
+zellij action focus-pane-id "$target" 2>/dev/null
