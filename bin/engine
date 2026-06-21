@@ -98,6 +98,58 @@ case "$verb" in
   install-hooks)
     engine_install_hooks
     ;;
+  selftest)
+    # Vérifie que l'adaptateur honore toujours le contrat (à lancer APRÈS une mise
+    # à jour du moteur : si Claude Code change son format, `list`/`read` le révèlent).
+    pass=0 fail=0
+    ok() { printf '  \033[32m✓\033[0m %-8s : %s\n' "$1" "$2"; pass=$((pass+1)); }
+    ko() { printf '  \033[31m✗\033[0m %-8s : %s\n' "$1" "$2"; fail=$((fail+1)); }
+    printf 'engine selftest (backend : %s)\n' "$THEDEV_ENGINE"
+
+    # list : parse des sessions — LE plus sensible à un changement de format moteur.
+    lst=$(engine_list "" 1 0 2>/dev/null)
+    n=$(printf '%s' "$lst" | grep -c .)
+    bad=$(printf '%s\n' "$lst" | awk -F'\t' 'NF && NF!=5' | grep -c .)
+    if   [ "$n" -gt 0 ] && [ "$bad" -eq 0 ]; then ok list "$n espaces, TSV à 5 colonnes valide"
+    elif [ "$n" -eq 0 ]; then ko list "0 espace listé — le format du moteur a peut-être changé"
+    else ko list "$bad ligne(s) TSV malformée(s)"; fi
+
+    # running : doit être un entier.
+    r=$(engine_running "" 2>/dev/null)
+    case "$r" in ""|*[!0-9]*) ko running "valeur inattendue : '$r'" ;; *) ok running "$r process moteur vivant(s)" ;; esac
+
+    # usage : TSV, ou exit 2 (non supporté), ou vide (pas de token) — jamais d'erreur dure.
+    u=$(engine_usage 0 2>/dev/null); rc=$?
+    if   [ "$rc" = 2 ]; then ok usage "non supporté par ce moteur (exit 2)"
+    elif [ -n "$u" ];   then ok usage "$(printf '%s' "$u" | tr '\n\t' '  ')"
+    else ok usage "pas de donnée (hors-ligne / pas de token)"; fi
+
+    # read : dernier message assistant de la session la plus récente.
+    fid=$(printf '%s' "$lst" | head -1 | cut -f1)
+    if [ -n "$fid" ]; then
+      msg=$(engine_read "$fid" 1 assistant 0 2>/dev/null) && ok read "session lue (${#msg} car.)" \
+        || ko read "engine read a échoué"
+    else ok read "aucune session à lire (ok)"; fi
+
+    # event : round-trip busy → turn-end sur un id jetable (ne touche pas au registre).
+    tsid=__engine_selftest__
+    if [ -n "${CC_BUSY_DIR:-}" ]; then
+      engine_event busy "$tsid" /tmp "" "" 2>/dev/null
+      b1=$([ -f "$CC_BUSY_DIR/$tsid" ] && echo y || echo n)
+      engine_event turn-end "$tsid" /tmp "" "" 2>/dev/null
+      b2=$([ -f "$CC_BUSY_DIR/$tsid" ] && echo y || echo n)
+      rm -f "$CC_BUSY_DIR/$tsid" 2>/dev/null
+      { [ "$b1" = y ] && [ "$b2" = n ]; } && ok event "busy posé puis retiré (round-trip)" \
+        || ko event "round-trip KO (posé=$b1 retiré=$b2)"
+    else
+      engine_event busy "$tsid" /tmp "" "" 2>/dev/null && engine_event turn-end "$tsid" /tmp "" "" 2>/dev/null \
+        && ok event "busy/turn-end sans erreur" || ko event "engine_event a échoué"
+    fi
+
+    [ "$fail" -eq 0 ] && printf '\033[32mPASS\033[0m (%d/%d)\n' "$pass" "$((pass+fail))" \
+      || printf '\033[31mFAIL\033[0m (%d/%d)\n' "$pass" "$((pass+fail))"
+    [ "$fail" -eq 0 ]
+    ;;
   ""|-h|--help|help)
     cat >&2 <<'USAGE'
 engine — façade moteur-agnostique (backend via $THEDEV_ENGINE, défaut : claude)
@@ -111,6 +163,7 @@ engine — façade moteur-agnostique (backend via $THEDEV_ENGINE, défaut : clau
   engine event   TYPE --session ID --cwd D [--title T] [--transcript REF]
                  TYPE ∈ session-start | busy | turn-end | session-end
   engine install-hooks
+  engine selftest   # vérifie le contrat (à lancer après une mise à jour du moteur)
 
 Exit : 0 ok · 2 non supporté par ce moteur · 1 erreur. Voir ENGINE-ADAPTER.md.
 USAGE

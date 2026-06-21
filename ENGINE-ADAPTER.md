@@ -173,3 +173,11 @@ le lancement + la couche d'observation.** Les ~14 autres points de l'audit sont 
 3. `engine list` — débranche la découverte des espaces du picker.
 4. `engine launch`/`resume` — encapsule `claude-pane`.
 5. `usage` / `running` / vocabulaire — le facile, en dernier.
+
+## Vérifier
+
+`engine selftest` exerce tout le contrat (list/read/usage/running/event) sur des
+données réelles + un round-trip jetable. **À lancer après une mise à jour du
+moteur** : si Claude Code change son format de transcript, `list` renvoie 0 espace
+ou du TSV malformé → le test passe en `FAIL` et pointe le seul fichier à corriger
+(`lib/engine/claude.sh`).
