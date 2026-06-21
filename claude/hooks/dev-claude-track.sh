@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Hook multi-events : tient le registre des Claude ouverts par espace de dev
-# (dev-claude-reg, SessionStart/End) ET un marqueur « busy » par session
-# (UserPromptSubmit → en train de répondre ; Stop → fini). Le picker lit ces
-# marqueurs pour montrer quels Claude distants tournent en ce moment.
+# Hook multi-events Claude Code → TRADUCTEUR vers l'adaptateur moteur (engine event).
+# Parse le payload du hook (hook_event_name/session_id/cwd/transcript_path) et
+# délègue l'ÉTAT (registre, busy, sentinelles de mission) à `engine event`. Restent
+# ICI les mécanismes propres au hook Claude : le rename du pane (SessionStart) et le
+# nudge pane-name (UserPromptSubmit, stdout injecté dans le contexte de Claude).
 # No-op hors d'un pane zellij.
-#
-# stdout : SessionStart/UserPromptSubmit injectent stdout dans le contexte.
-# On n'y écrit RIEN, sauf le nudge pane-name (UserPromptSubmit), qui est
-# volontairement injecté pour rappeler à Claude de (re)nommer son pane —
-# la règle soft du prompt ne suffit pas (constat : les renames s'étiolent
-# à mesure que le prompt injecté grossit).
 
-BUSY_DIR="$HOME/.cache/dev-claude-busy"     # 1 fichier par session active (mtime = dernier tour)
 NUDGE_DIR="$HOME/.cache/dev-claude-nudge"   # 1 fichier par session (mtime = dernier nudge)
+
+# Adaptateur moteur résolu en VOISIN (le hook est câblé en chemin absolu du repo
+# dans settings.json → $0 = ce fichier ; ../../bin/engine = l'engine du repo). On
+# ne dépend pas du PATH (engine peut ne pas être symliqué).
+_self="$0"; case "$_self" in */*) ;; *) _self="$(command -v -- "$_self")" ;; esac
+ENGINE="$(cd "$(dirname "$(readlink -f -- "$_self")")/../../bin" 2>/dev/null && pwd)/engine"
 
 payload=$(cat)
 [ -n "${ZELLIJ_PANE_ID:-}" ] || exit 0   # pas dans un pane zellij → on ignore
@@ -20,48 +20,27 @@ payload=$(cat)
 ev=$(printf '%s' "$payload"  | jq -r '.hook_event_name // empty' 2>/dev/null)
 sid=$(printf '%s' "$payload" | jq -r '.session_id // empty'      2>/dev/null)
 cwd=$(printf '%s' "$payload" | jq -r '.cwd // empty'             2>/dev/null)
+tp=$(printf '%s' "$payload"  | jq -r '.transcript_path // empty' 2>/dev/null)
 [ -n "$sid" ] || exit 0
 [ -n "$cwd" ] || cwd="$PWD"
 cwd=$(realpath "$cwd" 2>/dev/null || printf '%s' "$cwd")
 
 case "$ev" in
   SessionStart)
-    role="main"; [ -n "${CLAUDE_PANE_ONCE:-}" ] && role="aside"
-    # Nom par défaut = nom posé au lancement par claude-pane/claude-aside
-    # (ex. « claude 2 » pour un aside, « claude [indice] » sur VPS) → la 1re
-    # inscription NE clobbe PAS ce nom. Sur une reprise, upsert préserve le
-    # nom persistant déjà stocké (« ◆ <sujet> »), qu'on ré-applique au pane.
-    def="${CLAUDE_PANE_NAME:-claude}"
-    # Les Claude de mission (thedev-link) sont éphémères et leur pane est géré
-    # par crun (« mission-<id> ») : pas de registre, pas de rename. MAIS on
-    # enregistre le TRANSCRIPT_PATH dans le work-dir : c'est la source de vérité
-    # déterministe du résultat (le watcher y lit le dernier message assistant,
-    # même si le LLM n'écrit jamais son fichier résultat).
-    case "$def" in
-      mission-*)
-        mid="${def#mission-}"
-        tp=$(printf '%s' "$payload" | jq -r '.transcript_path // empty' 2>/dev/null)
-        if [ -n "$tp" ]; then
-          for w in "$HOME"/.cache/thedev/spaces/*/work/"$mid"; do
-            [ -d "$w" ] && printf '%s\n' "$tp" > "$w/transcript_path" 2>/dev/null
-          done
-        fi
-        exit 0 ;;
-    esac
-    name=$(dev-claude-reg upsert "$sid" "$cwd" "$role" "${ZELLIJ_SESSION_NAME:-}" "$def" 2>/dev/null)
-    # Garde-fou : ne renomme que les panes GÉRÉS (lancés par claude-pane/aside,
-    # signature = CLAUDE_PANE_NAME posé). Un `claude` tapé à la main dans le
-    # pane shell/git ne doit pas voir son pane renommé en « claude ».
+    # engine event tient le registre (+ sentinelle de mission) et renvoie le nom de
+    # pane à afficher (vide pour une mission → pas de rename). Garde-fou : ne renomme
+    # que les panes GÉRÉS (signature = CLAUDE_PANE_NAME posé par claude-pane/aside) ;
+    # un `claude` tapé à la main dans le pane shell/git ne doit pas être renommé.
+    name=$("$ENGINE" event session-start --session "$sid" --cwd "$cwd" --transcript "$tp" 2>/dev/null)
     if [ -n "${CLAUDE_PANE_NAME:-}" ] && [ -n "$name" ]; then
       zellij action rename-pane -p "$ZELLIJ_PANE_ID" "$name" 2>/dev/null
     fi
-    dev-claude-reg gc 14 2>/dev/null   # housekeeping : purge les lignes > 14 j
     ;;
   UserPromptSubmit)
-    # Un tour démarre → Claude se met à répondre : marqueur « busy » (mtime=maintenant).
-    mkdir -p "$BUSY_DIR" 2>/dev/null && : > "$BUSY_DIR/$sid" 2>/dev/null
+    # Un tour démarre → marqueur busy (via l'adaptateur).
+    "$ENGINE" event busy --session "$sid" --cwd "$cwd" 2>/dev/null
 
-    # --- Nudge pane-name (stdout → contexte de Claude) ---
+    # --- Nudge pane-name (stdout → contexte de Claude) — mécanisme propre au hook ---
     # Uniquement pour les panes gérés, jamais pour les missions.
     [ -n "${CLAUDE_PANE_NAME:-}" ] || exit 0
     case "$CLAUDE_PANE_NAME" in mission-*) exit 0 ;; esac
@@ -93,35 +72,14 @@ case "$ev" in
     esac
     ;;
   Stop)
-    # Claude a fini sa réponse → plus busy.
-    rm -f "$BUSY_DIR/$sid" 2>/dev/null
-    # Mission thedev : le Claude de mission ne QUITTE pas (il reste interactif au
-    # repos) — la fin de tour est donc le seul signal DÉTERMINISTE de « j'ai fini ».
-    # On (ré)écrit une sentinelle `turn-ended` dans son work-dir : le watcher peut
-    # alors trancher (résultat écrit ou pas) sans pendre jusqu'au hardcap. Le mtime
-    # se rafraîchit à chaque tour → une mission multi-tours n'est pas coupée à tort.
-    # work-dir retrouvé par glob sur l'id unique (le hook ne connaît pas l'espace).
-    case "${CLAUDE_PANE_NAME:-}" in
-      mission-*)
-        mid="${CLAUDE_PANE_NAME#mission-}"
-        tp=$(printf '%s' "$payload" | jq -r '.transcript_path // empty' 2>/dev/null)
-        for w in "$HOME"/.cache/thedev/spaces/*/work/"$mid"; do
-          [ -d "$w" ] || continue
-          date -Iseconds > "$w/turn-ended" 2>/dev/null
-          # transcript_path aussi ici (redondance : si SessionStart l'a raté)
-          [ -n "$tp" ] && [ ! -s "$w/transcript_path" ] && printf '%s\n' "$tp" > "$w/transcript_path" 2>/dev/null
-        done
-        ;;
-    esac
+    # Claude a fini sa réponse → plus busy (+ sentinelle turn-ended pour une mission).
+    "$ENGINE" event turn-end --session "$sid" --cwd "$cwd" --transcript "$tp" 2>/dev/null
     ;;
   SessionEnd)
-    # Sur un quit (Ctrl+Q→fermer), Claude intercepte le signal et déclenche
-    # SessionEnd (reason "other") pour TOUS les Claude — même reason qu'un /exit
-    # volontaire. On ne SUPPRIME donc pas (ça effacerait tout avant la relance) :
-    # on HORODATE la fin. La relance restaure la « cohorte du quit » (voir
-    # dev-claude-reg restore).
-    rm -f "$BUSY_DIR/$sid" "$NUDGE_DIR/$sid" 2>/dev/null   # plus en cours
-    dev-claude-reg markend "$sid" 2>/dev/null
+    # Sur un quit (Ctrl+Q→fermer), Claude déclenche SessionEnd (reason "other") pour
+    # TOUS les Claude — même reason qu'un /exit. On ne supprime pas (la relance
+    # restaure la cohorte du quit) : engine event horodate la fin (markend).
+    "$ENGINE" event session-end --session "$sid" --cwd "$cwd" 2>/dev/null
     ;;
 esac
 exit 0

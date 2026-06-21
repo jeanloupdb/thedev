@@ -8,6 +8,7 @@
 ENGINE_PROC_NAME=claude
 CC_PROJECTS="$HOME/.claude/projects"
 CC_BUSY_DIR="$HOME/.cache/dev-claude-busy"
+CC_NUDGE_DIR="$HOME/.cache/dev-claude-nudge"
 
 # Chemin du transcript .jsonl d'une session (id = basename sans extension).
 _cc_transcript_for() {   # $1=id  → chemin sur stdout, exit 1 si introuvable
@@ -212,27 +213,54 @@ engine_running() {   # $1=id (optionnel)
   [ "$n" -gt 0 ] && echo 1 || echo 0
 }
 
-# Puits d'événements normalisés (le pivot entrant). Core : registre + busy.
-# Le pane-rename, le nudge pane-name et les sentinelles de mission restent gérés
-# par le hook natif (claude/hooks/dev-claude-track.sh) jusqu'à la migration. Les
-# extras spécifiques Claude (rôle, session zellij, nom par défaut) sont lus dans
-# l'env du hook, comme aujourd'hui.
+# Puits d'événements normalisés (le pivot entrant). Tient l'ÉTAT thedev : registre
+# (dev-claude-reg), marqueurs busy, et sentinelles de mission (transcript_path /
+# turn-ended, lues par le watcher de thedev-link). Les extras spécifiques Claude
+# (rôle, nom de pane, session zellij) sont lus dans l'env du hook, comme avant.
+# Le rename du pane et le nudge pane-name restent côté hook (mécanismes propres au
+# hook Claude) ; session-start renvoie le nom de pane sur stdout pour le rename.
 engine_event() {   # $1=type $2=session $3=cwd $4=title $5=transcript
-  local type="$1" sid="$2" cwd="$3" role def
+  local type="$1" sid="$2" cwd="$3" tp="${5:-}" role def name mid w
   case "$type" in
     session-start)
       role="main"; [ -n "${CLAUDE_PANE_ONCE:-}" ] && role="aside"
       def="${CLAUDE_PANE_NAME:-claude}"
-      dev-claude-reg upsert "$sid" "$cwd" "$role" "${ZELLIJ_SESSION_NAME:-}" "$def" >/dev/null 2>&1
+      case "$def" in
+        mission-*)
+          # Mission (thedev-link) : pas de registre ; on enregistre le
+          # transcript_path dans le work-dir (source de vérité du résultat).
+          mid="${def#mission-}"
+          if [ -n "$tp" ]; then
+            for w in "$HOME"/.cache/thedev/spaces/*/work/"$mid"; do
+              [ -d "$w" ] && printf '%s\n' "$tp" > "$w/transcript_path" 2>/dev/null
+            done
+          fi
+          return 0 ;;
+      esac
+      name=$(dev-claude-reg upsert "$sid" "$cwd" "$role" "${ZELLIJ_SESSION_NAME:-}" "$def" 2>/dev/null)
+      dev-claude-reg gc 14 2>/dev/null     # housekeeping : purge > 14 j
+      printf '%s' "$name"                  # → l'appelant (hook) renomme le pane
       ;;
     busy)
       mkdir -p "$CC_BUSY_DIR" 2>/dev/null && : > "$CC_BUSY_DIR/$sid" 2>/dev/null
       ;;
     turn-end)
       rm -f "$CC_BUSY_DIR/$sid" 2>/dev/null
+      case "${CLAUDE_PANE_NAME:-}" in
+        mission-*)
+          # Fin de tour déterministe d'une mission : sentinelle turn-ended (+
+          # transcript_path en filet), lue par le watcher de thedev-link.
+          mid="${CLAUDE_PANE_NAME#mission-}"
+          for w in "$HOME"/.cache/thedev/spaces/*/work/"$mid"; do
+            [ -d "$w" ] || continue
+            date -Iseconds > "$w/turn-ended" 2>/dev/null
+            [ -n "$tp" ] && [ ! -s "$w/transcript_path" ] && printf '%s\n' "$tp" > "$w/transcript_path" 2>/dev/null
+          done
+          ;;
+      esac
       ;;
     session-end)
-      rm -f "$CC_BUSY_DIR/$sid" 2>/dev/null
+      rm -f "$CC_BUSY_DIR/$sid" "$CC_NUDGE_DIR/$sid" 2>/dev/null
       dev-claude-reg markend "$sid" 2>/dev/null
       ;;
     *)

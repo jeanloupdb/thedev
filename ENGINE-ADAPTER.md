@@ -10,11 +10,12 @@
 > comportement actuel — testés sur données réelles.
 >
 > **Migrations faites** : `thedev-link` (résultat de mission → `engine read
-> --transcript`) et `dev-picker` (découverte des espaces → `engine list --all
-> --json` ; le schéma JSONL et `~/.claude/projects` ont quitté le picker).
-> `engine list` est implémenté en un seul process python3 (~90 ms) pour ne pas
-> ralentir l'accueil. **Pas encore fait** : les hooks (`engine event`) et
-> `claude-pane` (`engine launch`).
+> --transcript`), `dev-picker` (découverte des espaces → `engine list --all
+> --json` ; schéma JSONL + `~/.claude/projects` retirés ; `engine list` en un seul
+> process python3 ~90 ms), et les **hooks** (`dev-claude-track.sh` devient un
+> traducteur fin → `engine event` ; le registre/busy/sentinelles de mission sont
+> tenus par l'adaptateur, le rename de pane + le nudge restent côté hook).
+> **Pas encore fait** : `claude-pane` (`engine launch`).
 
 ## Idée directrice
 
