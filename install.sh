@@ -63,8 +63,9 @@ if command -v jq >/dev/null 2>&1; then
           | .hooks.SessionEnd       = ((.hooks.SessionEnd       // []) + [{hooks:[{type:"command",command:$h}]}])
           | .hooks.UserPromptSubmit = ((.hooks.UserPromptSubmit // []) + [{hooks:[{type:"command",command:$h}]}])
           | .hooks.Stop             = ((.hooks.Stop             // []) + [{hooks:[{type:"command",command:$h}]}])
+          | .hooks.Notification     = ((.hooks.Notification     // []) + [{hooks:[{type:"command",command:$h}]}])
         ' "$SETTINGS" > "$tmp" && jq -e . "$tmp" >/dev/null 2>&1; then
-      mv "$tmp" "$SETTINGS"; log "hook dev-claude-track ajouté à settings.json (4 events)"
+      mv "$tmp" "$SETTINGS"; log "hook dev-claude-track ajouté à settings.json (5 events)"
     else
       rm -f "$tmp"; warn "fusion jq échouée : hook non câblé (registre/nudge désactivés)"
     fi

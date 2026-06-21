@@ -6,13 +6,14 @@ layout {
         // l'habillage « Zellij (...) » codé en dur. Palette = thème muted.
         pane size=1 borderless=true {
             plugin location="file:/home/jlal/.config/zellij/plugins/zjstatus.wasm" {
-                format_left  "#[bg=#000000,fg=#8ed68e,bold] 󰉋 {session} {pipe_busy}#[bg=#000000,fg=#4a4a4a]│#[bg=#000000,fg=#808080]  {tabs}"
+                format_left  "#[bg=#000000,fg=#8ed68e,bold] 󰉋 {session} #[bg=#000000,fg=#4a4a4a]│#[bg=#000000,fg=#808080]  {pipe_busy}{tabs}"
                 format_right "#[bg=#000000]{mode}#[bg=#000000,fg=#607a60,bold] {swap_layout} "
                 format_space "#[bg=#000000]"
                 border_enabled "false"
 
-                // Indicateur « ● <pages busy> » poussé par tab-pulse via `zellij pipe`
-                // (rendermode dynamic → le ● coloré et son clignotement sont rendus).
+                // Point « ● » busy poussé par tab-pulse via `zellij pipe`, placé juste
+                // DEVANT {tabs} → se lit comme un point clignotant devant la 1re page.
+                // (rendermode dynamic → le ● coloré et son clignotement sont rendus.)
                 pipe_busy_format "{output}"
                 pipe_busy_rendermode "dynamic"
 

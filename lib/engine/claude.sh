@@ -9,6 +9,7 @@ ENGINE_PROC_NAME=claude
 CC_PROJECTS="$HOME/.claude/projects"
 CC_BUSY_DIR="$HOME/.cache/dev-claude-busy"
 CC_NUDGE_DIR="$HOME/.cache/dev-claude-nudge"
+CC_WAITING_DIR="$HOME/.cache/dev-claude-waiting"   # Claude bloqué sur une question/permission
 
 # Chemin du transcript .jsonl d'une session (id = basename sans extension).
 _cc_transcript_for() {   # $1=id  → chemin sur stdout, exit 1 si introuvable
@@ -243,6 +244,7 @@ engine_event() {   # $1=type $2=session $3=cwd $4=title $5=transcript
       ;;
     busy)
       mkdir -p "$CC_BUSY_DIR" 2>/dev/null && : > "$CC_BUSY_DIR/$sid" 2>/dev/null
+      rm -f "$CC_WAITING_DIR/$sid" 2>/dev/null   # nouveau tour → il ne t'attend plus
       ;;
     turn-end)
       rm -f "$CC_BUSY_DIR/$sid" 2>/dev/null
@@ -260,8 +262,14 @@ engine_event() {   # $1=type $2=session $3=cwd $4=title $5=transcript
       esac
       ;;
     session-end)
-      rm -f "$CC_BUSY_DIR/$sid" "$CC_NUDGE_DIR/$sid" 2>/dev/null
+      rm -f "$CC_BUSY_DIR/$sid" "$CC_NUDGE_DIR/$sid" "$CC_WAITING_DIR/$sid" 2>/dev/null
       dev-claude-reg markend "$sid" 2>/dev/null
+      ;;
+    waiting)
+      # Claude attend une réponse/permission (hook Notification) → état « t'attend » :
+      # marqueur waiting, et on retire busy (il ne CALCULE plus, il te bloque).
+      mkdir -p "$CC_WAITING_DIR" 2>/dev/null && : > "$CC_WAITING_DIR/$sid" 2>/dev/null
+      rm -f "$CC_BUSY_DIR/$sid" 2>/dev/null
       ;;
     *)
       echo "engine event: type inconnu '$type'" >&2; return 1 ;;

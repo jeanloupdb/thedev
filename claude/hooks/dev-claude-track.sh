@@ -113,5 +113,12 @@ case "$ev" in
     "$ENGINE" event session-end --session "$sid" --cwd "$cwd" 2>/dev/null
     pane_busy_title 0
     ;;
+  Notification)
+    # Claude attend une réponse/permission (question, permission…) → état « t'attend » :
+    # l'adaptateur pose le marqueur waiting et retire busy. Le pane cesse de pulser
+    # (il ne calcule plus, il TE bloque) ; le picker l'affiche distinctement.
+    "$ENGINE" event waiting --session "$sid" --cwd "$cwd" 2>/dev/null
+    pane_busy_title 0
+    ;;
 esac
 exit 0

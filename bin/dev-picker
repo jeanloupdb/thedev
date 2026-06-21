@@ -492,6 +492,7 @@ class Picker:
         self.ws = load_workspaces()   # espaces de dev (un par dossier, dédup realpath)
         self.live = live_sessions()   # sessions zellij vivantes (basename du cwd)
         self.busy_cwds = set()        # cwd (realpath) des espaces avec un Claude en plein tour
+        self.waiting_cwds = set()     # … bloqué sur une question/permission (t'attend)
         self._busy_ts = 0             # throttle de _refresh_busy
         self.vps = vps_label()        # non-vide si on tourne sur un serveur distant
         self.mode = "sessions"        # 'sessions' | 'browser'
@@ -630,34 +631,44 @@ class Picker:
         return int(time.time()) % 2 == 0
 
     def _refresh_busy(self):
-        """Cwd (realpath) des espaces avec un Claude LOCAL en plein tour : marqueur
-        busy frais (< 30 min), croisé au registre sid→cwd. Throttle ~1 s (lectures
-        de petits fichiers locaux, quasi gratuit)."""
+        """Cwd (realpath) des espaces LOCAUX par état : busy (en plein tour) vs
+        waiting (bloqué sur une question/permission, il t'attend). Marqueurs frais
+        (< 30 min) croisés au registre sid→cwd. Throttle ~1 s (lectures locales)."""
         now = time.time()
         if now - self._busy_ts < 1.0:
             return
         self._busy_ts = now
-        bdir = os.path.expanduser("~/.cache/dev-claude-busy")
-        sids = set()
-        try:
-            for f in os.listdir(bdir):
-                try:
-                    if now - os.path.getmtime(os.path.join(bdir, f)) < 1800:
-                        sids.add(f)
-                except OSError:
-                    pass
-        except OSError:
-            pass
-        cwds = set()
-        if sids:
+
+        def fresh_sids(d):
+            d = os.path.expanduser(d); out = set()
+            try:
+                for f in os.listdir(d):
+                    try:
+                        if now - os.path.getmtime(os.path.join(d, f)) < 1800:
+                            out.add(f)
+                    except OSError:
+                        pass
+            except OSError:
+                pass
+            return out
+
+        busy = fresh_sids("~/.cache/dev-claude-busy")
+        wait = fresh_sids("~/.cache/dev-claude-waiting")
+        bc, wc = set(), set()
+        if busy or wait:
             for line in _read_file("~/.cache/dev-claudes").splitlines():
                 p = line.split("\t")
-                if len(p) >= 2 and p[0] in sids:
-                    try:
-                        cwds.add(os.path.realpath(p[1]))
-                    except OSError:
-                        cwds.add(p[1])
-        self.busy_cwds = cwds
+                if len(p) < 2:
+                    continue
+                try:
+                    c = os.path.realpath(p[1])
+                except OSError:
+                    c = p[1]
+                if p[0] in busy:
+                    bc.add(c)
+                if p[0] in wait:
+                    wc.add(c)
+        self.busy_cwds, self.waiting_cwds = bc, wc
 
     def _local_worker(self):
         # self.live (sessions zellij vivantes → marqueurs « ● en cours ») est figé
@@ -1132,7 +1143,9 @@ class Picker:
         #     06 Jun  gus_project  (fermé : nom coloré par projet)
         w = r["w"]
         live = r.get("live")
-        if live and w.get("cwd") in self.busy_cwds:   # actif + Claude en plein tour → ●↔○ vert qui pulse
+        if live and w.get("cwd") in self.waiting_cwds:   # t'attend (question/permission) → ◆ cyan fixe
+            dot = ("◆ ", self.CYAN | curses.A_BOLD)
+        elif live and w.get("cwd") in self.busy_cwds:    # en plein tour → ●↔○ vert qui pulse
             dot = ("● ", self.GREEN | curses.A_BOLD) if self._blink_on() else ("○ ", self.GREEN | curses.A_BOLD)
         elif live:
             dot = ("● ", self.GREEN)
@@ -1790,7 +1803,7 @@ class Picker:
             # getch non bloquant tant qu'il y a qqch à rafraîchir (liste RC live,
             # check git en fond, ou écran infos en cours de chargement) ; sinon bloque.
             self._refresh_busy()                      # busy local (throttle interne) → clignotement
-            poll = bool(self.rc_hosts) or self.git_checking or self.local_refreshing or (self.metrics is not None) or (self.mode == "infos" and self.infos_data is None) or (self.autos is None) or (self.mode == "propals" and self._propals_loading) or bool(self.busy_cwds)
+            poll = bool(self.rc_hosts) or self.git_checking or self.local_refreshing or (self.metrics is not None) or (self.mode == "infos" and self.infos_data is None) or (self.autos is None) or (self.mode == "propals" and self._propals_loading) or bool(self.busy_cwds) or bool(self.waiting_cwds)
             self.scr.timeout(400 if poll else -1)
             try:
                 ch = self.scr.getch()
