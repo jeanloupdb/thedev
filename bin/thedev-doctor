@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# @thedev infra diagnostic d'installation : deps, scripts symlinkés, engine, hooks, lancement
+# thedev-doctor — vérifie qu'une install thedev est complète et cohérente. Read-only :
+# il diagnostique et pointe quoi relancer, il ne répare rien lui-même.
+set -u
+
+# Repo résolu depuis l'emplacement RÉEL de ce script (relocatable).
+_self="$0"; case "$_self" in */*) ;; *) _self="$(command -v -- "$_self")" ;; esac
+ROOT="$(cd "$(dirname "$(readlink -f -- "$_self")")/.." && pwd)"
+
+pass=0 warn=0 fail=0
+ok() { printf '  \033[32m✓\033[0m %s\n' "$1"; pass=$((pass+1)); }
+wa() { printf '  \033[33m⚠\033[0m %s\n' "$1"; warn=$((warn+1)); }
+ko() { printf '  \033[31m✗\033[0m %s\n' "$1"; fail=$((fail+1)); }
+hr() { printf '\033[2m── %s ──\033[0m\n' "$1"; }
+
+printf 'thedev doctor — %s\n\n' "$ROOT"
+
+hr "dépendances"
+for d in zellij claude nvim python3 git jq fzf inotifywait; do
+  command -v "$d" >/dev/null 2>&1 && ok "$d" || ko "$d manquant"
+done
+
+hr "scripts @thedev sur le PATH (~/.local/bin)"
+miss=""
+for b in $("$ROOT/bin/thedev-manifest" --scripts 2>/dev/null); do
+  [ -e "$HOME/.local/bin/$b" ] || miss="$miss $b"
+done
+if [ -z "$miss" ]; then ok "tous les scripts @thedev présents"
+else wa "absent(s) de ~/.local/bin :$miss → relance ./install.sh"; fi
+
+hr "engine (adaptateur moteur)"
+if command -v engine >/dev/null 2>&1; then
+  if engine selftest >/dev/null 2>&1; then ok "engine selftest PASS"
+  else wa "engine présent mais selftest non-PASS → lance 'engine selftest'"; fi
+else ko "engine absent du PATH → relance ./install.sh"; fi
+
+hr "hooks Claude (settings.json)"
+if grep -q 'dev-claude-track' "$HOME/.claude/settings.json" 2>/dev/null; then ok "hook dev-claude-track câblé"
+else wa "hook non câblé → registre/busy/pulse/nudge désactivés (relance ./install.sh)"; fi
+
+hr "lancement"
+if grep -q 'dev-launcher' "$HOME/.bashrc" 2>/dev/null; then ok "dev-launcher sourcé dans ~/.bashrc"
+else wa "dev-launcher non sourcé → la commande 'dev' est indisponible (relance ./install.sh)"; fi
+
+hr "zellij (layout / config / thème)"
+for l in config.kdl layouts/dev.kdl; do
+  [ -e "$HOME/.config/zellij/$l" ] && ok "zellij/$l" || wa "zellij/$l absent (relance ./install.sh)"
+done
+
+echo
+if [ "$fail" -eq 0 ] && [ "$warn" -eq 0 ]; then
+  printf '\033[32mOK — install complète\033[0m (%d vérifs)\n' "$pass"
+elif [ "$fail" -eq 0 ]; then
+  printf '\033[33m%d avertissement(s)\033[0m (%d ok)\n' "$warn" "$pass"
+else
+  printf '\033[31m%d problème(s) bloquant(s)\033[0m (%d ok, %d warn)\n' "$fail" "$pass" "$warn"
+fi
+[ "$fail" -eq 0 ]
