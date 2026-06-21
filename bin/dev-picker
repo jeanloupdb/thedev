@@ -384,6 +384,20 @@ def fmt_date(mtime):
     return time.strftime("%d %b", time.localtime(mtime))
 
 
+def fmt_age(mtime):
+    """Âge relatif compact (pour les espaces OUVERTS : « il y a » implicite). Format
+    court (≤ 6 car.) pour rester aligné avec les dates des espaces fermés."""
+    import time
+    d = max(0, int(time.time() - mtime))
+    if d < 60:
+        return "now"
+    if d < 3600:
+        return "%dm" % (d // 60)
+    if d < 86400:
+        return "%dh" % (d // 3600)
+    return "%dj" % (d // 86400)
+
+
 def short(path):
     home = os.path.expanduser("~")
     return "~" + path[len(home):] if path.startswith(home) else path
@@ -1178,7 +1192,9 @@ class Picker:
             dot = ("● ", self.GREEN)
         else:
             dot = ("  ", 0)
-        segs = [(p, 0), dot, (fmt_date(w["mtime"]) + "  ", curses.A_DIM)]
+        # ouverts → âge relatif (il y a 2m / 1h) ; fermés → date (bossé le 18 Jun)
+        when = ("%-6s  " % fmt_age(w["mtime"])) if live else (fmt_date(w["mtime"]) + "  ")
+        segs = [(p, 0), dot, (when, curses.A_DIM)]
         if self.vps:                  # sur un VPS : ces sessions sont « remote » (préfixe gris)
             segs.append(("remote.", curses.A_DIM))
         segs.append((w["name"], (self.CYAN | curses.A_BOLD) if live else self.pcolor(w["name"])))
