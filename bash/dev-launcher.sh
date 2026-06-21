@@ -166,7 +166,7 @@ _dev_adjust_auto() {
     if zellij list-sessions --no-formatting 2>/dev/null | grep -v EXITED | awk '{print $1}' | grep -qxF "$sess"; then
       mkdir -p "$HOME/.cache/thedev"; printf '%s\n' "$task" > "$f"
       zellij --session "$sess" action new-pane --floating --close-on-exit --cwd "$cwd" --name "ajuster $name" \
-        -- bash -lc "CLAUDE_PANE_INIT_FILE=$f CLAUDE_PANE_ONCE=1 exec claude-pane"
+        -- bash -lc "CLAUDE_PANE_INIT_FILE=$f CLAUDE_PANE_ONCE=1 exec engine launch"
       zellij attach "$sess"
     else
       CLAUDE_PANE_INIT="$task" _dev_launch "$cwd" ""     # espace fermé → on l'ouvre, Claude principal briefé
@@ -177,7 +177,7 @@ _dev_adjust_auto() {
     local b64; b64=$(printf '%s\n' "$task" | base64 -w0 2>/dev/null || printf '%s\n' "$task" | base64)
     ssh -o ConnectTimeout=8 "$machine" "mkdir -p ~/.cache/thedev; printf %s '$b64' | base64 -d > '$f'
       if zellij list-sessions --no-formatting 2>/dev/null | grep -v EXITED | awk '{print \$1}' | grep -qxF '$sess'; then
-        PATH=\"\$HOME/.local/bin:\$PATH\" zellij --session '$sess' action new-pane --floating --close-on-exit --cwd '$cwd' --name 'ajuster $name' -- bash -lc 'CLAUDE_PANE_INIT_FILE=$f CLAUDE_PANE_ONCE=1 exec claude-pane'
+        PATH=\"\$HOME/.local/bin:\$PATH\" zellij --session '$sess' action new-pane --floating --close-on-exit --cwd '$cwd' --name 'ajuster $name' -- bash -lc 'CLAUDE_PANE_INIT_FILE=$f CLAUDE_PANE_ONCE=1 exec engine launch'
       fi" 2>/dev/null
     SRV_HOST="$machine" srv "$cwd"
   fi

@@ -54,9 +54,9 @@ fi
 q_name=$(printf '%q' "$name")
 q_resume=$(printf '%q' "$resume")
 if [ -n "$resume" ]; then
-  WRAP="CLAUDE_PANE_NAME=$q_name CLAUDE_RESUME_ID=$q_resume CLAUDE_PANE_ONCE=1 exec claude-pane"
+  WRAP="CLAUDE_PANE_NAME=$q_name CLAUDE_RESUME_ID=$q_resume CLAUDE_PANE_ONCE=1 exec engine launch"
 else
-  WRAP="unset CLAUDE_RESUME_ID; CLAUDE_PANE_NAME=$q_name CLAUDE_PANE_ONCE=1 exec claude-pane"
+  WRAP="unset CLAUDE_RESUME_ID; CLAUDE_PANE_NAME=$q_name CLAUDE_PANE_ONCE=1 exec engine launch"
 fi
 
 if [ -n "$float" ]; then

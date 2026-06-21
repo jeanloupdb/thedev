@@ -14,7 +14,9 @@ layout {
             }
             pane split_direction="horizontal" {
                 pane stacked=true {
-                    pane name="claude" command="/home/jlal/.local/bin/claude-pane" focus=true
+                    pane name="claude" focus=true command="/home/jlal/.local/bin/engine" {
+                        args "launch"
+                    }
                 }
                 pane size=1 borderless=true name="＋ claude" command="/home/jlal/.local/bin/aside-button"
             }

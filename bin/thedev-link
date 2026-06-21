@@ -160,14 +160,14 @@ EOF
   cat > "$wdir/run.sh" <<EOF
 #!/usr/bin/env bash
 cd $(printf '%q' "$cwd") || exit 1
-# Via claude-pane (pas claude nu) : le Claude de mission reçoit la surcouche
+# Via engine launch (→ claude-pane) : le Claude de mission reçoit la surcouche
 # zellij (crun, pane-name, vocabulaire thedev) et les bons flags. ONCE=1 →
 # pas de keep-alive ni de sleep ; PANE_NAME=mission-* → le hook SessionStart
 # n'enregistre pas et ne renomme pas (pane géré par crun).
 unset CLAUDE_RESUME_ID   # une mission est toujours une session neuve
 export CLAUDE_PANE_ONCE=1 CLAUDE_PANE_NAME=$(printf '%q' "mission-$id")
 $model_line
-exec claude-pane "\$(cat $(printf '%q' "$wdir/prompt"))"
+exec engine launch -- "\$(cat $(printf '%q' "$wdir/prompt"))"
 EOF
   chmod +x "$wdir/run.sh"
   crun "mission-$id" -- "$wdir/run.sh"

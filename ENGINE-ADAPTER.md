@@ -14,8 +14,12 @@
 > --json` ; schéma JSONL + `~/.claude/projects` retirés ; `engine list` en un seul
 > process python3 ~90 ms), et les **hooks** (`dev-claude-track.sh` devient un
 > traducteur fin → `engine event` ; le registre/busy/sentinelles de mission sont
-> tenus par l'adaptateur, le rename de pane + le nudge restent côté hook).
-> **Pas encore fait** : `claude-pane` (`engine launch`).
+> tenus par l'adaptateur, le rename de pane + le nudge restent côté hook), et le
+> **lancement** (`dev.kdl`, `claude-aside`, `thedev-link`, `dev-adjust-auto`
+> appellent `engine launch` ; `claude-pane` reste l'impl du backend qu'`engine_launch`
+> exec). **Les 4 verbes du contrat sont câblés — le découplage moteur est complet
+> côté call-sites.** Réserve : la modif de `dev.kdl` n'est pas vérifiable hors d'un
+> rendu zellij réel (à valider au 1er lancement après cutover).
 
 ## Idée directrice
 
