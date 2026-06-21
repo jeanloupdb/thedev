@@ -1,15 +1,134 @@
+// Thème "muted" — format composant zellij.
+// Palette d'origine : fg #808080 / bg #1a1a1a / red #8a6060 / green #607a60 /
+// yellow #8a7a55 / blue #607090 / magenta #706070 / cyan #607070 / white #a0a0a0
+// / orange #8a6a50. Cadres : focus = vert sauge doux, non-focus = gris discret.
 themes {
     muted {
-        fg "#808080"
-        bg "#1a1a1a"
-        black "#1a1a1a"
-        red "#8a6060"
-        green "#607a60"
-        yellow "#8a7a55"
-        blue "#607090"
-        magenta "#706070"
-        cyan "#607070"
-        white "#a0a0a0"
-        orange "#8a6a50"
+        text_unselected {
+            base 128 128 128
+            background 26 26 26
+            emphasis_0 138 106 80
+            emphasis_1 96 112 144
+            emphasis_2 96 122 96
+            emphasis_3 112 96 112
+        }
+        text_selected {
+            base 160 160 160
+            background 42 42 42
+            emphasis_0 138 106 80
+            emphasis_1 96 112 144
+            emphasis_2 96 122 96
+            emphasis_3 112 96 112
+        }
+        ribbon_selected {
+            base 26 26 26
+            background 96 122 96
+            emphasis_0 138 96 96
+            emphasis_1 138 106 80
+            emphasis_2 112 96 112
+            emphasis_3 96 112 144
+        }
+        ribbon_unselected {
+            base 160 160 160
+            background 58 58 58
+            emphasis_0 138 96 96
+            emphasis_1 160 160 160
+            emphasis_2 96 112 144
+            emphasis_3 112 96 112
+        }
+        table_title {
+            base 96 122 96
+            background 0
+            emphasis_0 138 106 80
+            emphasis_1 96 112 144
+            emphasis_2 96 122 96
+            emphasis_3 112 96 112
+        }
+        table_cell_selected {
+            base 160 160 160
+            background 42 42 42
+            emphasis_0 138 106 80
+            emphasis_1 96 112 144
+            emphasis_2 96 122 96
+            emphasis_3 112 96 112
+        }
+        table_cell_unselected {
+            base 128 128 128
+            background 26 26 26
+            emphasis_0 138 106 80
+            emphasis_1 96 112 144
+            emphasis_2 96 122 96
+            emphasis_3 112 96 112
+        }
+        list_selected {
+            base 160 160 160
+            background 42 42 42
+            emphasis_0 138 106 80
+            emphasis_1 96 112 144
+            emphasis_2 96 122 96
+            emphasis_3 112 96 112
+        }
+        list_unselected {
+            base 128 128 128
+            background 26 26 26
+            emphasis_0 138 106 80
+            emphasis_1 96 112 144
+            emphasis_2 96 122 96
+            emphasis_3 112 96 112
+        }
+        // cadre du pane FOCUS : vert sauge doux, pas aggressif
+        frame_selected {
+            base 120 150 120
+            background 0
+            emphasis_0 138 106 80
+            emphasis_1 96 112 144
+            emphasis_2 160 160 160
+            emphasis_3 0
+        }
+        // cadre des panes NON-FOCUS : gris neutre discret
+        frame_unselected {
+            base 96 96 96
+            background 0
+            emphasis_0 96 96 96
+            emphasis_1 96 96 96
+            emphasis_2 96 96 96
+            emphasis_3 96 96 96
+        }
+        frame_highlight {
+            base 138 122 85
+            background 0
+            emphasis_0 138 106 80
+            emphasis_1 138 122 85
+            emphasis_2 138 122 85
+            emphasis_3 138 122 85
+        }
+        exit_code_success {
+            base 96 122 96
+            background 0
+            emphasis_0 96 112 112
+            emphasis_1 26 26 26
+            emphasis_2 96 122 96
+            emphasis_3 96 112 144
+        }
+        exit_code_error {
+            base 138 96 96
+            background 0
+            emphasis_0 138 122 85
+            emphasis_1 0
+            emphasis_2 0
+            emphasis_3 0
+        }
+        multiplayer_user_colors {
+            player_1 112 96 112
+            player_2 96 112 112
+            player_3 0
+            player_4 138 122 85
+            player_5 96 112 144
+            player_6 0
+            player_7 138 96 96
+            player_8 0
+            player_9 0
+            player_10 0
+        }
     }
 }

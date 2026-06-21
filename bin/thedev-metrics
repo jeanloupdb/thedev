@@ -24,9 +24,24 @@ for m in / /data; do
 done
 LOAD=$(load1)
 CLAUDE5H=$(claude-window-usage --pct 2>/dev/null | awk '{print $2}')   # % fenêtre Max 5x (vide si indispo)
+# Temps écoulé dans la fenêtre 5h (= 18000s − temps restant avant reset), depuis
+# le resets_at du cache → « Xh%02d » (ex. 4h03). Vide si donnée absente.
+CLAUDE5H_EL=""
+CL_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/claude-window-usage.json"
+if [ -n "$CLAUDE5H" ] && [ -f "$CL_CACHE" ] && command -v jq >/dev/null 2>&1; then
+  reset_iso=$(jq -r '.five_hour.resets_at // empty' "$CL_CACHE" 2>/dev/null)
+  if [ -n "$reset_iso" ]; then
+    reset_s=$(date -d "$reset_iso" +%s 2>/dev/null)
+    if [ -n "$reset_s" ]; then
+      el=$(( 18000 - (reset_s - $(date +%s)) ))
+      [ "$el" -lt 0 ] && el=0; [ "$el" -gt 18000 ] && el=18000
+      CLAUDE5H_EL=$(printf '%dh%02d' $(( el / 3600 )) $(( (el % 3600) / 60 )))
+    fi
+  fi
+fi
 
 if [ "${1:-}" = "--raw" ]; then
-  [ -n "$CLAUDE5H" ] && printf 'CLAUDE\t5h\t%s\n' "$CLAUDE5H"
+  [ -n "$CLAUDE5H" ] && printf 'CLAUDE\t5h\t%s\t%s\n' "$CLAUDE5H" "$CLAUDE5H_EL"
   [ -n "$RAM" ] && printf 'RAM\t%s\n' "$RAM"
   for d in "${DISKS[@]}"; do printf 'DISK\t%s\t%s\n' "${d%%:*}" "${d##*:}"; done
   [ -n "$LOAD" ] && printf 'LOAD\t%s\t%s\n' "$LOAD" "$ncpu"
@@ -40,7 +55,7 @@ col_pct() { if   [ "${1:-0}" -lt 70 ] 2>/dev/null; then printf '%s' "$G"
            else printf '%s' "$R"; fi; }
 out=""
 add() { [ -n "$out" ] && out+="${D} │ ${Z}"; out+="$1"; }   # colonnes │ ; libellé DIM, valeur COLORÉE
-[ -n "$CLAUDE5H" ] && add "${D}Claude 5h ${Z}$(col_pct "$CLAUDE5H")${CLAUDE5H}%${Z}"
+[ -n "$CLAUDE5H" ] && add "${D}\$ ${CLAUDE5H_EL:+$CLAUDE5H_EL/5h }${Z}$(col_pct "$CLAUDE5H")${CLAUDE5H}%${Z}"
 [ -n "$RAM" ] && add "${D}RAM ${Z}$(col_pct "$RAM")${RAM}%${Z}"
 for d in "${DISKS[@]}"; do
   m="${d%%:*}"; p="${d##*:}"

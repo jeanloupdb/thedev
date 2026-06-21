@@ -5,7 +5,7 @@
 set -u
 esp="${1:-}"; [ -n "$esp" ] || exit 0
 ROOT="$HOME/.cache/thedev"
-R=$'\033[0m'; D=$'\033[2m'; MAG=$'\033[1;35m'; RED=$'\033[1;31m'
+R=$'\033[0m'; D=$'\033[2m'; MAG=$'\033[1;35m'; RED=$'\033[1;31m'; GRN=$'\033[1;32m'
 IND='              '   # indentation : aligne sous le mot « FERMER » du menu
 
 join_dot(){ local out="" p; for p in "$@"; do out="${out:+$out · }$p"; done; printf '%s' "$out"; }
@@ -19,15 +19,21 @@ if command -v crun >/dev/null 2>&1; then
   [ "${na:-0}" -gt 0 ] && kill_parts+=("$na crun$([ "$na" -gt 1 ] && echo s)")
 fi
 
-# Watcher vivant ? On ne le liste PAS (plomberie interne, présent dans tout thedev) :
-# sa coupure est déjà signifiée par les automatisations rattachées qui passent ○ inactives.
+# Watcher vivant ? On ne le liste PAS (plomberie interne, présent dans tout thedev).
+# Les automatisations rattachées sont affichées avec leur STATUT ACTUEL (● opérationnelle
+# / ► en cours / ○ arrêtée) — pas l'état post-fermeture : le « FERMER = session tuée »
+# du menu suffit à comprendre qu'on les coupe. Chaque entrée = "icon\tcouleur\tnom".
 autos=()
 if [ -f "$ROOT/links/$esp" ]; then
   wpid=$(sed -n 's/^watcher_pid=//p' "$ROOT/links/$esp" 2>/dev/null | head -1)
   if [ -n "$wpid" ] && kill -0 "$wpid" 2>/dev/null; then
     if command -v thedev-autos >/dev/null 2>&1; then
-      while IFS=$'\t' read -r _s name _n _l e _rest; do
-        [ "$e" = "$esp" ] && autos+=("$name")
+      while IFS=$'\t' read -r state name _n _l e _cwd _desc open; do
+        [ "$e" = "$esp" ] || continue
+        if   [ "$state" = running ] && [ "$open" = 1 ]; then ic="►"; col="$GRN"
+        elif [ "$state" = active ]  && [ "$open" = 1 ]; then ic="●"; col="$GRN"
+        else                                                 ic="○"; col="$RED"; fi
+        autos+=("$ic"$'\t'"$col"$'\t'"$name")
       done < <(thedev-autos 2>/dev/null)
     fi
   fi
@@ -37,5 +43,7 @@ fi
 
 [ ${#kill_parts[@]} -gt 0 ] && \
   printf '%s%s✗%s %s%s%s\n' "$IND" "$RED" "$R" "$RED" "$(join_dot "${kill_parts[@]}")" "$R"
-[ ${#autos[@]} -gt 0 ] && \
-  printf '%s%s○%s %s%s%s %s→ inactive%s\n' "$IND" "$RED" "$R" "$MAG" "$(join_dot "${autos[@]}")" "$R" "$D" "$R"
+for a in "${autos[@]}"; do
+  IFS=$'\t' read -r ic col name <<<"$a"
+  printf '%s%s%s%s %s%s%s\n' "$IND" "$col" "$ic" "$R" "$MAG" "$name" "$R"
+done

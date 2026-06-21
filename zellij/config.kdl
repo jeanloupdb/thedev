@@ -165,6 +165,15 @@ keybinds clear-defaults=true {
         bind "Alt o" { MoveTab "right"; }
         bind "Alt p" { TogglePaneInGroup; }
         bind "Alt Shift p" { ToggleGroupMarking; }
+        // Alt+R : petit modal flottant — top 10 des logiciels par RAM, barres
+        // de progression. Toute touche referme.
+        bind "Alt r" {
+            Run "dev-ram-menu" {
+                floating true
+                close_on_exit true
+                name "ram"
+            }
+        }
         // Ctrl+Q ouvre un petit menu flottant : détacher (laisser tourner) ou
         // fermer (tuer) la session. Toute autre touche = annuler. (Détacher reste
         // aussi sur Alt+s d, fermer sur Alt+s q.)
@@ -194,9 +203,9 @@ keybinds clear-defaults=true {
         // Close current tab (like browser Ctrl+W — but terminal may intercept)
         bind "Alt Shift w" { CloseTab; }
     }
-    shared_except "locked" "move" {
-        bind "Ctrl h" { SwitchToMode "move"; }
-    }
+    // mode "move" désactivé : aucun raccourci n'y mène (Ctrl h rendu au pane :
+    // nav fenêtre nvim / backspace shell). La section move { } plus bas est donc
+    // inerte, on la garde au cas où on voudrait le réactiver.
     shared_except "locked" "session" {
         bind "Alt s" { SwitchToMode "session"; }
     }

@@ -1,8 +1,23 @@
 layout {
     default_tab_template {
         children
+        // Barre du bas : zjstatus (plugin tiers, format configurable). Remplace le
+        // tab-bar natif pour mettre le NOM DE SESSION (= dossier) en avant et virer
+        // l'habillage « Zellij (...) » codé en dur. Palette = thème muted.
         pane size=1 borderless=true {
-            plugin location="zellij:tab-bar"
+            plugin location="file:/home/jlal/.config/zellij/plugins/zjstatus.wasm" {
+                format_left  "#[bg=#000000,fg=#8ed68e,bold] 󰉋 {session} #[bg=#000000,fg=#4a4a4a]│#[bg=#000000,fg=#808080]  {tabs}"
+                format_right "#[bg=#000000]{mode}#[bg=#000000,fg=#607a60,bold] {swap_layout} "
+                format_space "#[bg=#000000]"
+                border_enabled "false"
+
+                // mode courant — sert aussi de fallback pour tous les modes ({name} = nom du mode)
+                mode_normal "#[fg=#808080,bg=#000000] {name} "
+
+                // onglets sur fond noir : actif = souligné (pas de bloc), inactif = gris discret
+                tab_normal "#[fg=#707070,bg=#000000] {name} "
+                tab_active "#[fg=#000000,bg=#000000] #[fg=#d0d0d0,bg=#000000,bold,underline]{name}#[fg=#000000,bg=#000000] "
+            }
         }
     }
 

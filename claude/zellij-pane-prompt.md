@@ -25,28 +25,31 @@ s'y retrouve d'un coup d'œil, **garde le titre de TON pane à jour** avec un
 libellé court qui résume le sujet courant :
 
 ```bash
-pane-name "◆ <2-3 mots>"
+pane-name "<2-3 mots>"
 ```
 
-`pane-name` renomme le pane **et persiste** le libellé pour ta conversation :
-si l'utilisateur quitte puis relance cet espace, ton pane retrouve son nom.
-(N'utilise pas `zellij action rename-pane` directement — il ne persiste pas.)
+Donne juste le **texte du sujet**, sans glyphe. Un losange `◆` est ajouté
+**automatiquement** devant ton titre quand tu es **en train de répondre**
+(signal d'activité visible dans la stack), et retiré dès que tu rends la main —
+tu n'as pas à le gérer. `pane-name` renomme le pane **et persiste** le libellé
+pour ta conversation : si l'utilisateur quitte puis relance cet espace, ton pane
+retrouve son nom. (N'utilise pas `zellij action rename-pane` directement — il ne
+persiste pas, et écraserait l'indicateur d'activité.)
 
 Règles :
 - **Nom par défaut : `claude`** (ou `claude [<vps>]` sur VPS). C'est l'état au
-  démarrage et tant qu'aucun sujet ne se dégage. Tu ne bascules sur `◆ <…>`
-  qu'une fois un sujet clair, et tu **reviens à `claude`** s'il n'y a plus de
-  sujet précis.
+  démarrage et tant qu'aucun sujet ne se dégage. Tu ne bascules sur un sujet
+  qu'une fois clair, et tu **reviens à `claude`** s'il n'y a plus de sujet précis.
 - **2-3 mots max**, ce qui *différencie* cette conversation (le sujet précis).
 - **Ne répète PAS le nom du projet/repo** — il est déjà connu (session/onglet).
-  Mets l'action ou le composant en cours : `◆ nommage panes`, `◆ fix upload`,
-  `◆ refonte dashboard`.
+  Mets l'action ou le composant en cours : `nommage panes`, `fix upload`,
+  `refonte dashboard`.
 - **Mets-le à jour quand le sujet bascule vraiment** (nouveau chantier), pas à
   chaque message. Pose-le dès que le sujet d'un échange se précise — et si le
   nom courant ne colle plus à la discussion, corrige-le : un nom périmé est
   pire que le défaut.
 - Sur un **VPS**, le repère `[<vps>]` est inséré automatiquement par
-  `pane-name` — donne juste `◆ <2-3 mots>`.
+  `pane-name` — donne juste `<2-3 mots>`.
 - C'est toi qui le tiens à jour, personne d'autre ne le fait. Un rappel
   `[pane-name]` peut apparaître dans ton contexte si le nom semble en retard —
   traite-le comme une invitation à vérifier, pas comme un ordre de renommer.
@@ -138,6 +141,14 @@ navigateur, login, sudo) — c'est LE cas idéal pour `crun`, pas pour `! …`**
   JAMAIS de relancer lui-même avec `!` ce que tu peux mettre en `crun`.
 - Ex. : `crun gh-auth -- gh auth refresh -s read:project` → « ✓ gh-auth lancé
   dans la `sandbox` (Alt+2) : copie le code et valide dans le navigateur ».
+
+**Saisie CONFIDENTIELLE (clé API, secret, token, mot de passe à stocker) — TOUJOURS
+un `crun`, jamais le chat** : ouvre un pane `crun` où l'utilisateur **colle directement**
+(prompt masqué `read -rs`), et fais filer le secret par **stdin** vers sa destination
+(`… | ssh <machine> 'cat > ~/.config/.../secret.env'`, `chmod 600`, hors git) — JAMAIS
+dans la ligne de commande (argv), JAMAIS demandé en clair dans la conversation (ça resterait
+dans le transcript). Tu **ne vois pas** la valeur : confirme par taille/permissions, pas par
+le contenu. C'est le réflexe par défaut pour tout ce qui est confidentiel.
 
 **Ne mets en `crun` qu'une commande dont tu es sûr de la syntaxe** : crun n'est
 pas un bac à sable pour « essayer ». Si un flag/une option est incertain,

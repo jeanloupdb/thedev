@@ -59,6 +59,45 @@ if [ -n "${CLAUDE_RESUME_ID:-}" ]; then
   resume_args=(--resume "$CLAUDE_RESUME_ID")
 fi
 
+# Reopen VPS : si la conversation à reprendre tourne ENCORE comme « background
+# agent » (--remote-control la garde vivante quand on ferme le pane sans /exit),
+# `claude --resume` la refuse (« currently running as a background agent »). Il
+# n'existe ni --attach ni `claude agents kill` en CLI → pour RÉCUPÉRER ma conv,
+# on tue le(s) bg agent(s) de CE dossier (ou portant l'id à reprendre), puis on
+# laisse --resume reprendre le transcript sauvegardé (= reattach). Pane principal
+# seulement ; ciblage par cwd/id exact (jamais un motif large).
+if [ -n "${CLAUDE_RESUME_ID:-}" ] && [ -z "${CLAUDE_PANE_ONCE:-}" ] && command -v claude >/dev/null 2>&1; then
+  # -k 3 : `claude agents --json` peut ignorer le SIGTERM de timeout et rester
+  # hung indéfiniment → sans kill-after, le pane reste NOIR au démarrage (jamais
+  # de --resume). On escalade en SIGKILL 3 s après le SIGTERM. [[reopen-vps-bg-agent-reclaim]]
+  _bg_pids=$(timeout -k 3 8 claude agents --json 2>/dev/null | _CWD="$(pwd -P)" python3 -c '
+import sys, json, os
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+rid = os.environ.get("CLAUDE_RESUME_ID", "")
+cwd = os.environ.get("_CWD", "")
+for a in (data if isinstance(data, list) else []):
+    if not isinstance(a, dict) or a.get("kind") != "background":
+        continue
+    acwd = a.get("cwd", "") or ""
+    try:
+        acwd = os.path.realpath(acwd) if acwd else ""
+    except Exception:
+        pass
+    if a.get("sessionId") == rid or a.get("id") == rid or (cwd and acwd == cwd):
+        pid = a.get("pid")
+        if pid:
+            print(pid)
+' 2>/dev/null)
+  if [ -n "$_bg_pids" ]; then
+    echo "[reopen] récupération de la conversation : arrêt du background agent ($_bg_pids)…"
+    for _p in $_bg_pids; do kill "$_p" 2>/dev/null; done
+    sleep 1.5   # laisse le verrou de session se libérer avant le --resume
+  fi
+fi
+
 # Sur un VPS distant : ajoute le label au titre du pane (« claude [indice] »)
 # pour voir d'un coup d'œil qu'on n'est pas en local. rename-pane fixe le nom →
 # claude ne peut pas l'écraser via son titre OSC. (Les Claude secondaires sont

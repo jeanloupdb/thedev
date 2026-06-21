@@ -6,6 +6,7 @@
 #
 #   tg "<texte markdown>"                    → message (parse_mode Markdown)
 #   tg --photo <url|fichier> ["<légende>"]   → photo (URL distante OU fichier local), légende Markdown
+#   tg --audio <fichier> ["<légende>"]       → fichier audio (mp3) : lecteur Telegram avec durée
 #   tg --plain "<texte>"                     → message sans formatage (aucun parse_mode)
 #
 # Config (fichiers SOURCÉS, jamais affichés ; chaque fichier complète les variables) :
@@ -54,6 +55,12 @@ case "${1:-}" in
         --data-urlencode "photo=$src" --data-urlencode "caption=$cap" \
         --data-urlencode "parse_mode=Markdown"
     fi ;;
+
+  --audio)
+    src="${2:-}"; cap="${3:-}"
+    [ -f "$src" ] || { echo "tg --audio : fichier requis" >&2; exit 1; }
+    send sendAudio -F "chat_id=$TELEGRAM_CHAT_ID" -F "audio=@$src" \
+      -F "caption=$cap" -F "parse_mode=Markdown" ;;
 
   --plain)
     send sendMessage --data-urlencode "chat_id=$TELEGRAM_CHAT_ID" \

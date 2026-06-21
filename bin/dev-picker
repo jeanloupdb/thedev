@@ -14,12 +14,14 @@ N'exécute rien lui-même : imprime une décision sur stdout que `dev` applique 
 """
 import curses
 import datetime
+import glob
 import json
 import os
 import re
 import subprocess
 import sys
 import threading
+import time
 
 # Adaptateur moteur (engine list …) résolu en VOISIN de ce script (relocatable) :
 # dev-picker n'a plus à connaître l'emplacement ni le schéma des transcripts du
@@ -62,20 +64,28 @@ def fetch_remote_claudes(host):
     si son sid a un marqueur frais dans ~/.cache/dev-claude-busy (posé par le
     hook sur UserPromptSubmit, retiré sur Stop). ControlMaster → re-fetch rapides
     pour le rafraîchissement live."""
-    sep, sep2, sep3 = "@@@BUSY@@@", "@@@RC@@@", "@@@LIVE@@@"
-    # 4 sections : registre · marqueurs busy · cwd des process en remote-control
-    # (pour le flag « remote ») · cwd de TOUS les process claude VIVANTS. Ce 4e bloc
-    # est la VÉRITÉ TERRAIN du compte : un Claude mort n'a pas de process, donc fini
-    # les fantômes ended==0 (sessions tuées sans SessionEnd : kill, crash, reboot).
-    # pgrep -x claude ne voit que les process de l'utilisateur → OK même sous hidepid.
+    sep, sep2, sep3, sep4 = "@@@BUSY@@@", "@@@RC@@@", "@@@LIVE@@@", "@@@SESS@@@"
+    # 5 sections : registre · marqueurs busy · cwd des process en remote-control
+    # (pour le flag « remote ») · cwd de TOUS les process claude VIVANTS · espaces
+    # dont le WATCHER thedev-link est VIVANT (« esp\tcwd » par ligne). Le 4e bloc
+    # compte les Claude ; le 5e dit si le THEDEV est encore actif/joignable même
+    # sans Claude interactif debout — c'est EXACTEMENT le signal des automatisations
+    # (cf. thedev-autos : open ⟺ watcher_pid vivant), donc badge auto et liste sont
+    # cohérents au pixel. On garde alors l'espace visible (réattachable + ancre des
+    # autos) ; un espace vraiment fermé (watcher mort) disparaît → fini les fantômes.
     remote = ("cat ~/.cache/dev-claudes 2>/dev/null; echo %s; "
               "find ~/.cache/dev-claude-busy -type f -mmin -30 -printf '%%f\\n' 2>/dev/null; "
               "echo %s; "
               "for p in $(pgrep -f remote-control 2>/dev/null); do readlink /proc/$p/cwd 2>/dev/null; done; "
               "echo %s; "
               "for p in $(pgrep -x claude 2>/dev/null); do readlink /proc/$p/cwd 2>/dev/null; done; "
+              "echo %s; "
+              "for lf in ~/.cache/thedev/links/*; do [ -f \"$lf\" ] || continue; "
+              "wp=$(sed -n 's/^watcher_pid=//p' \"$lf\" | head -1); "
+              "[ -n \"$wp\" ] && kill -0 \"$wp\" 2>/dev/null || continue; "
+              "printf '%%s\\t%%s\\n' \"$(basename \"$lf\")\" \"$(sed -n 's/^cwd=//p' \"$lf\" | head -1)\"; done; "
               "true"   # exit 0 garanti si SSH a pu se connecter → returncode ≠0 ⟺ VRAI échec de connexion
-              ) % (sep, sep2, sep3)
+              ) % (sep, sep2, sep3, sep4)
     try:
         proc = subprocess.run(
             ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes",
@@ -100,7 +110,8 @@ def fetch_remote_claudes(host):
     out = proc.stdout
     reg, _, rest = out.partition(sep)
     busy_raw, _, rest2 = rest.partition(sep2)
-    rc_raw, _, live_raw = rest2.partition(sep3)
+    rc_raw, _, rest3 = rest2.partition(sep3)
+    live_raw, _, sess_raw = rest3.partition(sep4)
     busy = {x.strip() for x in busy_raw.splitlines() if x.strip()}
     rc_cwds = {x.strip().rstrip("/") for x in rc_raw.splitlines() if x.strip()}
     # vérité terrain : nombre de process claude vivants par cwd
@@ -109,6 +120,20 @@ def fetch_remote_claudes(host):
         c = x.strip().rstrip("/")
         if c:
             live_count[c] = live_count.get(c, 0) + 1
+    # espaces dont le WATCHER thedev-link est VIVANT (= thedev actif/joignable, prêt à
+    # spawner un Claude pour une mission/auto). {cwd_normalisé: nom_espace}. Même signal
+    # que thedev-autos → cohérence parfaite badge auto ↔ liste.
+    alive_watchers = {}
+    for x in sess_raw.splitlines():
+        x = x.rstrip("\n")
+        if not x.strip():
+            continue
+        parts = x.split("\t")
+        if len(parts) < 2:
+            continue
+        esp, wcwd = parts[0].strip(), parts[1].strip().rstrip("/")
+        if wcwd:
+            alive_watchers[wcwd] = esp
     groups, order = {}, []
     for line in reg.splitlines():
         p = line.split("\t")
@@ -127,18 +152,35 @@ def fetch_remote_claudes(host):
     for c in order:
         g = groups[c]
         n = live_count.get(c.rstrip("/"), 0)
-        if n <= 0:
-            continue   # aucun process claude vivant → espace mort (que des fantômes), on l'écarte
-        # garde les n entrées les plus RÉCENTES : les fantômes (ended==0 jamais nettoyés)
-        # sont forcément plus vieux que les sessions réellement vivantes.
-        g["panes"].sort(key=lambda x: x["started"], reverse=True)
-        g["panes"] = g["panes"][:n]
-        g["panes"].sort(key=lambda x: x["role"] != "main")   # main d'abord (affichage)
+        watcher_alive = c.rstrip("/") in alive_watchers   # thedev actif (watcher vivant)
+        if n <= 0 and not watcher_alive:
+            continue   # ni Claude vivant ni watcher → espace fermé/fantôme, écarté
+        if n > 0:
+            # garde les n entrées les plus RÉCENTES : les fantômes (ended==0 jamais
+            # nettoyés) sont forcément plus vieux que les panes réellement vivants.
+            g["panes"].sort(key=lambda x: x["started"], reverse=True)
+            g["panes"] = g["panes"][:n]
+            g["panes"].sort(key=lambda x: x["role"] != "main")   # main d'abord (affichage)
+            g["claude_dead"] = False
+        else:
+            # watcher vivant mais AUCUN Claude interactif : espace joignable (missions/
+            # autos), réattachable via srv. Le watcher rouvrira un Claude à la demande.
+            g["panes"] = []
+            g["claude_dead"] = True
         g["busy"] = any(pn["busy"] for pn in g["panes"])
         # « remote » si un pane est marqué rc (registre) OU si un process claude en RC
         # tourne dans ce cwd (détection live → couvre les sessions déjà ouvertes).
         g["remote"] = any(pn["rc"] for pn in g["panes"]) or c.rstrip("/") in rc_cwds
         sessions.append(g)
+    # Espaces avec un watcher vivant mais ABSENTS du registre (jamais eu de Claude, ou
+    # registre purgé) : ajoutés pour que tout thedev actif/joignable soit visible.
+    seen = {s["cwd"].rstrip("/") for s in sessions}
+    for wcwd, esp in alive_watchers.items():
+        if wcwd in seen:
+            continue
+        sessions.append({"name": esp or os.path.basename(wcwd) or wcwd, "cwd": wcwd,
+                         "panes": [], "busy": False,
+                         "remote": wcwd in rc_cwds, "claude_dead": True})
     return {"sessions": sessions}
 
 
@@ -275,9 +317,22 @@ def gather_infos(vps, update_available, head):
             health.append(("gauge", "RAM", 100 * (tot - avail) / tot, "%.1f / %.1f Go" % (tot - avail, tot)))
     except Exception:
         pass
+    try:
+        root_dev = os.stat("/").st_dev
+    except Exception:
+        root_dev = None
     for mnt in ("/", "/data"):
-        if mnt != "/" and not os.path.isdir(mnt):
-            continue
+        if mnt != "/":
+            if not os.path.isdir(mnt):
+                continue
+            # Ne montrer un montage non-racine que s'il est sur un FS DISTINCT de /.
+            # Sinon /data n'est qu'un dossier de / (pas une partition séparée) → la
+            # jauge dupliquerait « disque / » à l'identique = trompeur.
+            try:
+                if root_dev is not None and os.stat(mnt).st_dev == root_dev:
+                    continue
+            except Exception:
+                continue
         try:
             du = shutil.disk_usage(mnt)
             health.append(("gauge", "disque %s" % mnt, 100 * du.used / du.total, "%.0f Go libres" % (du.free / 1e9)))
@@ -368,10 +423,9 @@ def _iso_epoch(iso):
 def load_workspaces():
     """Historique des ESPACES de dev (un par dossier, dédup realpath) via
     l'adaptateur moteur `engine list --all --json`. dev-picker n'a plus à
-    connaître l'emplacement ni le schéma des transcripts du moteur : il reçoit
-    {id, cwd, mtime, title, busy} et ne garde que ce dont l'affichage a besoin.
-    Une session fermée — même de force — reste retrouvable tant que son dossier
-    a un transcript."""
+    connaître l'emplacement ni le schéma des transcripts du moteur. On écarte les
+    dossiers qui n'existent plus : un dossier renommé/supprimé laisse un transcript
+    avec un cwd mort (RESUME → `cd` échoue) → on ne propose pas le lien mort."""
     out = []
     try:
         res = subprocess.run([ENGINE, "list", "--all", "--json"],
@@ -386,7 +440,7 @@ def load_workspaces():
         except Exception:
             continue
         cwd = s.get("cwd", "")
-        if not cwd:
+        if not cwd or not os.path.isdir(cwd):
             continue
         out.append({"cwd": cwd, "name": os.path.basename(cwd),
                     "id": s.get("id", ""), "mtime": _iso_epoch(s.get("mtime", ""))})
@@ -439,6 +493,7 @@ class Picker:
         self.live = live_sessions()   # sessions zellij vivantes (basename du cwd)
         self.vps = vps_label()        # non-vide si on tourne sur un serveur distant
         self.mode = "sessions"        # 'sessions' | 'browser'
+        self.new_open = False         # bouton « nouvelle session » déplié ? (cibles ici/ailleurs)
         self.focus = "right"          # 'left' | 'right' — démarre sur ACTIONS (quitter présélectionné)
         self.filt = ""
         self.bdir = cur_dir
@@ -496,6 +551,17 @@ class Picker:
             curses.init_pair(i, fg, -1)
         (self.GREEN, self.CYAN, self.MAG, self.YEL,
          self.BLUE, self.RED) = (curses.color_pair(i) for i in range(1, 7))
+        # surbrillance de la ligne sélectionnée : une barre gris sombre douce
+        # (texte clair en gras sur fond gris discret) plutôt que A_REVERSE, qui
+        # produisait un fond blanc éclatant agressif le soir. Repli sur reverse
+        # si le terminal n'a pas 256 couleurs.
+        self.SEL = curses.A_REVERSE
+        try:
+            if curses.COLORS >= 256:
+                curses.init_pair(7, 252, 237)   # fg gris clair, bg gris sombre
+                self.SEL = curses.color_pair(7) | curses.A_BOLD
+        except curses.error:
+            pass
         # palette stable par projet (tags [projet] colorés différemment)
         self.PALETTE = [self.CYAN, self.MAG, self.YEL, self.BLUE, self.RED, self.GREEN]
 
@@ -651,6 +717,19 @@ class Picker:
             t.start()
         self.rc_stop.wait()   # le worker attend l'arrêt ; les threads par hôte font le travail
 
+    def _refresh_local(self):
+        """Recharge ws + live immédiatement (après rename/kill local)."""
+        self.ws = load_workspaces()
+        self.live = live_sessions()
+
+    def _refresh_remote(self, host):
+        """Déclenche un re-fetch immédiat pour un hôte distant (après kill remote)."""
+        def do():
+            d = fetch_remote_claudes(host)
+            with self.rc_lock:
+                self.rc_data[host] = d
+        threading.Thread(target=do, daemon=True).start()
+
     def _autos_worker(self):
         """Gather les automatisations (timers thedev) : local + chaque VPS. Une passe (les
         timers ne changent pas en continu ; ré-appelé à l'ouverture de l'écran pour fraîcheur)."""
@@ -776,9 +855,15 @@ class Picker:
                 rows.append({"kind": "act", "id": "quit", "text": "⏻ quitter thedev"})
             if self.update_available:
                 rows.append({"kind": "act", "id": "update_dev", "text": "⟳ mettre à jour thedev"})
-            rows.append({"kind": "act", "id": "new_here",
-                         "text": "Nouvelle session ici · %s" % self.cur_dir})
-            rows.append({"kind": "act", "id": "browse", "text": "Nouvelle session ailleurs"})
+            # « nouvelle session » est un bouton repliable : un clic déplie/replie
+            # ses deux cibles (dossier courant · ailleurs). cf. self.new_open.
+            rows.append({"kind": "rcgap"})
+            rows.append({"kind": "act", "id": "new_menu", "text": "nouvelle session"})
+            if self.new_open:
+                # barre verticale à gauche : rattache visuellement les cibles au bouton.
+                rows.append({"kind": "act", "id": "new_here",
+                             "text": "│ ici · %s" % self.cur_dir})
+                rows.append({"kind": "act", "id": "browse", "text": "│ ailleurs"})
             # Déjà sur un serveur distant → ne pas proposer de sauter (SSH) vers un autre.
             if not self.vps:
                 # Chaque serveur est annoté de son état (connu en fond par _rc_worker) :
@@ -789,7 +874,7 @@ class Picker:
                 for h in self.rc_hosts:
                     d = states.get(h, {})
                     rows.append({"kind": "act", "id": "server:%s" % h,
-                                 "text": "Serveur distant · %s" % h,
+                                 "text": "serveur %s" % h,
                                  "err": d.get("error")})
             # Sous les boutons : remote controls dispo (sessions serveur + panes).
             # On n'affiche un hôte que s'il a des sessions (ou est en chargement /
@@ -802,12 +887,13 @@ class Picker:
                         if d.get("loading"):
                             rc_rows.append({"kind": "rcinfo", "text": "%s · chargement…" % h})
                         elif d.get("error"):
-                            pass   # injoignable déjà affiché sur le bouton « Serveur distant · <h> » → pas de doublon ici
+                            pass   # injoignable déjà affiché sur le bouton « ↗ <h> » → pas de doublon ici
                         elif d.get("sessions"):
                             for s in d["sessions"]:
                                 rc_rows.append({"kind": "rcsess", "host": h, "name": s["name"],
                                                 "cwd": s["cwd"], "nclaude": len(s["panes"]),
-                                                "remote": s.get("remote")})
+                                                "remote": s.get("remote"),
+                                                "claude_dead": s.get("claude_dead", False)})
                         # aucune session → rien pour cet hôte
                 if rc_rows:
                     rows.append({"kind": "rcgap"})   # simple ligne vide (remplace l'ancien titre)
@@ -888,7 +974,7 @@ class Picker:
                 x += len(text)
             if is_sel:                            # surbrillance pleine largeur
                 try:
-                    win.chgat(yy, 1, w - 2, curses.A_REVERSE)
+                    win.chgat(yy, 1, w - 2, self.SEL)
                 except curses.error:
                     pass
 
@@ -946,12 +1032,23 @@ class Picker:
             return [("", 0)]
         if r["kind"] == "rcinfo":     # état (chargement / injoignable)
             return [("  " + r["text"], curses.A_DIM)]
-        if r["kind"] == "rcsess":     # « ● <vps>.remote.<espace> (<n claude>) » — point vert = session distante vivante ;
-            p = "▸ " if is_sel else "  "   # « remote » en gris, présent UNIQUEMENT si la session est vraiment en remote control
-            segs = [(p, 0), ("● ", self.GREEN | curses.A_BOLD), ("%s." % r["host"], 0)]
+        if r["kind"] == "subhdr":     # mini-entête grise d'un groupe d'actions
+            return [("  " + r["text"], curses.A_DIM)]
+        if r["kind"] == "rcsess":     # « ● <vps>.remote.<espace> (<n claude>) » — point vert = session avec Claude ;
+            p = "▸ " if is_sel else "  "   # ○ jaune = thedev actif (watcher vivant) SANS Claude interactif.
+            # ● vert = au moins 1 Claude debout, suivi de (n). ○ jaune = 0 Claude → on
+            # n'affiche PAS « (0) » (le ○ le dit déjà). Pas de mot « détaché » : toute
+            # session distante l'est de toute façon.
+            if r.get("claude_dead"):
+                segs = [(p, 0), ("○ ", self.YEL | curses.A_BOLD), ("%s." % r["host"], 0)]
+            else:
+                segs = [(p, 0), ("● ", self.GREEN | curses.A_BOLD), ("%s." % r["host"], 0)]
             if r.get("remote"):
                 segs += [("remote", curses.A_DIM), (".", 0)]
-            segs += [(r["name"], 0), ("  (%d)" % r.get("nclaude", 0), curses.A_DIM)]
+            segs += [(r["name"], 0)]
+            nc = r.get("nclaude", 0)
+            if nc:                                  # 0 Claude → rien (le ○ le dit déjà)
+                segs += [("  (%d)" % nc, curses.A_DIM)]
             segs += self._auto_badge(r["host"], r.get("cwd", ""))
             return segs
         if r["kind"] == "input":
@@ -980,6 +1077,10 @@ class Picker:
                 if n:
                     segs.append(("  %d" % n, self.YEL | curses.A_BOLD))
                 return segs
+            if r.get("id") in ("quit", "quit_vps"):
+                return [(p + r["text"], curses.A_DIM)]
+            if r.get("id") in ("new_here", "browse"):   # cibles déroulées : gris, pas vert
+                return [(p + r["text"], curses.A_DIM)]
             segs = [(p + r["text"], self.GREEN)]
             if r.get("err"):                  # serveur injoignable : croix + raison en gris
                 segs += [("  ✗ ", curses.A_DIM), (r["err"], curses.A_DIM)]
@@ -1002,12 +1103,16 @@ class Picker:
 
     def header_line(self):
         if self.mode == "sessions":
-            base = "thedev · ←/→ panneau · ↑↓ naviguer · ↵ valider · Esc quitter"
-            if self.live:   # ● = session vivante : ↵ rejoint, ^R ferme & relance
-                base += " · sur une ● : ↵ rejoindre · ^R relancer"
             if self.filt:
-                base = "filtre: %s_   (Esc efface)" % self.filt
-            return base
+                return "filtre: %s_   (Esc efface)" % self.filt
+            li = self.left_item() if self.focus == "left" else None
+            if li and li.get("kind") == "ws":
+                live = li.get("live") or li["w"]["name"] in self.live
+                base = "↵ ouvrir · ^R renommer · ^Suppr supprimer"
+                return base + " · ^Q fermer" if live else base
+            if li and li.get("kind") == "rcsess":
+                return "↵ ouvrir · ^Q fermer"
+            return "thedev · ↑↓ naviguer · ↵ valider · Esc quitter"
         nf = count_files(self.bdir)
         nd = len(list_dirs(self.bdir))
         return "%s · %d dossiers · %d fichiers" % (self.bdir, nd, nf)
@@ -1536,6 +1641,9 @@ class Picker:
         if aid in ("quit", "quit_vps"):  # quitte le picker SANS décision → shell (local) / retour laptop (vps)
             self.decision = None
             return "quit"
+        if aid == "new_menu":        # déplie/replie les cibles « ici / ailleurs »
+            self.new_open = not self.new_open
+            return
         if aid == "new_here":
             self.decision = ("NEW", self.cur_dir)
             return "quit"
@@ -1555,6 +1663,51 @@ class Picker:
         elif aid == "mksub":
             self.creating = True
             self.newname = ""
+
+    def _modal(self, title, body, input_label=None, default=""):
+        """Modal overlay centré. Retourne (confirmed, text).
+        Si input_label : champ de saisie pré-rempli avec default.
+        Sinon text=None. Esc → (False, None), ↵ → (True, text)."""
+        H, W = self.scr.getmaxyx()
+        body_lines = body if isinstance(body, list) else [body]
+        all_text = [title] + body_lines + ([input_label or ""] if input_label else [])
+        bw = min(W - 6, max(46, max(len(l) for l in all_text if l) + 8))
+        bh = 3 + len(body_lines) + (3 if input_label else 0) + 3
+        by = max(0, (H - bh) // 2)
+        bx = max(0, (W - bw) // 2)
+        win = curses.newwin(bh, bw, by, bx)
+        text = default
+        while True:
+            win.erase()
+            win.box()
+            # titre
+            win.addnstr(1, 2, title, bw - 4, curses.A_BOLD)
+            # corps
+            for i, line in enumerate(body_lines):
+                win.addnstr(2 + i, 2, line, bw - 4)
+            row = 2 + len(body_lines)
+            # champ de saisie optionnel
+            if input_label:
+                row += 1
+                win.addnstr(row, 2, input_label, bw - 4, curses.A_DIM)
+                row += 1
+                field = (text + " " * bw)[:bw - 4]
+                win.addnstr(row, 2, field, bw - 4, curses.A_REVERSE)
+                row += 1
+            # hint
+            row += 1
+            win.addnstr(row, 2, "↵ confirmer  Esc annuler", bw - 4, curses.A_DIM)
+            win.refresh()
+            ch = self.scr.getch()
+            if ch == 27:
+                return False, None
+            if ch in (curses.KEY_ENTER, 10, 13):
+                return True, text
+            if input_label:
+                if ch in (curses.KEY_BACKSPACE, 127, 8):
+                    text = text[:-1]
+                elif 32 <= ch < 127:
+                    text += chr(ch)
 
     def prompt(self, label):
         curses.curs_set(1)
@@ -1600,6 +1753,24 @@ class Picker:
                 return
             if ch == -1:                            # timeout : simple redraw
                 continue
+            # Alt+R = top 10 RAM (même geste qu'Alt+R dans zellij). Le terminal
+            # envoie ESC puis 'r' ; comme ESC seul = retour/quitter ici, on lève
+            # l'ambiguïté en regardant la touche suivante. Si ce n'est pas 'r',
+            # on la remet dans la file et l'ESC reprend son sens normal.
+            if ch == 27:
+                self.scr.timeout(60)
+                nxt = self.scr.getch()
+                if nxt in (ord("r"), ord("R")):
+                    try:
+                        curses.endwin()
+                        subprocess.run([os.path.expanduser("~/.local/bin/dev-ram-menu")])
+                    except Exception:
+                        pass
+                    finally:
+                        self.scr.clear(); self.scr.refresh()
+                    continue
+                if nxt != -1:
+                    curses.ungetch(nxt)
             if self.creating:                       # saisie inline du nom de dossier
                 if ch in (curses.KEY_ENTER, 10, 13):
                     nm = self.newname.strip()
@@ -1706,12 +1877,122 @@ class Picker:
             elif ch in (curses.KEY_ENTER, 10, 13):
                 if (self.activate_left() if self.focus == "left" else self.activate_right()) == "quit":
                     return
-            elif ch == 18:  # Ctrl-R : fermer & relancer la session ● sous le curseur
-                rr = self.focused_session()
-                if rr and self.session_running(rr):
-                    self.decision = ("RECREATE", rr["cwd"], rr["id"])
-                    return
-                self.msg = "Ctrl-R = fermer & relancer : place-toi sur une session ● en cours"
+            elif ch == 18:  # Ctrl-R : renommer la session sélectionnée
+                li = self.left_item() if self.focus == "left" else None
+                if li and li.get("kind") == "ws":
+                    w = li["w"]
+                    ok, new_name = self._modal(
+                        "Renommer la session",
+                        ["« %s »" % w["name"]],
+                        input_label="Nouveau nom :", default=w["name"])
+                    if ok and new_name and new_name != w["name"]:
+                        if not re.match(r'^[A-Za-z0-9._-]+$', new_name):
+                            self.msg = "nom invalide (alphanum . _ - seulement)"
+                        else:
+                            new_cwd = os.path.join(os.path.dirname(w["cwd"]), new_name)
+                            try:
+                                import shutil as _shutil
+                                old_name = w["name"]
+                                old_cwd  = w["cwd"]
+                                if os.path.isdir(old_cwd):
+                                    os.rename(old_cwd, new_cwd)
+                                if old_name in self.live:
+                                    subprocess.run(["zellij", "action", "rename-session", new_name],
+                                                   capture_output=True)
+                                    time.sleep(0.25)  # zellij propage rename-session
+                                # déplacer l'historique Claude. NB : Claude Code
+                                # encode le chemin en remplaçant TOUT caractère non
+                                # alphanumérique par « - » (donc les « _ » de
+                                # jlal_perso aussi) — pas seulement les « / ».
+                                _base = os.path.expanduser("~/.claude/projects")
+                                _enc = lambda p: re.sub(r'[^A-Za-z0-9]', '-', p)
+                                _old_h = os.path.join(_base, _enc(old_cwd))
+                                _new_h = os.path.join(_base, _enc(new_cwd))
+                                if os.path.isdir(_old_h) and not os.path.exists(_new_h):
+                                    _shutil.move(_old_h, _new_h)
+                                # Réécrire le cwd DANS les transcripts : load_workspaces()
+                                # lit le champ "cwd" du jsonl (pas le nom du dossier), et
+                                # il pointe encore vers l'ancien chemin → l'espace garderait
+                                # l'ancien nom et ne matcherait plus la session zellij vivante.
+                                if os.path.isdir(_new_h):
+                                    _o = ('"cwd":"%s"' % old_cwd).encode()
+                                    _n = ('"cwd":"%s"' % new_cwd).encode()
+                                    for _f in glob.glob(os.path.join(_new_h, "*.jsonl")):
+                                        try:
+                                            with open(_f, "rb") as _fh:
+                                                _data = _fh.read()
+                                            if _o in _data:
+                                                with open(_f, "wb") as _fh:
+                                                    _fh.write(_data.replace(_o, _n))
+                                        except OSError:
+                                            pass
+                                # recharger depuis zellij (état vrai après propagation)
+                                self._refresh_local()
+                                self.msg = "renommé : %s → %s" % (old_name, new_name)
+                            except Exception as e:
+                                self.msg = "échec : %s" % str(e)[:60]
+                    else:
+                        self.msg = "renommage annulé" if ok else ""
+                else:
+                    self.msg = "sélectionne une session à gauche"
+            elif ch == 17:  # Ctrl-Q : fermer la session ouverte (zellij delete-session)
+                li = self.left_item() if self.focus == "left" else None
+                if li and li.get("kind") == "ws":
+                    w = li["w"]
+                    if w["name"] not in self.live:
+                        self.msg = "^Q : session non ouverte"
+                        continue
+                    ok, _ = self._modal(
+                        "Fermer la session",
+                        ["« %s »" % w["name"], "", "La session sera fermée."])
+                    if ok:
+                        subprocess.run(["zellij", "delete-session", w["name"], "--force"],
+                                       capture_output=True)
+                        self._refresh_local()
+                        self.msg = "session « %s » fermée" % w["name"]
+                elif li and li.get("kind") == "rcsess":
+                    ok, _ = self._modal(
+                        "Fermer la session distante",
+                        ["« %s » sur %s" % (li["name"], li["host"]), "", "La session sera fermée."])
+                    if ok:
+                        subprocess.run(
+                            ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes",
+                             "-o", "ControlMaster=auto", "-o", "ControlPath=~/.ssh/dev-cm-%C",
+                             "-o", "ControlPersist=30s",
+                             li["host"],
+                             "bash -lic 'zellij delete-session %s --force 2>&1'" % li["name"]],
+                            capture_output=True, timeout=10)
+                        self._refresh_remote(li["host"])
+                        self.msg = "session « %s » fermée sur %s" % (li["name"], li["host"])
+                else:
+                    self.msg = "sélectionne une session à gauche"
+            elif ch in (curses.KEY_DC, 519):  # Suppr / Ctrl+Suppr : supprimer session + historique
+                li = self.left_item() if self.focus == "left" else None
+                if li and li.get("kind") == "ws":
+                    w = li["w"]
+                    ok, _ = self._modal(
+                        "Supprimer la session et son historique",
+                        ["« %s »" % w["name"], "",
+                         "Supprime : session zellij, dossier projet,",
+                         "registre thedev et historique Claude."])
+                    if ok:
+                        subprocess.run(["zellij", "delete-session", w["name"], "--force"],
+                                       capture_output=True)
+                        self._refresh_local()
+                        # registre dev-claudes
+                        subprocess.run([os.path.expanduser("~/.local/bin/dev-claude-reg"),
+                                        "gc", "0"], capture_output=True)
+                        # historique Claude : dossier ~/.claude/projects/<encoded_cwd>
+                        cwd = w.get("cwd", "")
+                        if cwd:
+                            encoded = cwd.lstrip("/").replace("/", "-")
+                            claude_proj = os.path.expanduser("~/.claude/projects/-" + encoded)
+                            if os.path.isdir(claude_proj):
+                                import shutil
+                                shutil.rmtree(claude_proj, ignore_errors=True)
+                        self.msg = "session « %s » supprimée" % w["name"]
+                else:
+                    self.msg = "sélectionne une session locale à gauche"
             elif ch == 27:  # Esc : efface le filtre, sinon revient aux sessions, sinon quitte
                 if self.filt:
                     self.filt = ""; self.li = 0

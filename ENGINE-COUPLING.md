@@ -76,5 +76,28 @@ modèles, env) est cosmétique.
 **Conclusion** : thedev n'est pas accidentellement couplé à Claude partout — son
 ossature (crun, missions, espaces) est saine. Mais sa **couche d'observation de
 l'agent** suppose Claude Code de bout en bout. Le chantier du principe n°1 est
-réel, **borné** (≈ 5 fonctions, 4 fichiers), et aujourd'hui à l'état de direction,
-pas atteint.
+réel, **borné** (≈ 5 fonctions, 4 fichiers).
+
+## Résidus assumés (hors périmètre de l'adaptateur)
+
+L'adaptateur a découplé la couche d'observation + le lancement. Ce qui reste
+collé à Claude n'est **plus du couplage éparpillé** — c'est, par ordre de nature :
+
+- **Features Claude sans équivalent générique** : Remote Control auto VPS
+  (`claude-pane`), fenêtre 5h / quota (`claude-window-usage` + le picker lit
+  `~/.claude.json` / `stats-cache.json` **sans passer par `engine usage`**),
+  slash-command `/start` (`new-project`), identité `~/.claude/CLAUDE.md`.
+- **Une feature picker hors adaptateur** : la réécriture du `cwd` dans les
+  transcripts au renommage d'un dossier (`dev-picker`) édite le `.jsonl`
+  directement — `engine list/read` ne la couvre pas.
+- **Petits résidus en dur** : IDs de modèles (`thedev-link`), `CLAUDE_CODE_SESSION_ID`
+  (`pane-name`), le vocabulaire (`claude-pane`, `dev-claude-reg`, `~/.cache/dev-claude-*`).
+- **Dépendance structurelle** : le **système de hooks** lui-même — c'est par lui
+  que thedev reçoit ses events. Un moteur sans hooks demanderait une autre source
+  d'`engine event`.
+- **Le cerveau** (system-prompt thedev + skills + mémoire) : porté par les rails
+  Claude Code (`--append-system-prompt`, skills, mémoire) — détaché dans le *fond*
+  (c'est du savoir thedev), couplé dans le *transport*.
+
+Et **`resume`** : abstrait en tant qu'interface (verbe + id opaque), mais la
+*capacité* « reprendre une conversation » reste un **prérequis** sur le moteur.

@@ -72,6 +72,20 @@ systemctl --user list-unit-files --type=timer --no-legend 2>/dev/null | awk '{pr
     rs=$(ls -dt "$ROOT"/spaces/"$esp"/done/feed-"$name"-*/run.sh 2>/dev/null | head -1)
     [ -n "$rs" ] && cwd=$(sed -n 's/^cd \(.*\) || exit.*/\1/p' "$rs" 2>/dev/null | head -1)
   fi
+  # Dernier recours : espace fermé ET jamais de mission archivée (ex. veille qui n'a
+  # pas encore tourné) → retrouver le dossier par son NOM, sinon « relancer » depuis
+  # l'accueil ne sait pas OÙ rouvrir le thedev (cwd « ? », Entrée sans effet).
+  #   1) $HOME/<esp> (cas courant : l'espace est un dossier direct du home),
+  #   2) sinon un cwd de transcript Claude dont le basename == esp ET qui existe encore.
+  if [ -z "$cwd" ] && [ -n "$esp" ]; then
+    if [ -d "$HOME/$esp" ]; then
+      cwd="$HOME/$esp"
+    elif [ -d "$HOME/.claude/projects" ]; then
+      cwd=$(grep -rhoE '"cwd":"[^"]+"' "$HOME/.claude/projects" 2>/dev/null \
+            | sed 's/"cwd":"//; s/"$//' | sort -u \
+            | while IFS= read -r p; do [ "$(basename "$p")" = "$esp" ] && [ -d "$p" ] && { printf '%s' "$p"; break; }; done)
+    fi
+  fi
 
   # mini-description : le parenthétique de la Description systemd, sinon la Description nettoyée
   mdesc=$(printf '%s' "$desc" | sed -n 's/.*(\(.*\)).*/\1/p')
