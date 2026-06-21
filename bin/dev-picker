@@ -884,7 +884,7 @@ class Picker:
             live, rest = rank(live), rank(rest)
             lim = 10 ** 9 if (self.show_all or f) else self.CAP
             if live:
-                rows.append({"kind": "header", "text": "espaces ouverts ●"})
+                rows.append({"kind": "header", "text": "espaces ouverts"})
                 for w in live:
                     rows.append({"kind": "ws", "w": w, "live": True})
             if rest:
