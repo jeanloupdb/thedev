@@ -21,63 +21,36 @@ Une armée trop libre ne sait plus où elle va, et ses soldats désertent jusqu'
 
 **C'est ce chef que thedev te donne l'occasion de devenir.** Qu'ils soient 3 ou 300, tu connais chacun de tes soldats et tu sais où te placer dans la chaîne de commandement. Armée à coût fixe et réplicable plutôt que mercenaires payés au coup, la tienne tient sur ton **abonnement**, pas à l'API.
 
-## ⚡ Installer (avec l'IA, en 1 minute)
+## 🎖️ L'arsenal
 
-Installe le [CLI Claude](https://docs.claude.com/claude-code), clone le repo, lance `claude` dedans, et colle :
+**Commander ton armée**
+- 👁️ **Vue du parc** — tous tes Claude et leur état d'un coup d'œil
+- 🧩 **Claude en renfort** — autant d'agents que tu veux par espace
+- 🏷️ **Auto-nommage** — les panes se nomment seuls au fil du sujet
+- 🔌 **Reprise 1 clic** — reprends une session locale ou distante
+- 📁 **1 dossier = 1 session** — modèle simple, pas de boîte noire
 
-> Installe thedev. Lis `README.md` et `MANIFEST.md`, vérifie les dépendances
-> (`./bin/thedev-manifest --check-deps`), installe celles qui manquent, lance
-> `./install.sh`, puis dis-moi comment démarrer `dev`.
+**Tes machines, partout**
+- 🖥️ **Multi-machines** — poste + serveurs dans un seul espace
+- 📨 **Missions** — envoie une tâche à un Claude distant (au modèle de ton choix)
+- 🚚 **Partage entre machines** — des dossiers entiers, en respectant `.gitignore`
+- 📲 **Pilotage à distance** — pilote ton serveur depuis l'app
+- 🛰️ **Headless** — tourne en arrière-plan sur un serveur, sans interface
+- ⏰ **Automatisations distantes** — des tâches rejouées dans le temps
 
-<details>
-<summary>… ou à la main</summary>
+**Tu gardes la main**
+- ▶️ **Commandes longues** — terminal dédié pour `npm start`, builds, watchers
+- 🖧 **Tes terminaux** — vois les logs, tape une commande sans l'IA
+- 🙈 **Page « my space »** — un terminal privé, hors de portée de Claude
+- 🧹 **Fermeture propre** — vois ce que tu coupes avant de fermer (Ctrl+Q)
+- 📊 **Ressources en direct** — RAM, disque, CPU en permanence
 
-```bash
-git clone https://github.com/jeanloupdb/thedev.git ~/thedev && cd ~/thedev
-./bin/thedev-manifest --check-deps    # ce qui manque
-./install.sh                          # puis : source ~/.bashrc && dev
-```
-Serveur : `./install.sh --vps=<label>`. Dépendances : zellij, claude, nvim, python3, git, jq, fzf, inotify-tools.
-</details>
-
-## vs OpenClaw / Hermes / Ruflo
-
-Si tu connais ces outils : thedev en est le **cousin léger, sécurisé et Linux des devs** — pas un essaim d'agents API dans le cloud, mais ton terminal, tes machines, ton abonnement, auditable et sans rien exposer.
-
-Légende : ✅ oui · 🟡 partiel / autre approche · ❌ non
-
-| Fonctionnalité | 🦞 OpenClaw | 🪽 Hermes | 🌀 Ruflo | 🖥️ **thedev** |
-|---|:---:|:---:|:---:|:---:|
-| 👁️ **Vue du parc** — tous tes Claude et leur état, organisés | 🟡 | 🟡 | 🟡 | ✅ |
-| 🧩 **Claude en renfort** — autant de Claude que voulu par espace | ✅ | ✅ | ✅ | ✅ |
-| 🔌 **Reprise 1 clic** — reprendre une session locale ou distante | 🟡 | ✅ | 🟡 | ✅ |
-| 🏷️ **Auto-nommage** — les panes se nomment seuls au fil du sujet | ❌ | ❌ | ❌ | ✅ |
-| 📁 **1 dossier = 1 session** — modèle simple, pas de boîte noire | ❌ | ❌ | ❌ | ✅ |
-| 🖥️ **Multi-machines** — poste + serveurs en un seul espace | ❌ | 🟡 | ✅ | ✅ |
-| 📨 **Missions** — envoyer une tâche à un Claude distant (choix du modèle) | 🟡 | ✅ | 🟡 | ✅ |
-| 🚚 **Partage entre machines** — dossiers entiers, respecte `.gitignore` | ❌ | ❌ | ❌ | ✅ |
-| 📲 **Pilotage à distance** — piloter ton serveur depuis l'app | ✅ | ✅ | 🟡 | ✅ |
-| ▶️ **Commandes longues** — terminal dédié pour `npm start`, builds, watchers | ❌ | 🟡 | ❌ | ✅ |
-| 🖧 **Tes terminaux** — voir les logs, taper une commande sans l'IA | ❌ | 🟡 | ❌ | ✅ |
-| 🙈 **Page « my space »** — un terminal privé, hors de portée de Claude | ❌ | ❌ | ❌ | ✅ |
-| 🔒 **Secrets hors chat** — saisir mdp / clé / sudo sans que l'IA les voie | ❌ | 🟡 | ❌ | ✅ |
-| 🧹 **Fermeture propre** — voir ce qu'on coupe avant de fermer (Ctrl+Q) | ❌ | ❌ | ❌ | ✅ |
-| 📊 **Ressources en direct** — RAM, disque, CPU affichés en permanence | ❌ | ❌ | 🟡 | ✅ |
-| ⏳ **Fenêtre Claude 5h** — % restant avant le rate-limit, gratuit | ❌ | ❌ | ❌ | ✅ |
-| 🌑 **Léger** — TUI minimaliste, thème noir | ❌ | ✅ | ❌ | ✅ |
-| ⏰ **Automatisations distantes** — tâches rejouées dans le temps sur un serveur | ✅ | ✅ | ✅ | ✅ |
-| 🛰️ **Headless** — tourne en arrière-plan sans interface sur un serveur | ✅ | ✅ | ✅ | ✅ |
-| 🌐 **Exposition 0 port** — publier un site HTTPS via Tailscale, sans ouvrir de port | ❌ | ❌ | 🟡 | ✅ |
-| 💳 **Sur ton abo** — fonctionne sur l'abonnement Claude, sans coût API | ❌¹ | ❌ | ❌¹ | ✅ |
-| 💬 **Multi-messageries** — piloter depuis WhatsApp / Telegram / Discord / Signal… | ✅ | ✅ | ❌ | ❌² |
-| 🧠 **Mémoire persistante** — contexte cumulé entre projets/sessions | 🟡 | ✅ | ✅ | ❌ |
-| 🔧 **Self-improvement** — l'agent crée et améliore ses propres skills | 🟡 | ✅ | ✅ | ❌ |
-| 🔀 **Multi-modèles** — 200+ modèles, pas que Claude | ✅ | ✅ | ✅ | ❌ |
-| 📦 **Registre de skills** — installer des skills partagés par la communauté | ✅ | ✅ | ✅ | ❌ |
-| 🌐 **Automation navigateur / voix** — piloter un browser, entrées vocales | ✅ | 🟡 | 🟡 | ❌ |
-
-<sub>¹ OpenClaw et Ruflo fonctionnaient sur l'abonnement Claude (détournement de token / framework tiers) — Anthropic a bloqué cet usage le 4 avril 2026. thedev reste légitime via Claude Code interactif.</sub><br>
-<sub>² thedev ne se pilote pas en textant un bot : son entrée à distance, c'est le **Remote Control de ta session Claude depuis l'app officielle** (voir Pilotage à distance). Telegram sert aux alertes/livraisons sortantes, pas de commande.</sub>
+**Sûr et souverain**
+- 💳 **Sur ton abo** — sur l'abonnement Claude, zéro coût API
+- 🔒 **Secrets hors chat** — mdp / clé / sudo sans que l'IA les voie
+- 🌐 **Exposition 0 port** — publie un site HTTPS via Tailscale, sans ouvrir de port
+- ⏳ **Fenêtre Claude 5h** — le % restant avant le rate-limit, en direct
+- 🌑 **Léger** — TUI minimaliste, thème noir
 
 <sub>Ex. d'automatisation : « sur mon VPS, chaque matin, génère un article + son podcast audio et envoie-moi le lien sur Telegram. »</sub>
 
