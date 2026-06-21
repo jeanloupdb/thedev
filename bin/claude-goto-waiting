@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# @thedev naming saute au pane Claude qui « t'attend » (QCM bloquant) — bind Alt+W
+# Cherche un marqueur waiting de CETTE session zellij (contenu = <pane_id>\t<session>,
+# posé par le hook sur un AskUserQuestion) et focus le pane. Plusieurs en attente →
+# le premier trouvé. Lancé via `Run` (pane flottant éphémère qui se referme).
+set -u
+ZS="${ZELLIJ_SESSION_NAME:-}"
+WAITING_DIR="$HOME/.cache/dev-claude-waiting"
+[ -n "$ZS" ] && [ -d "$WAITING_DIR" ] || exit 0
+
+for f in "$WAITING_DIR"/*; do
+  [ -f "$f" ] || continue
+  IFS=$'\t' read -r pid zs < "$f" 2>/dev/null || continue
+  [ -n "${pid:-}" ] && [ "${zs:-}" = "$ZS" ] || continue
+  zellij action focus-pane-id "$pid" 2>/dev/null && exit 0
+done
+exit 0

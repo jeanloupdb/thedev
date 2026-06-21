@@ -5,8 +5,9 @@
 # propres au hook Claude : rename de pane, pulse ◆, et nudge pane-name (stdout injecté
 # dans le contexte de Claude). No-op hors d'un pane zellij.
 
-BUSY_DIR="$HOME/.cache/dev-claude-busy"      # 1 fichier par session active
-NUDGE_DIR="$HOME/.cache/dev-claude-nudge"    # 1 fichier par session (mtime = dernier nudge)
+BUSY_DIR="$HOME/.cache/dev-claude-busy"        # 1 fichier par session active
+NUDGE_DIR="$HOME/.cache/dev-claude-nudge"      # 1 fichier par session (mtime = dernier nudge)
+WAITING_DIR="$HOME/.cache/dev-claude-waiting"  # Claude bloqué sur un QCM (contenu = pane_id\tsession)
 
 # Adaptateur moteur résolu en VOISIN (le hook est câblé en chemin absolu du repo dans
 # settings.json → $0 = ce fichier ; ../../bin/engine = l'engine du repo). Pas de
@@ -124,7 +125,13 @@ case "$ev" in
     case "$(printf '%s' "$payload" | jq -r '.tool_name // empty' 2>/dev/null)" in
       AskUserQuestion)
         "$ENGINE" event waiting --session "$sid" --cwd "$cwd" 2>/dev/null
-        pane_busy_title 0 ;;
+        pane_busy_title 0
+        if is_managed_pane; then
+          # enrichit le marqueur waiting avec pane_id\tsession (pour Alt+W et l'alerte
+          # de barre) puis lance l'alerte rouge « action t'attend · Alt+W ».
+          printf '%s\t%s\n' "$ZELLIJ_PANE_ID" "${ZELLIJ_SESSION_NAME:-}" > "$WAITING_DIR/$sid" 2>/dev/null
+          setsid wait-bar </dev/null >/dev/null 2>&1 &
+        fi ;;
     esac
     ;;
   PostToolUse)

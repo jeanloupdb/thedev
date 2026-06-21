@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# @thedev naming alerte rouge « action t'attend · Alt+W » dans la barre zjstatus
+# Tant qu'un Claude de CETTE session zellij est bloqué sur un QCM (marqueur waiting),
+# pousse une alerte ROUGE dans zjstatus (widget pipe_wait). S'efface et s'éteint dès
+# que plus aucun n'attend. Lancé détaché par le hook (PreToolUse), 1 instance/session
+# (flock). Pas d'animation : un repos rouge = « va répondre », pas un clignotant.
+set -u
+ZS="${ZELLIJ_SESSION_NAME:-}"
+WAITING_DIR="$HOME/.cache/dev-claude-waiting"
+[ -n "$ZS" ] || exit 0
+[ -d "$WAITING_DIR" ] || exit 0
+
+LOCK_DIR="$HOME/.cache/dev-claude-pulse"; mkdir -p "$LOCK_DIR" 2>/dev/null
+safe=$(printf '%s' "$ZS" | tr -c 'A-Za-z0-9._-' '_')
+exec 9>"$LOCK_DIR/$safe.wait.lock" 2>/dev/null || exit 0
+flock -n 9 2>/dev/null || exit 0   # un wait-bar tourne déjà pour cette session
+
+# timeout : dans une session sans le widget pipe_wait, `zellij pipe` bloque → on borne.
+push() { timeout 2 zellij pipe "zjstatus::pipe::pipe_wait::$1" >/dev/null 2>&1; }
+
+while :; do
+  n=0
+  for f in "$WAITING_DIR"/*; do
+    [ -f "$f" ] || continue
+    IFS=$'\t' read -r _pid zs < "$f" 2>/dev/null || continue
+    [ "${zs:-}" = "$ZS" ] && n=$((n+1))
+  done
+  if [ "$n" -eq 0 ]; then push " "; break; fi   # plus d'attente → efface + s'éteint
+  push "#[fg=#ff5d5d,bold] ⚠ action t'attend · Alt+W "
+  sleep 2
+done
+exit 0
