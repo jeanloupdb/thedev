@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# @thedev naming anime (pulse ◆↔◇) le titre des panes Claude en cours de réponse
+# pane-pulse — pulser UNIQUE par session zellij : tant qu'au moins un Claude de
+# CETTE session est « busy » (marqueur dev-claude-busy posé par le hook
+# dev-claude-track au début d'un tour), fait respirer le losange du titre
+# (◆ plein ↔ ◇ creux) toutes les ~0,7 s. S'auto-éteint dès qu'aucun Claude
+# n'est busy. Lancé détaché par le hook ; instance unique garantie par flock.
+#
+# Marqueur busy : fichier ~/.cache/dev-claude-busy/<sid> dont le CONTENU est
+#   <pane_id>\t<zellij_session>     (vide pour un claude non géré → pas animé)
+# Le nom PROPRE (nu) est relu à CHAQUE tick dans le registre (dev-claude-reg) :
+# un renommage en plein tour (pane-name) est donc suivi. On ne stocke jamais
+# ◆/◇ dans le registre. Le hook Stop remet le titre nu en fin de tour ; ce
+# pulser reset aussi tout pane qui sort du busy (anti-losange-figé).
+
+set -u
+BUSY_DIR="$HOME/.cache/dev-claude-busy"
+ZS="${ZELLIJ_SESSION_NAME:-}"
+[ -n "$ZS" ] || exit 0
+[ -d "$BUSY_DIR" ] || exit 0
+
+# Instance unique par session zellij (flock tenu le temps de la boucle).
+LOCK_DIR="$HOME/.cache/dev-claude-pulse"
+mkdir -p "$LOCK_DIR" 2>/dev/null
+safe=$(printf '%s' "$ZS" | tr -c 'A-Za-z0-9._-' '_')
+exec 9>"$LOCK_DIR/$safe.lock" 2>/dev/null || exit 0
+flock -n 9 2>/dev/null || exit 0   # un pulser tourne déjà pour cette session
+
+INTERVAL=1.0
+
+rename() {  # $1=pane_id $2=titre ; exit≠0 si le pane a disparu
+  zellij --session "$ZS" action rename-pane -p "$1" "$2" 2>/dev/null
+}
+nu_name() {  # $1=sid → nom nu (sans ◆/◇) depuis le registre ; vide si absent
+  local n; n=$(dev-claude-reg get "$1" 2>/dev/null | cut -f4)
+  n=${n#◆ }; n=${n#◇ }; printf '%s' "$n"
+}
+
+parity=0
+prev=""   # lignes "sid<TAB>pid" animées au tick précédent
+while :; do
+  # 1) panes busy de MA session (sid<TAB>pid)
+  cur=""
+  for f in "$BUSY_DIR"/*; do
+    [ -f "$f" ] || continue
+    IFS=$'\t' read -r pid zs < "$f" 2>/dev/null || continue
+    [ -n "${pid:-}" ] && [ "${zs:-}" = "$ZS" ] || continue
+    cur="$cur$(basename "$f")	$pid
+"
+  done
+
+  # 2) reset (titre nu) des panes qui ne sont PLUS busy → pas de losange figé
+  if [ -n "$prev" ]; then
+    while IFS=$'\t' read -r psid ppid; do
+      [ -n "$psid" ] || continue
+      case "$cur" in
+        *"$psid	$ppid"*) ;;                       # encore busy
+        *) nm=$(nu_name "$psid"); [ -n "$nm" ] && rename "$ppid" "$nm" ;;
+      esac
+    done <<EOF
+$prev
+EOF
+  fi
+
+  # 3) plus rien à animer → extinction
+  [ -n "$cur" ] || break
+
+  # 4) pulse les panes busy (alternance ◆/◇)
+  glyph="◆"; [ "$parity" = 1 ] && glyph="◇"
+  while IFS=$'\t' read -r sid pid; do
+    [ -n "$sid" ] || continue
+    nm=$(nu_name "$sid"); [ -n "$nm" ] || nm="claude"
+    rename "$pid" "$glyph $nm" || rm -f "$BUSY_DIR/$sid" 2>/dev/null  # pane mort → purge
+  done <<EOF
+$cur
+EOF
+
+  prev="$cur"
+  parity=$(( 1 - parity ))
+  sleep "$INTERVAL"
+done
+exit 0
