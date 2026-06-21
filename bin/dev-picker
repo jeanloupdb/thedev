@@ -491,6 +491,8 @@ class Picker:
         self.cur_dir = cur_dir
         self.ws = load_workspaces()   # espaces de dev (un par dossier, dédup realpath)
         self.live = live_sessions()   # sessions zellij vivantes (basename du cwd)
+        self.busy_cwds = set()        # cwd (realpath) des espaces avec un Claude en plein tour
+        self._busy_ts = 0             # throttle de _refresh_busy
         self.vps = vps_label()        # non-vide si on tourne sur un serveur distant
         self.mode = "sessions"        # 'sessions' | 'browser'
         self.new_open = False         # bouton « nouvelle session » déplié ? (cibles ici/ailleurs)
@@ -622,6 +624,40 @@ class Picker:
         with self.rc_lock:
             self.propals = res
         self._propals_loading = False
+
+    def _blink_on(self):
+        # clignotement ~2 Hz, dérivé de l'horloge → indépendant du rythme de redraw.
+        return int(time.time() * 2) % 2 == 0
+
+    def _refresh_busy(self):
+        """Cwd (realpath) des espaces avec un Claude LOCAL en plein tour : marqueur
+        busy frais (< 30 min), croisé au registre sid→cwd. Throttle ~1 s (lectures
+        de petits fichiers locaux, quasi gratuit)."""
+        now = time.time()
+        if now - self._busy_ts < 1.0:
+            return
+        self._busy_ts = now
+        bdir = os.path.expanduser("~/.cache/dev-claude-busy")
+        sids = set()
+        try:
+            for f in os.listdir(bdir):
+                try:
+                    if now - os.path.getmtime(os.path.join(bdir, f)) < 1800:
+                        sids.add(f)
+                except OSError:
+                    pass
+        except OSError:
+            pass
+        cwds = set()
+        if sids:
+            for line in _read_file("~/.cache/dev-claudes").splitlines():
+                p = line.split("\t")
+                if len(p) >= 2 and p[0] in sids:
+                    try:
+                        cwds.add(os.path.realpath(p[1]))
+                    except OSError:
+                        cwds.add(p[1])
+        self.busy_cwds = cwds
 
     def _local_worker(self):
         # self.live (sessions zellij vivantes → marqueurs « ● en cours ») est figé
@@ -893,6 +929,7 @@ class Picker:
                                 rc_rows.append({"kind": "rcsess", "host": h, "name": s["name"],
                                                 "cwd": s["cwd"], "nclaude": len(s["panes"]),
                                                 "remote": s.get("remote"),
+                                                "busy": s.get("busy", False),
                                                 "claude_dead": s.get("claude_dead", False)})
                         # aucune session → rien pour cet hôte
                 if rc_rows:
@@ -1040,9 +1077,12 @@ class Picker:
             # n'affiche PAS « (0) » (le ○ le dit déjà). Pas de mot « détaché » : toute
             # session distante l'est de toute façon.
             if r.get("claude_dead"):
-                segs = [(p, 0), ("○ ", self.YEL | curses.A_BOLD), ("%s." % r["host"], 0)]
+                dot = ("○ ", self.YEL | curses.A_BOLD)
+            elif r.get("busy"):                       # Claude en plein tour → point qui clignote
+                dot = ("● ", self.YEL | curses.A_BOLD) if self._blink_on() else ("  ", 0)
             else:
-                segs = [(p, 0), ("● ", self.GREEN | curses.A_BOLD), ("%s." % r["host"], 0)]
+                dot = ("● ", self.GREEN | curses.A_BOLD)
+            segs = [(p, 0), dot, ("%s." % r["host"], 0)]
             if r.get("remote"):
                 segs += [("remote", curses.A_DIM), (".", 0)]
             segs += [(r["name"], 0)]
@@ -1092,9 +1132,13 @@ class Picker:
         #     06 Jun  gus_project  (fermé : nom coloré par projet)
         w = r["w"]
         live = r.get("live")
-        segs = [(p, 0),
-                (("● ", self.GREEN) if live else ("  ", 0)),
-                (fmt_date(w["mtime"]) + "  ", curses.A_DIM)]
+        if live and w.get("cwd") in self.busy_cwds:   # actif + Claude en plein tour → clignote
+            dot = ("● ", self.YEL | curses.A_BOLD) if self._blink_on() else ("  ", 0)
+        elif live:
+            dot = ("● ", self.GREEN)
+        else:
+            dot = ("  ", 0)
+        segs = [(p, 0), dot, (fmt_date(w["mtime"]) + "  ", curses.A_DIM)]
         if self.vps:                  # sur un VPS : ces sessions sont « remote » (préfixe gris)
             segs.append(("remote.", curses.A_DIM))
         segs.append((w["name"], (self.CYAN | curses.A_BOLD) if live else self.pcolor(w["name"])))
@@ -1745,7 +1789,8 @@ class Picker:
                 self.msg = "⚠ erreur d'affichage — voir ~/.cache/dev-picker-crash.log"
             # getch non bloquant tant qu'il y a qqch à rafraîchir (liste RC live,
             # check git en fond, ou écran infos en cours de chargement) ; sinon bloque.
-            poll = bool(self.rc_hosts) or self.git_checking or self.local_refreshing or (self.metrics is not None) or (self.mode == "infos" and self.infos_data is None) or (self.autos is None) or (self.mode == "propals" and self._propals_loading)
+            self._refresh_busy()                      # busy local (throttle interne) → clignotement
+            poll = bool(self.rc_hosts) or self.git_checking or self.local_refreshing or (self.metrics is not None) or (self.mode == "infos" and self.infos_data is None) or (self.autos is None) or (self.mode == "propals" and self._propals_loading) or bool(self.busy_cwds)
             self.scr.timeout(400 if poll else -1)
             try:
                 ch = self.scr.getch()
