@@ -118,19 +118,19 @@ case "$ev" in
     pane_busy_title 0
     ;;
   PreToolUse)
-    # Claude va poser un QCM bloquant (AskUserQuestion) ou faire approuver un plan
-    # (ExitPlanMode) → il TE bloque, état « t'attend » (≠ « calcule »). Le matcher du
-    # hook restreint déjà à ces outils ; on revérifie tool_name par sécurité.
+    # Claude va poser un QCM bloquant (AskUserQuestion) → il TE bloque, état « t'attend »
+    # (≠ « calcule »). Le matcher du hook restreint déjà à cet outil ; on revérifie
+    # tool_name par sécurité.
     case "$(printf '%s' "$payload" | jq -r '.tool_name // empty' 2>/dev/null)" in
-      AskUserQuestion|ExitPlanMode)
+      AskUserQuestion)
         "$ENGINE" event waiting --session "$sid" --cwd "$cwd" 2>/dev/null
         pane_busy_title 0 ;;
     esac
     ;;
   PostToolUse)
-    # Tu as répondu au QCM / approuvé le plan → Claude reprend : retour en « calcule ».
+    # Tu as répondu au QCM → Claude reprend : retour en « calcule ».
     case "$(printf '%s' "$payload" | jq -r '.tool_name // empty' 2>/dev/null)" in
-      AskUserQuestion|ExitPlanMode) _mark_busy ;;
+      AskUserQuestion) _mark_busy ;;
     esac
     ;;
 esac
