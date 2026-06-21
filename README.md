@@ -21,18 +21,6 @@ Une armée trop libre ne sait plus où elle va, et ses soldats désertent jusqu'
 
 **C'est ce chef que thedev te donne l'occasion de devenir.** Qu'ils soient 3 ou 300, tu connais chacun de tes soldats et tu sais où te placer dans la chaîne de commandement. Armée à coût fixe et réplicable plutôt que mercenaires payés au coup, la tienne tient sur ton **abonnement**, pas à l'API.
 
-> [!TIP]
-> **En clair** — fais bosser Claude sur tous tes projets et toutes tes machines : tu gardes la main, tu vois tout en direct, et rien n'est exposé.
-
-## Concrètement, tu fais quoi avec ?
-
-- **Un projet de zéro à fini** — tu ouvres un dossier, tu donnes l'objectif : Claude télécharge, code, lance les `docker`, te montre les logs en direct, et te rend le livrable (un PDF, un site qui tourne, un QR à scanner). Toi tu vérifies et tu valides.
-- **Tes serveurs, depuis ton poste** — tu bosses ton app en local pendant qu'un Claude sur ton VPS améliore le backend ; une *mission* transmet le contexte de l'un à l'autre, et le résultat revient.
-- **Plein d'agents, sous contrôle** — lance autant de Claude que tu veux : tu vois d'un coup d'œil lequel **calcule**, lequel **t'attend**, lequel **a fini** — et tu sautes à celui qui te bloque d'une touche.
-
-> [!IMPORTANT]
-> La puissance d'un agent autonome, **chez toi** : **0 crédit API · 0 port ouvert · 0 clé**. Ça tourne sur **ton** abonnement Claude, sur **tes** machines — et c'est lisible/auditable (bash + fichiers, pas de boîte noire).
-
 ## ⚡ Installer (avec l'IA, en 1 minute)
 
 Installe le [CLI Claude](https://docs.claude.com/claude-code), clone le repo, lance `claude` dedans, et colle :
