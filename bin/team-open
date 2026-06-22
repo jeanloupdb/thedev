@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
-# @thedev session ouvre un espace (local ou distant) DÉTACHÉ avec un Claude déjà briefé (prompt injecté)
-# space-open — ouvre un espace thedev en fire-and-forget : crée la session zellij (layout dev)
-# DÉTACHÉE (sans s'y attacher) et y démarre le Claude principal avec un prompt d'init.
-# Brique cœur de `new-project` / du hub concierge.
+# @thedev session ouvre un equipe (local ou distant) DÉTACHÉ avec un soldat déjà briefé (prompt injecté)
+# team-open — ouvre un equipe thedev en fire-and-forget : crée la session zellij (layout dev)
+# DÉTACHÉE (sans s'y attacher) et y démarre le soldat principal avec un prompt d'init.
+# Brique cœur de `lever-equipe` / du hub concierge.
 #
-#   space-open <machine|local> <projet> [--init "<txt>" | --init-file <f>] [--dir <path>]
+#   team-open <machine|local> <projet> [--init "<txt>" | --init-file <f>] [--dir <path>]
 #
 #   <machine>  'local' ou un alias ssh (ex. jlax)
-#   <projet>   nom de l'espace (= nom de session zellij = basename du cwd)
-#   --init     prompt injecté au Claude (sinon lu depuis --init-file, ou stdin si piped)
-#   --dir      cwd de l'espace (défaut : ~/projects/<projet>)
+#   <projet>   nom de l'equipe (= nom de session zellij = basename du cwd)
+#   --init     prompt injecté au soldat (sinon lu depuis --init-file, ou stdin si piped)
+#   --dir      cwd de l'equipe (défaut : ~/projects/<projet>)
 #
 # Détaché : rend la main tout de suite. Rejoindre via `srv <projet>` (distant) ou `dev <projet>` (local).
 # La session démarre via la primitive `zellij -l <layout> attach <sess> -b` (background, sans client).
 set -euo pipefail
 
-die() { echo "space-open: $*" >&2; exit 1; }
+die() { echo "team-open: $*" >&2; exit 1; }
 
-[ $# -ge 2 ] || die "usage: space-open <machine|local> <projet> [--init \"<txt>\" | --init-file <f>] [--dir <path>]"
+[ $# -ge 2 ] || die "usage: team-open <machine|local> <projet> [--init \"<txt>\" | --init-file <f>] [--dir <path>]"
 machine="$1"; proj="$2"; shift 2
 init=""; init_file=""; dir=""
 while [ $# -gt 0 ]; do
@@ -46,7 +46,7 @@ layout="$HOME/.config/zellij/layouts/dev.kdl"
 if [ "$machine" = local ]; then
   cwd="${dir:-$HOME/projects/$proj}"
   if zellij list-sessions --no-formatting 2>/dev/null | grep -v EXITED | awk '{print $1}' | grep -qxF "$proj"; then
-    die "un espace '$proj' est déjà ouvert (local) — rejoins-le : dev $proj"
+    die "un equipe '$proj' est déjà ouvert (local) — rejoins-le : dev $proj"
   fi
   mkdir -p "$cwd"
   f=""
@@ -56,7 +56,7 @@ if [ "$machine" = local ]; then
     printf '%s\n' "$init" > "$f"
   fi
   ( cd "$cwd" && CLAUDE_PANE_INIT_FILE="$f" zellij -l "$layout" attach "$proj" -b )
-  echo "✓ espace '$proj' ouvert (local, détaché) — rejoins-le : dev $proj"
+  echo "✓ equipe '$proj' ouvert (local, détaché) — rejoins-le : dev $proj"
   exit 0
 fi
 
@@ -70,7 +70,7 @@ rdir="${dir:-\$HOME/projects/$proj}"   # \$HOME résolu côté distant si --dir 
 remote_script=$(cat <<EOF
 set -e
 if zellij list-sessions --no-formatting 2>/dev/null | grep -v EXITED | awk '{print \$1}' | grep -qxF '$proj'; then
-  echo "space-open: un espace '$proj' est déjà ouvert sur $machine" >&2
+  echo "team-open: un equipe '$proj' est déjà ouvert sur $machine" >&2
   exit 3
 fi
 mkdir -p "$rdir" "\$HOME/.cache/thedev"
@@ -87,4 +87,4 @@ EOF
 b64cmd=$(printf '%s' "$remote_script" | base64 -w0 2>/dev/null || printf '%s' "$remote_script" | base64 | tr -d '\n')
 ssh -o ConnectTimeout=8 "$machine" "bash -lic 'printf %s $b64cmd | base64 -d | bash -s'" \
   || die "échec ouverture distante sur '$machine' (code $?)"
-echo "✓ espace '$proj' ouvert (détaché) sur '$machine' — rejoins-le : srv $proj"
+echo "✓ equipe '$proj' ouvert (détaché) sur '$machine' — rejoins-le : srv $proj"

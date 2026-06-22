@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# @thedev naming saute au pane Claude qui « t'attend » (QCM bloquant) — bind Alt+W
+# @thedev naming saute au pane soldat qui « t'attend » (QCM bloquant) — bind Alt+W
 # CYCLE : chaque appui passe au pane en attente SUIVANT (utile si plusieurs te
 # bloquent). Marqueur waiting = <pane_id>\t<session>, posé par le hook sur un
 # AskUserQuestion. Lancé via `Run` (pane flottant éphémère qui se referme).
 set -u
 ZS="${ZELLIJ_SESSION_NAME:-}"
-WAITING_DIR="$HOME/.cache/dev-claude-waiting"
+WAITING_DIR="$HOME/.cache/soldat-waiting"
 [ -n "$ZS" ] && [ -d "$WAITING_DIR" ] || exit 0
 
 # pane_id en attente de CETTE session, ordre stable (numérique)
@@ -19,7 +19,7 @@ pids=$(
 [ -n "$pids" ] || exit 0
 
 # état : dernier pane focusé pour cette session → on prend le SUIVANT (cycle)
-STATE_DIR="$HOME/.cache/dev-claude-goto"; mkdir -p "$STATE_DIR" 2>/dev/null
+STATE_DIR="$HOME/.cache/soldat-goto"; mkdir -p "$STATE_DIR" 2>/dev/null
 safe=$(printf '%s' "$ZS" | tr -c 'A-Za-z0-9._-' '_')
 last=$(cat "$STATE_DIR/$safe" 2>/dev/null)
 

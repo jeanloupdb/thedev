@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# @thedev infra proposeur de tâches par signaux (parc git + todos + autos) — zéro IA, zéro coût
+# @thedev infra proposeur de tâches par signaux (parc git + todos + la garde) — zéro IA, zéro coût
 # thedev-propose — scanne des SIGNAUX déjà présents sur le disque et (ré)écrit
-#   ~/.cache/thedev/proposals.json, lu par l'accueil (écran « propositions »).
+#   ~/.cache/thedev/proposals.json, lu par l'etat-major (écran « propositions »).
 # AUCUNE IA, AUCUN appel facturé : juste git, grep, systemctl. Idempotent, écriture atomique.
 # Signaux v1 (local) :
 #   • todos non cochés (« - [ ] ») dans todo.md / PROJECTS.md du parc — ce que TU as écrit
 #   • commits locaux non poussés dans les repos git du parc (avec upstream)
-#   • automatisations thedev en échec (systemctl --user)
+#   • la garde thedev en échec (systemctl --user)
 # Usage :
 #   thedev-propose            scanne + écrit le cache (+ résumé sur stderr)
 #   thedev-propose --stdout   écrit le JSON sur stdout, ne touche pas au cache
@@ -64,7 +64,7 @@ while IFS= read -r gd; do
     && add "pousser $n commit(s)" "$name" "$n commit(s) locaux non poussés" "moyenne" "push:$repo"
 done < <(find "$DEV_ROOT" -maxdepth 3 -type d -name .git -not -path '*/node_modules/*' 2>/dev/null | head -40)
 
-# (C) automatisations thedev en échec (à réparer en priorité)
+# (C) la garde thedev en échec (à réparer en priorité)
 if command -v systemctl >/dev/null 2>&1; then
   while IFS= read -r unit; do
     [ -n "$unit" ] || continue

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # @thedev session menu de fermeture propre de la session
-# dev-quit-menu — modal déclenché par Ctrl+Q dans zellij. Lancé en pane FLOTTANT
+# debrief-menu — modal déclenché par Ctrl+Q dans zellij. Lancé en pane FLOTTANT
 # close_on_exit. d = détacher (session vivante), f = fermer (tuer), autre = annuler.
 
 # Résolution FIABLE du nom de session : dans un pane lancé par un keybind, la var
@@ -22,8 +22,8 @@ printf '     %s─────────────────────�
 printf '      %s  d  %s   %sDÉTACHER%s   %sla session reste vivante%s\n\n' "$GCHIP" "$R" "$G" "$R" "$D" "$R"
 printf '      %s  f  %s   %sFERMER%s     %sla session est tuée%s\n' "$RCHIP" "$R" "$RED" "$R" "$D" "$R"
 # Conséquences concrètes de « fermer », en compact, juste sous FERMER (rouge = tué,
-# ○ violet = automatisation qui passe inactive). Affiché seulement si qqch tourne.
-impact=$(dev-quit-impact "$sess" 2>/dev/null)
+# ○ violet = une garde qui passe inactive). Affiché seulement si qqch tourne.
+impact=$(debrief-impact "$sess" 2>/dev/null)
 [ -n "$impact" ] && printf '%s\n' "$impact"
 printf '\n     %s───────────────────────────────%s\n' "$D" "$R"
 printf '      %séchap / autre touche  ·  annuler%s\n\n' "$D" "$R"

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# @thedev session barre + pour ajouter un Claude aside a la stack
+# @thedev session barre + pour ajouter un soldat aside a la stack
 # aside-button — barre "＋" fixe en bas de la colonne droite (toujours sous tous
-# les claudes). Tu y vas avec Alt+↓ ; Entrée ouvre un nouveau Claude qui rejoint
+# les soldats). Tu y vas avec Alt+↓ ; Entrée ouvre un nouveau soldat qui rejoint
 # la stack au-dessus.
 #
 # Deux états VISUELS, pour qu'on voie quand la ligne est sélectionnée :
-#   - au REPOS (pane non focus) : « ＋ Nouveau Claude » + métriques limitantes à droite ;
+#   - au REPOS (pane non focus) : « ＋ Nouveau soldat » + métriques limitantes à droite ;
 #   - SÉLECTIONNÉ (pane focus) : métriques MASQUÉES + action mise en évidence (inversé).
 # Détection du focus via les événements terminaux focus-in/out (CSI I / CSI O,
 # demandés par \033[?1004h, transmis par zellij). Si non transmis → reste au repos.
@@ -18,11 +18,11 @@ focused=0
 render() {
   if [ "$focused" = 1 ]; then
     # sélectionné : pas de métriques (bruit), action claire et surlignée
-    printf '\r\033[K %s%s  ＋  Nouveau Claude  —  Entrée pour ouvrir  %s' "$rev" "$g" "$r"
+    printf '\r\033[K %s%s  ＋  Nouveau soldat  —  Entrée pour ouvrir  %s' "$rev" "$g" "$r"
   else
     # au repos : action discrète + métriques limitantes à droite (source thedev-metrics)
     local metrics; metrics="$(thedev-metrics 2>/dev/null)"
-    printf '\r\033[K %s＋ Nouveau Claude%s  %s[Entrée]%s   %s' "$g" "$r" "$d" "$r" "$metrics"
+    printf '\r\033[K %s＋ Nouveau soldat%s  %s[Entrée]%s   %s' "$g" "$r" "$d" "$r" "$metrics"
   fi
 }
 
@@ -36,9 +36,9 @@ while :; do
         IFS= read -t 0.08 -rsN2 seq 2>/dev/null
         case "$seq" in '[I') focused=1 ;; '[O') focused=0 ;; esac
         ;;
-      $'\r'|$'\n')                              # Entrée → ouvrir un nouveau Claude
+      $'\r'|$'\n')                              # Entrée → ouvrir un nouveau soldat
         zellij action move-focus up 2>/dev/null
-        claude-aside
+        renfort
         ;;
       q|Q) : ;;
     esac

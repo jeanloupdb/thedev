@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# @thedev picker selecteur de machine/projet au lancement (fzf, multi-serveurs)
-"""dev-picker — sélecteur de session/dossier à deux panneaux (TUI maison).
+# @thedev etat-major selecteur de machine/projet au lancement (fzf, multi-serveurs)
+"""etat-major — sélecteur de session/dossier à deux panneaux (TUI maison).
 
 Panneau gauche = liste (sessions ou dossiers), panneau droit = actions.
 ←/→ changent de panneau, ↑/↓ naviguent, Entrée valide, tape pour filtrer,
@@ -24,8 +24,8 @@ import threading
 import time
 
 # Adaptateur moteur (engine list …) résolu en VOISIN de ce script (relocatable) :
-# dev-picker n'a plus à connaître l'emplacement ni le schéma des transcripts du
-# moteur — il demande la liste des espaces à `engine`.
+# etat-major n'a plus à connaître l'emplacement ni le schéma des transcripts du
+# moteur — il demande la liste des équipes à `engine`.
 ENGINE = os.path.join(os.path.dirname(os.path.realpath(__file__)), "engine")
 
 
@@ -56,25 +56,25 @@ def live_sessions():
 
 
 def fetch_remote_claudes(host):
-    """SSH : lit ~/.cache/dev-claudes d'un serveur → sessions de dev ouvertes et
+    """SSH : lit ~/.cache/soldats d'un serveur → sessions de dev ouvertes et
     leurs panes Claude. Comme les sessions serveur sont auto-remote-control, ce
     sont les « remote controls dispo ». Renvoie {"sessions":[{name,cwd,panes,
     busy}]} ou {"error":"…"}. (TSV id⇥cwd⇥role⇥nom_pane⇥session⇥started⇥ended ;
     ended==0 → Claude encore ouvert.) Un pane est « busy » (en train de répondre)
-    si son sid a un marqueur frais dans ~/.cache/dev-claude-busy (posé par le
+    si son sid a un marqueur frais dans ~/.cache/soldat-busy (posé par le
     hook sur UserPromptSubmit, retiré sur Stop). ControlMaster → re-fetch rapides
     pour le rafraîchissement live."""
     sep, sep2, sep3, sep4 = "@@@BUSY@@@", "@@@RC@@@", "@@@LIVE@@@", "@@@SESS@@@"
     # 5 sections : registre · marqueurs busy · cwd des process en remote-control
-    # (pour le flag « remote ») · cwd de TOUS les process claude VIVANTS · espaces
-    # dont le WATCHER thedev-link est VIVANT (« esp\tcwd » par ligne). Le 4e bloc
+    # (pour le flag « remote ») · cwd de TOUS les process claude VIVANTS · équipes
+    # dont le WATCHER thedev-link est VIVANT (« eq\tcwd » par ligne). Le 4e bloc
     # compte les Claude ; le 5e dit si le THEDEV est encore actif/joignable même
-    # sans Claude interactif debout — c'est EXACTEMENT le signal des automatisations
-    # (cf. thedev-autos : open ⟺ watcher_pid vivant), donc badge auto et liste sont
-    # cohérents au pixel. On garde alors l'espace visible (réattachable + ancre des
-    # autos) ; un espace vraiment fermé (watcher mort) disparaît → fini les fantômes.
-    remote = ("cat ~/.cache/dev-claudes 2>/dev/null; echo %s; "
-              "find ~/.cache/dev-claude-busy -type f -mmin -30 -printf '%%f\\n' 2>/dev/null; "
+    # sans Claude interactif debout — c'est EXACTEMENT le signal des gardes
+    # (cf. garde-list : open ⟺ watcher_pid vivant), donc badge auto et liste sont
+    # cohérents au pixel. On garde alors l'équipe visible (réattachable + ancre des
+    # autos) ; une équipe vraiment fermée (watcher mort) disparaît → fini les fantômes.
+    remote = ("cat ~/.cache/soldats 2>/dev/null; echo %s; "
+              "find ~/.cache/soldat-busy -type f -mmin -30 -printf '%%f\\n' 2>/dev/null; "
               "echo %s; "
               "for p in $(pgrep -f remote-control 2>/dev/null); do readlink /proc/$p/cwd 2>/dev/null; done; "
               "echo %s; "
@@ -120,9 +120,9 @@ def fetch_remote_claudes(host):
         c = x.strip().rstrip("/")
         if c:
             live_count[c] = live_count.get(c, 0) + 1
-    # espaces dont le WATCHER thedev-link est VIVANT (= thedev actif/joignable, prêt à
-    # spawner un Claude pour une mission/auto). {cwd_normalisé: nom_espace}. Même signal
-    # que thedev-autos → cohérence parfaite badge auto ↔ liste.
+    # équipes dont le WATCHER thedev-link est VIVANT (= thedev actif/joignable, prêt à
+    # spawner un Claude pour une mission/auto). {cwd_normalisé: nom_equipe}. Même signal
+    # que garde-list → cohérence parfaite badge auto ↔ liste.
     alive_watchers = {}
     for x in sess_raw.splitlines():
         x = x.rstrip("\n")
@@ -131,9 +131,9 @@ def fetch_remote_claudes(host):
         parts = x.split("\t")
         if len(parts) < 2:
             continue
-        esp, wcwd = parts[0].strip(), parts[1].strip().rstrip("/")
+        eq, wcwd = parts[0].strip(), parts[1].strip().rstrip("/")
         if wcwd:
-            alive_watchers[wcwd] = esp
+            alive_watchers[wcwd] = eq
     groups, order = {}, []
     for line in reg.splitlines():
         p = line.split("\t")
@@ -154,7 +154,7 @@ def fetch_remote_claudes(host):
         n = live_count.get(c.rstrip("/"), 0)
         watcher_alive = c.rstrip("/") in alive_watchers   # thedev actif (watcher vivant)
         if n <= 0 and not watcher_alive:
-            continue   # ni Claude vivant ni watcher → espace fermé/fantôme, écarté
+            continue   # ni Claude vivant ni watcher → équipe fermée/fantôme, écartée
         if n > 0:
             # garde les n entrées les plus RÉCENTES : les fantômes (ended==0 jamais
             # nettoyés) sont forcément plus vieux que les panes réellement vivants.
@@ -163,7 +163,7 @@ def fetch_remote_claudes(host):
             g["panes"].sort(key=lambda x: x["role"] != "main")   # main d'abord (affichage)
             g["claude_dead"] = False
         else:
-            # watcher vivant mais AUCUN Claude interactif : espace joignable (missions/
+            # watcher vivant mais AUCUN Claude interactif : équipe joignable (missions/
             # autos), réattachable via srv. Le watcher rouvrira un Claude à la demande.
             g["panes"] = []
             g["claude_dead"] = True
@@ -172,31 +172,31 @@ def fetch_remote_claudes(host):
         # tourne dans ce cwd (détection live → couvre les sessions déjà ouvertes).
         g["remote"] = any(pn["rc"] for pn in g["panes"]) or c.rstrip("/") in rc_cwds
         sessions.append(g)
-    # Espaces avec un watcher vivant mais ABSENTS du registre (jamais eu de Claude, ou
-    # registre purgé) : ajoutés pour que tout thedev actif/joignable soit visible.
+    # Equipes avec un watcher vivant mais ABSENTES du registre (jamais eu de Claude, ou
+    # registre purgé) : ajoutées pour que tout thedev actif/joignable soit visible.
     seen = {s["cwd"].rstrip("/") for s in sessions}
-    for wcwd, esp in alive_watchers.items():
+    for wcwd, eq in alive_watchers.items():
         if wcwd in seen:
             continue
-        sessions.append({"name": esp or os.path.basename(wcwd) or wcwd, "cwd": wcwd,
+        sessions.append({"name": eq or os.path.basename(wcwd) or wcwd, "cwd": wcwd,
                          "panes": [], "busy": False,
                          "remote": wcwd in rc_cwds, "claude_dead": True})
     return {"sessions": sessions}
 
 
 def fetch_autos(host):
-    """thedev-autos sur <host> ('local' = cette machine) → liste {state,name,next,last,machine}.
-    Une automatisation = un timer systemd --user thedev (cf. bin/thedev-autos). TSV en entrée."""
+    """garde-list sur <host> ('local' = cette machine) → liste {state,name,next,last,machine}.
+    Une garde = un timer systemd --user thedev (cf. bin/garde-list). TSV en entrée."""
     try:
         if host == "local":
-            out = subprocess.run(["thedev-autos"], capture_output=True, text=True, timeout=8).stdout
+            out = subprocess.run(["garde-list"], capture_output=True, text=True, timeout=8).stdout
             label = "local"
         else:
             out = subprocess.run(
                 ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes",
                  "-o", "ControlMaster=auto", "-o", "ControlPath=~/.ssh/dev-cm-%C",
                  "-o", "ControlPersist=30s", host,
-                 'PATH="$HOME/.local/bin:$PATH" thedev-autos'],
+                 'PATH="$HOME/.local/bin:$PATH" garde-list'],
                 capture_output=True, text=True, timeout=12).stdout
             label = host
     except Exception:
@@ -206,7 +206,7 @@ def fetch_autos(host):
         p = line.split("\t")
         if len(p) >= 4 and p[1]:
             autos.append({"state": p[0], "name": p[1], "next": p[2], "last": p[3],
-                          "espace": p[4] if len(p) > 4 else "",
+                          "equipe": p[4] if len(p) > 4 else "",
                           "cwd": p[5] if len(p) > 5 else "",
                           "desc": p[6] if len(p) > 6 else "",
                           "open": (p[7] == "1") if len(p) > 7 else False,
@@ -216,7 +216,7 @@ def fetch_autos(host):
 
 # ----------------------------------------------------------------------------
 # Écran « infos » : contexte/version, état live, santé système, abonnement +
-# usage Claude. Toutes les données sont LOCALES (la machine où tourne le picker).
+# usage Claude. Toutes les données sont LOCALES (la machine où tourne l'etat-major).
 # ----------------------------------------------------------------------------
 def _read_file(path):
     try:
@@ -263,10 +263,10 @@ def gather_infos(vps, update_available, head):
         ncmd = str(len([x for x in out.splitlines() if x.strip()]))
     except Exception:
         pass
-    claudes = [p for p in (l.split("\t") for l in _read_file("~/.cache/dev-claudes").splitlines())
+    claudes = [p for p in (l.split("\t") for l in _read_file("~/.cache/soldats").splitlines())
                if len(p) >= 7 and p[0] and p[6].strip() == "0"]
-    nesp = len({p[1] for p in claudes})
-    ncrun = len([l for l in _read_file("~/.cache/claude-agents").splitlines() if l.strip()])
+    neq = len({p[1] for p in claudes})
+    nsoutien = len([l for l in _read_file("~/.cache/thedev-soutien").splitlines() if l.strip()])
     nsess = len(live_sessions())
     autos_local = fetch_autos("local")
     nact = sum(1 for a in autos_local if a.get("state") in ("active", "running"))
@@ -275,8 +275,8 @@ def gather_infos(vps, update_available, head):
         ("kv", "version", "%s   " % (head or "?")),
         ("kv", "à jour", maj),
         ("kv", "commandes", "%s" % ncmd),
-        ("kv", "espaces", "%d ouvert(s) · %d session(s) zellij" % (nesp, nsess)),
-        ("kv", "actifs", "%d Claude · %d crun · %d/%d auto" % (len(claudes), ncrun, nact, len(autos_local))),
+        ("kv", "équipes", "%d ouvert(s) · %d session(s) zellij" % (neq, nsess)),
+        ("kv", "actifs", "%d soldat · %d soutien · %d/%d auto" % (len(claudes), nsoutien, nact, len(autos_local))),
     ]))
 
     # ── Claude (plan + fenêtre Max 5x via endpoint OAuth) ──
@@ -385,8 +385,8 @@ def fmt_date(mtime):
 
 
 def fmt_age(mtime):
-    """Âge relatif compact (pour les espaces OUVERTS : « il y a » implicite). Format
-    court (≤ 6 car.) pour rester aligné avec les dates des espaces fermés."""
+    """Âge relatif compact (pour les équipes OUVERTES : « il y a » implicite). Format
+    court (≤ 6 car.) pour rester aligné avec les dates des équipes fermées."""
     import time
     d = max(0, int(time.time() - mtime))
     if d < 60:
@@ -436,7 +436,7 @@ def _iso_epoch(iso):
 
 def load_workspaces():
     """Historique des ESPACES de dev (un par dossier, dédup realpath) via
-    l'adaptateur moteur `engine list --all --json`. dev-picker n'a plus à
+    l'adaptateur moteur `engine list --all --json`. etat-major n'a plus à
     connaître l'emplacement ni le schéma des transcripts du moteur. On écarte les
     dossiers qui n'existent plus : un dossier renommé/supprimé laisse un transcript
     avec un cwd mort (RESUME → `cd` échoue) → on ne propose pas le lien mort."""
@@ -503,15 +503,15 @@ class Picker:
     def __init__(self, scr, cur_dir):
         self.scr = scr
         self.cur_dir = cur_dir
-        self.ws = load_workspaces()   # espaces de dev (un par dossier, dédup realpath)
+        self.ws = load_workspaces()   # équipes de dev (un par dossier, dédup realpath)
         self.live = live_sessions()   # sessions zellij vivantes (basename du cwd)
-        self.busy_cwds = set()        # cwd (realpath) des espaces avec un Claude en plein tour
+        self.busy_cwds = set()        # cwd (realpath) des équipes avec un Claude en plein tour
         self.waiting_cwds = set()     # … bloqué sur une question/permission (t'attend)
         self.stuck_cwds = set()       # … en plein tour depuis > 10 min (probablement coincé)
         self._busy_ts = 0             # throttle de _refresh_busy
         self.vps = vps_label()        # non-vide si on tourne sur un serveur distant
         self.mode = "sessions"        # 'sessions' | 'browser'
-        self.new_open = False         # bouton « nouvelle session » déplié ? (cibles ici/ailleurs)
+        self.new_open = False         # bouton « nouvelle équipe » déplié ? (cibles ici/ailleurs)
         self.focus = "right"          # 'left' | 'right' — démarre sur ACTIONS (quitter présélectionné)
         self.filt = ""
         self.bdir = cur_dir
@@ -531,13 +531,13 @@ class Picker:
         self.rc_data = {h: {"loading": True} for h in self.rc_hosts}
         self.rc_lock = threading.Lock()
         self.rc_loading = bool(self.rc_hosts)
-        self.rc_stop = threading.Event()   # arrête le polling à la fermeture du picker
+        self.rc_stop = threading.Event()   # arrête le polling à la fermeture de l'etat-major
         if self.rc_hosts:
             threading.Thread(target=self._rc_worker, daemon=True).start()
         # Automatisations (timers thedev) : gather en fond pour le bouton + l'écran dédié.
         self.autos = None
-        self.ai = 0                   # sélection dans l'écran automatisations
-        self._autos_flat = []         # automatisations sélectionnables (rempli par draw_autos)
+        self.ai = 0                   # sélection dans l'écran gardes
+        self._autos_flat = []         # gardes sélectionnables (rempli par draw_autos)
         self.confirm_del = None       # auto en attente de confirmation de suppression
         threading.Thread(target=self._autos_worker, daemon=True).start()
         # Propositions de tâches : le proposeur (thedev-propose) scanne des signaux du
@@ -554,7 +554,7 @@ class Picker:
         self.git_checking = True
         threading.Thread(target=self._git_check, daemon=True).start()
         # self.live est capturé une fois ci-dessus ; on le rafraîchit qq sec après
-        # l'ouverture pour corriger la race « je reviens à l'accueil juste après
+        # l'ouverture pour corriger la race « je reviens à l'etat-major juste après
         # avoir quitté une session » (zellij la liste encore un instant → ● faux).
         self.local_refreshing = True
         threading.Thread(target=self._local_worker, daemon=True).start()
@@ -596,7 +596,7 @@ class Picker:
         return self.PALETTE[sum(name.encode("utf-8")) % len(self.PALETTE)]
 
     def split_live(self):
-        """Sépare les espaces en (ouverts ●, récents). Un espace est ouvert si
+        """Sépare les équipes en (ouvertes ●, récentes). Une équipe est ouverte si
         une session zellij vivante porte son nom (basename). Si deux dossiers
         partagent un basename qui matche une session vivante (rare), un seul
         tourne réellement → on garde le plus récent en ●, l'autre retombe en
@@ -655,7 +655,7 @@ class Picker:
         return int(time.time()) % 2 == 0
 
     def _refresh_busy(self):
-        """Cwd (realpath) des espaces LOCAUX par état : busy (en plein tour) vs
+        """Cwd (realpath) des équipes LOCALES par état : busy (en plein tour) vs
         waiting (bloqué sur une question/permission, il t'attend). Marqueurs frais
         (< 30 min) croisés au registre sid→cwd. Throttle ~1 s (lectures locales)."""
         now = time.time()
@@ -677,7 +677,7 @@ class Picker:
             return out
 
         busy, stuck = set(), set()
-        bdir = os.path.expanduser("~/.cache/dev-claude-busy")
+        bdir = os.path.expanduser("~/.cache/soldat-busy")
         try:
             for f in os.listdir(bdir):
                 try:
@@ -690,10 +690,10 @@ class Picker:
                         stuck.add(f)
         except OSError:
             pass
-        wait = fresh_sids("~/.cache/dev-claude-waiting")
+        wait = fresh_sids("~/.cache/soldat-waiting")
         bc, wc, sc = set(), set(), set()
         if busy or wait:
-            for line in _read_file("~/.cache/dev-claudes").splitlines():
+            for line in _read_file("~/.cache/soldats").splitlines():
                 p = line.split("\t")
                 if len(p) < 2:
                     continue
@@ -711,9 +711,9 @@ class Picker:
 
     def _local_worker(self):
         # self.live (sessions zellij vivantes → marqueurs « ● en cours ») est figé
-        # à l'ouverture. En revenant à l'accueil juste après avoir quitté une
+        # à l'ouverture. En revenant à l'etat-major juste après avoir quitté une
         # session, zellij peut encore la lister une fraction de seconde → marqueur
-        # faux. On rafraîchit ~8 s pour que l'accueil se corrige tout seul.
+        # faux. On rafraîchit ~8 s pour que l'etat-major se corrige tout seul.
         for _ in range(8):
             if self.rc_stop.wait(1):
                 break
@@ -789,7 +789,7 @@ class Picker:
         lent ou injoignable ne retarde plus l'apparition ni le refresh des autres
         (avant, le fetch séquentiel faisait attendre indice derrière un jlax down
         ~6 s). Chaque hôte met à jour sa propre entrée dès que son fetch revient,
-        puis reboucle ~4 s. S'arrête quand le picker se ferme (rc_stop)."""
+        puis reboucle ~4 s. S'arrête quand l'etat-major se ferme (rc_stop)."""
         def host_loop(h):
             while not self.rc_stop.is_set():
                 d = fetch_remote_claudes(h)
@@ -817,7 +817,7 @@ class Picker:
         threading.Thread(target=do, daemon=True).start()
 
     def _autos_worker(self):
-        """Gather les automatisations (timers thedev) : local + chaque VPS. Une passe (les
+        """Gather les gardes (timers thedev) : local + chaque VPS. Une passe (les
         timers ne changent pas en continu ; ré-appelé à l'ouverture de l'écran pour fraîcheur)."""
         hosts = ["local"] if self.vps else ["local"] + list(self.rc_hosts)
         res = []
@@ -853,7 +853,7 @@ class Picker:
 
     def _reactivate_auto(self, a):
         """État arrêté → actif : (re)démarre le timer. Il reprend son planning ; il lui
-        faudra un espace ouvert (accès Claude) pour s'exécuter vraiment — l'autre axe."""
+        faudra une équipe ouverte (accès Claude) pour s'exécuter vraiment — l'autre axe."""
         u = "%s.timer" % a["name"]
         self._auto_systemctl(a, "systemctl --user start " + u,
                              "réactivation de %s…" % a["name"], "%s réactivée" % a["name"])
@@ -868,7 +868,7 @@ class Picker:
                              "arrêt de %s…" % a["name"], "%s arrêtée" % a["name"])
 
     def _delete_auto(self, a):
-        """Supprime l'automatisation À TOUT JAMAIS : désactive+stoppe le timer, retire les
+        """Supprime la garde À TOUT JAMAIS : désactive+stoppe le timer, retire les
         units systemd (timer+service) et recharge le daemon. Le prompt feeds/<nom>.prompt
         reste dans le repo (versionné) — on ne touche pas au dépôt git d'ici."""
         n = a["name"]
@@ -892,23 +892,23 @@ class Picker:
                         scored.append((s, w))
                 scored.sort(key=lambda x: -x[0])
                 return [w for _, w in scored]
-            # Un espace = un dossier. Ouverts ● = session zellij vivante (rejoint
+            # Une équipe = un dossier. Ouverts ● = session zellij vivante (rejoint
             # par attach) ; récents = fermés (même de force), relancés + repris.
             live, rest = self.split_live()
             live, rest = rank(live), rank(rest)
             lim = 10 ** 9 if (self.show_all or f) else self.CAP
             if live:
-                rows.append({"kind": "header", "text": "espaces ouverts"})
+                rows.append({"kind": "header", "text": "équipes ouvertes"})
                 for w in live:
                     rows.append({"kind": "ws", "w": w, "live": True})
             if rest:
-                rows.append({"kind": "header", "text": "espaces récents"})
+                rows.append({"kind": "header", "text": "équipes récentes"})
                 for w in rest[:lim]:
                     rows.append({"kind": "ws", "w": w, "live": False})
                 if len(rest) > lim:
                     rows.append({"kind": "more", "n": len(rest) - lim})
             if not rows:
-                rows.append({"kind": "header", "text": "(aucun espace thedev)"})
+                rows.append({"kind": "header", "text": "(aucune équipe thedev)"})
         else:
             if not f:
                 rows.append({"kind": "dir", "path": os.path.dirname(self.bdir), "name": ".."})
@@ -934,17 +934,17 @@ class Picker:
             # (détecté en fond par _git_check ; clic → git pull côté dev()).
             # 1ʳᵉ action, présélectionnée à l'ouverture (cf. focus="right", ri=0) : quitter.
             # Sur un serveur → revenir au laptop (la session SSH se termine, on retombe sur
-            # le picker local) ; en local → sortir du picker vers le shell.
+            # l'etat-major local) ; en local → sortir de l'etat-major vers le shell.
             if self.vps:
                 rows.append({"kind": "act", "id": "quit_vps", "text": "← quitter le VPS"})
             else:
                 rows.append({"kind": "act", "id": "quit", "text": "⏻ quitter thedev"})
             if self.update_available:
                 rows.append({"kind": "act", "id": "update_dev", "text": "⟳ mettre à jour thedev"})
-            # « nouvelle session » est un bouton repliable : un clic déplie/replie
+            # « nouvelle équipe » est un bouton repliable : un clic déplie/replie
             # ses deux cibles (dossier courant · ailleurs). cf. self.new_open.
             rows.append({"kind": "rcgap"})
-            rows.append({"kind": "act", "id": "new_menu", "text": "nouvelle session"})
+            rows.append({"kind": "act", "id": "new_menu", "text": "nouvelle équipe"})
             if self.new_open:
                 # barre verticale à gauche : rattache visuellement les cibles au bouton.
                 rows.append({"kind": "act", "id": "new_here",
@@ -993,11 +993,11 @@ class Picker:
                     nop = sum(1 for a in self.autos
                               if a["state"] in ("active", "running") and a.get("open"))
                     ninact = len(self.autos) - nop
-            # bouton masqué s'il n'y a aucune automatisation (mais affiché pendant le chargement)
+            # bouton masqué s'il n'y a aucune garde (mais affiché pendant le chargement)
             if nop is None or (nop + ninact) > 0:
                 rows.append({"kind": "act", "id": "autos", "footer": True,
-                             "text": "↻ automatisations", "nop": nop, "ninact": ninact})
-            # juste sous les automatisations : porte d'entrée des agents autonomes
+                             "text": "↻ la garde", "nop": nop, "ninact": ninact})
+            # juste sous les gardes : porte d'entrée des agents autonomes
             # (propositions de tâches). Compteur si des propositions attendent.
             npr = len(self.propals) if isinstance(self.propals, list) else None
             rows.append({"kind": "act", "id": "propals", "text": "✦ propositions",
@@ -1084,8 +1084,8 @@ class Picker:
         return off
 
     def _auto_count(self, machine, cwd):
-        """(total, arrêtées) des automatisations rattachées à (machine, cwd) — pour le badge.
-        Matching par CWD (le dossier de l'espace) et non par nom : robuste même si le nom
+        """(total, arrêtées) des gardes rattachées à (machine, cwd) — pour le badge.
+        Matching par CWD (le dossier de l'équipe) et non par nom : robuste même si le nom
         de session diffère du basename du cwd. Le 2e nombre alimente le ○ rouge (timer stoppé)."""
         c = (cwd or "").rstrip("/")
         if not c:
@@ -1121,7 +1121,7 @@ class Picker:
             return [("  " + r["text"], curses.A_DIM)]
         if r["kind"] == "subhdr":     # mini-entête grise d'un groupe d'actions
             return [("  " + r["text"], curses.A_DIM)]
-        if r["kind"] == "rcsess":     # « ● <vps>.remote.<espace> (<n claude>) » — point vert = session avec Claude ;
+        if r["kind"] == "rcsess":     # « ● <vps>.remote.<equipe> (<n claude>) » — point vert = session avec Claude ;
             p = "▸ " if is_sel else "  "   # ○ jaune = thedev actif (watcher vivant) SANS Claude interactif.
             # ● vert = au moins 1 Claude debout, suivi de (n). ○ jaune = 0 Claude → on
             # n'affiche PAS « (0) » (le ○ le dit déjà). Pas de mot « détaché » : toute
@@ -1150,7 +1150,7 @@ class Picker:
         if r["kind"] == "act":
             if r.get("id") == "update_dev":   # mise à jour dispo : jaune, bien visible
                 return [(p + r["text"], self.YEL | curses.A_BOLD)]
-            if r.get("id") == "autos":        # automatisations : ● violet opérationnelles + ○ rouge inactives
+            if r.get("id") == "autos":        # gardes : ● violet opérationnelles + ○ rouge inactives
                 segs = [(p + r["text"], self.MAG | curses.A_BOLD)]
                 nop, ninact = r.get("nop"), r.get("ninact")
                 if nop is None:               # autos pas encore récupérées → chargement
@@ -1177,7 +1177,7 @@ class Picker:
             return segs
         if r["kind"] == "dir":
             return [(p + r["name"], self.CYAN)]
-        # ws : un espace de dev (dossier). ● si la session zellij tourne.
+        # ws : une équipe de dev (dossier). ● si la session zellij tourne.
         #   ● 08 Jun  diakhrisma   (vivant : nom en cyan gras)
         #     06 Jun  gus_project  (fermé : nom coloré par projet)
         w = r["w"]
@@ -1212,7 +1212,7 @@ class Picker:
                 return base + " · ^Q fermer" if live else base
             if li and li.get("kind") == "rcsess":
                 return "↵ ouvrir · ^Q fermer"
-            return "thedev · ↑↓ naviguer · ↵ valider · Esc quitter"
+            return "⚔️ thedev · ↑↓ naviguer · ↵ valider · Esc quitter"
         nf = count_files(self.bdir)
         nd = len(list_dirs(self.bdir))
         return "%s · %d dossiers · %d fichiers" % (self.bdir, nd, nf)
@@ -1279,7 +1279,7 @@ class Picker:
         DIM = curses.A_DIM
         G, Y, R, C = self.GREEN, self.YEL, self.RED, self.CYAN
         # ── en-tête : titre (gauche) + bouton Retour sélectionné (droite) ──
-        self.scr.addnstr(0, 2, "ⓘ INFOS", W - 4, G | curses.A_BOLD)   # vert = couleur du bouton accueil
+        self.scr.addnstr(0, 2, "ⓘ INFOS", W - 4, G | curses.A_BOLD)   # vert = couleur du bouton etat-major
         back = "[ ‹ Retour ]"
         try:
             self.scr.addnstr(0, max(8, W - 2 - len(back)), back, len(back), C | curses.A_REVERSE | curses.A_BOLD)
@@ -1362,7 +1362,7 @@ class Picker:
             if autos is None:
                 return [[(" …", DIM)]]
             if not autos:
-                return [[(" aucune automatisation", DIM)]]
+                return [[(" aucune garde", DIM)]]
             out = []
             for a in autos[:8]:
                 act = a.get("state") in ("active", "running")
@@ -1389,10 +1389,10 @@ class Picker:
         top0, boty = 3, H - 2
         avail = boty - top0
 
-        left = [("thedev", items_to_rows(sec.get("thedev", []), contentw))]
+        left = [("⚔️ thedev", items_to_rows(sec.get("thedev", []), contentw))]
         if self.rc_hosts:
             left.append(("parc", parc_rows()))
-        left.append(("automatisations", autos_rows()))
+        left.append(("la garde", autos_rows()))
         right = [("Claude · Max 5x", items_to_rows(sec.get("Claude", []), contentw)),
                  ("système", items_to_rows(sec.get("système", []), contentw)),
                  ("usage", items_to_rows(sec.get("usage", []), contentw))]
@@ -1423,7 +1423,7 @@ class Picker:
     def draw_autos(self):
         self.scr.erase()
         H, W = self.scr.getmaxyx()
-        self.scr.addnstr(0, 2, "↻ AUTOMATISATIONS", W - 4, self.MAG | curses.A_BOLD)   # magenta = couleur du bouton accueil
+        self.scr.addnstr(0, 2, "↻ LA GARDE", W - 4, self.MAG | curses.A_BOLD)   # magenta = couleur du bouton etat-major
         try:
             self.scr.addnstr(1, 2, "─" * (W - 4), W - 4, curses.A_DIM)
         except curses.error:
@@ -1464,16 +1464,16 @@ class Picker:
             except curses.error:
                 pass
         line("", 0)
-        flat = []                         # automatisations sélectionnables, dans l'ordre affiché
+        flat = []                         # gardes sélectionnables, dans l'ordre affiché
         if autos is None:
             line("chargement…", curses.A_DIM)
         elif not autos:
             self.ai = -1                  # seul élément navigable : le bouton Retour
-            line("(aucune automatisation)", curses.A_DIM)
+            line("(aucune garde)", curses.A_DIM)
             line("", 0)
-            line("Une automatisation = un timer systemd --user thedev (ex. la veille du matin)", curses.A_DIM)
-            line("qui dépose une mission dans un espace ouvert. Elle ne tourne que si cet", curses.A_DIM)
-            line("espace est ouvert/détaché.", curses.A_DIM)
+            line("Une garde = un timer systemd --user thedev (ex. la veille du matin)", curses.A_DIM)
+            line("qui dépose une mission dans une équipe ouverte. Elle ne tourne que si cette", curses.A_DIM)
+            line("équipe est ouverte/détachée.", curses.A_DIM)
         else:
             if self.ai >= len(autos):     # clamp dans [-1 (Retour) .. n-1]
                 self.ai = len(autos) - 1
@@ -1495,7 +1495,7 @@ class Picker:
                     icon, icol = ("►" if a["state"] == "running" else "●"), self.GREEN
                 else:
                     icon, icol = "○", self.RED
-                dossier = a.get("espace") or os.path.basename((a.get("cwd") or "").rstrip("/")) or "?"
+                dossier = a.get("equipe") or os.path.basename((a.get("cwd") or "").rstrip("/")) or "?"
                 segs = [("  " + ("▸ " if sel else "  "), 0), (icon + " ", icol),
                         ("%s.%s." % (a["machine"], dossier), curses.A_DIM),
                         (a["name"], self.MAG | curses.A_BOLD)]
@@ -1512,7 +1512,7 @@ class Picker:
                                   ("   ·   prochain %s" % a["next"], curses.A_DIM)])
                         line("        ↵ rejoindre", curses.A_DIM)
                     else:
-                        cause = "timer stoppé" if not actif else "pas de Claude dans l'espace"
+                        cause = "timer stoppé" if not actif else "pas de Claude dans l'équipe"
                         seg_line([("        ", 0), ("arrêtée", self.RED | curses.A_BOLD),
                                   (" — " + cause, curses.A_DIM)])
                         if not actif:
@@ -1528,7 +1528,7 @@ class Picker:
     def draw_propals(self):
         self.scr.erase()
         H, W = self.scr.getmaxyx()
-        self.scr.addnstr(0, 2, "✦ PROPOSITIONS DE TÂCHES", W - 4, self.YEL | curses.A_BOLD)   # jaune = couleur du bouton accueil
+        self.scr.addnstr(0, 2, "✦ PROPOSITIONS DE TÂCHES", W - 4, self.YEL | curses.A_BOLD)   # jaune = couleur du bouton etat-major
         try:
             self.scr.addnstr(1, 2, "─" * (W - 4), W - 4, curses.A_DIM)
         except curses.error:
@@ -1574,7 +1574,7 @@ class Picker:
             line("(aucune proposition pour l'instant)", curses.A_DIM)
             line("", 0)
             line("Le proposeur scanne ton parc (todos non cochés, commits non poussés,", curses.A_DIM)
-            line("automatisations en échec) et suggère ici des tâches concrètes — sans IA.", curses.A_DIM)
+            line("gardes en échec) et suggère ici des tâches concrètes — sans IA.", curses.A_DIM)
             line("", 0)
             line("Rien à signaler pour l'instant : parc propre.", curses.A_DIM)
         else:
@@ -1636,7 +1636,7 @@ class Picker:
         lrows, rrows = self.left_rows(), self.right_rows()
         lwin = curses.newwin(bot - top, lw - 1, top, 1)
         rwin = curses.newwin(bot - top, W - lw - 1, top, lw)
-        ltitle = "  ESPACES" if self.mode == "sessions" else "  DOSSIERS"
+        ltitle = "  ÉQUIPES" if self.mode == "sessions" else "  DOSSIERS"
         self.loff = self.draw_panel(lwin, ltitle, lrows, self.li, self.focus == "left", self.loff)
         self.draw_panel(rwin, "  ACTIONS", rrows, self.ri, self.focus == "right", 0)
         curses.doupdate()
@@ -1694,7 +1694,7 @@ class Picker:
         return "quit"
 
     def focused_session(self):
-        """L'espace ● sous le curseur (panneau actif), ou None. Sert à Ctrl-R
+        """L'équipe ● sous le curseur (panneau actif), ou None. Sert à Ctrl-R
         (fermer & relancer). Renvoie un dict {cwd, id, name, mtime}."""
         it = self.left_item() if self.focus == "left" else self.right_item()
         if it and it.get("kind") == "ws":
@@ -1726,7 +1726,7 @@ class Picker:
             self.decision = ("SERVER", it["host"], it["cwd"])
             return "quit"
         aid = it.get("id")
-        if aid == "autos":           # écran des automatisations (Esc pour revenir)
+        if aid == "autos":           # écran des gardes (Esc pour revenir)
             self.enter_autos()
             return
         if aid == "propals":         # écran des propositions de tâches (Esc pour revenir)
@@ -1738,7 +1738,7 @@ class Picker:
         if aid == "update_dev":      # met à jour la config (git pull) côté dev()
             self.decision = ("UPDATE",)
             return "quit"
-        if aid in ("quit", "quit_vps"):  # quitte le picker SANS décision → shell (local) / retour laptop (vps)
+        if aid in ("quit", "quit_vps"):  # quitte l'etat-major SANS décision → shell (local) / retour laptop (vps)
             self.decision = None
             return "quit"
         if aid == "new_menu":        # déplie/replie les cibles « ici / ailleurs »
@@ -1834,15 +1834,15 @@ class Picker:
                 self.clamp()
                 self.draw()
             except Exception:
-                # Un bug de rendu ne doit PLUS tuer le picker (sortie « sans raison »).
+                # Un bug de rendu ne doit PLUS tuer l'etat-major (sortie « sans raison »).
                 # On logue la trace pour corriger la cause, et on continue.
                 import traceback
                 try:
-                    with open(os.path.expanduser("~/.cache/dev-picker-crash.log"), "a") as _f:
+                    with open(os.path.expanduser("~/.cache/etat-major-crash.log"), "a") as _f:
                         _f.write("=== draw crash ===\n" + traceback.format_exc() + "\n")
                 except Exception:
                     pass
-                self.msg = "⚠ erreur d'affichage — voir ~/.cache/dev-picker-crash.log"
+                self.msg = "⚠ erreur d'affichage — voir ~/.cache/etat-major-crash.log"
             # getch non bloquant tant qu'il y a qqch à rafraîchir (liste RC live,
             # check git en fond, ou écran infos en cours de chargement) ; sinon bloque.
             self._refresh_busy()                      # busy local (throttle interne) → clignotement
@@ -1878,7 +1878,7 @@ class Picker:
                     if nm:
                         newdir = os.path.join(self.bdir, nm)
                         try:
-                            # Juste créer le dossier : on reste dans le picker, il
+                            # Juste créer le dossier : on reste dans l'etat-major, il
                             # apparaît en haut de la liste (tri par mtime). Pas de
                             # lancement de session — l'utilisateur choisit ensuite.
                             os.makedirs(newdir, exist_ok=True)
@@ -1893,7 +1893,7 @@ class Picker:
                 elif 32 <= ch < 127:
                     self.newname += chr(ch)
                 continue
-            if self.mode == "autos":                # écran automatisations : navigable
+            if self.mode == "autos":                # écran gardes : navigable
                 n = len(self._autos_flat)
                 if n == 0:
                     self.ai = -1                    # vide/chargement : focus sur le bouton Retour
@@ -1921,7 +1921,7 @@ class Picker:
                     a = self._autos_flat[self.ai]
                     if a["state"] not in ("active", "running"):   # arrêté → réactiver le timer
                         self._reactivate_auto(a)
-                    else:                                         # actif → rejoindre/rattacher l'espace
+                    else:                                         # actif → rejoindre/rattacher l'équipe
                         cwd = a.get("cwd")
                         if not cwd:
                             self.msg = "pas de cwd connu — ouvre un thedev manuellement"
@@ -1978,12 +1978,12 @@ class Picker:
             elif ch in (curses.KEY_ENTER, 10, 13):
                 if (self.activate_left() if self.focus == "left" else self.activate_right()) == "quit":
                     return
-            elif ch == 18:  # Ctrl-R : renommer la session sélectionnée
+            elif ch == 18:  # Ctrl-R : renommer l'équipe sélectionnée
                 li = self.left_item() if self.focus == "left" else None
                 if li and li.get("kind") == "ws":
                     w = li["w"]
                     ok, new_name = self._modal(
-                        "Renommer la session",
+                        "Renommer l'équipe",
                         ["« %s »" % w["name"]],
                         input_label="Nouveau nom :", default=w["name"])
                     if ok and new_name and new_name != w["name"]:
@@ -2013,7 +2013,7 @@ class Picker:
                                     _shutil.move(_old_h, _new_h)
                                 # Réécrire le cwd DANS les transcripts : load_workspaces()
                                 # lit le champ "cwd" du jsonl (pas le nom du dossier), et
-                                # il pointe encore vers l'ancien chemin → l'espace garderait
+                                # il pointe encore vers l'ancien chemin → l'équipe garderait
                                 # l'ancien nom et ne matcherait plus la session zellij vivante.
                                 if os.path.isdir(_new_h):
                                     _o = ('"cwd":"%s"' % old_cwd).encode()
@@ -2035,26 +2035,26 @@ class Picker:
                     else:
                         self.msg = "renommage annulé" if ok else ""
                 else:
-                    self.msg = "sélectionne une session à gauche"
+                    self.msg = "sélectionne une équipe à gauche"
             elif ch == 17:  # Ctrl-Q : fermer la session ouverte (zellij delete-session)
                 li = self.left_item() if self.focus == "left" else None
                 if li and li.get("kind") == "ws":
                     w = li["w"]
                     if w["name"] not in self.live:
-                        self.msg = "^Q : session non ouverte"
+                        self.msg = "^Q : équipe non ouverte"
                         continue
                     ok, _ = self._modal(
-                        "Fermer la session",
-                        ["« %s »" % w["name"], "", "La session sera fermée."])
+                        "Fermer l'équipe",
+                        ["« %s »" % w["name"], "", "L'équipe sera fermée."])
                     if ok:
                         subprocess.run(["zellij", "delete-session", w["name"], "--force"],
                                        capture_output=True)
                         self._refresh_local()
-                        self.msg = "session « %s » fermée" % w["name"]
+                        self.msg = "équipe « %s » fermée" % w["name"]
                 elif li and li.get("kind") == "rcsess":
                     ok, _ = self._modal(
-                        "Fermer la session distante",
-                        ["« %s » sur %s" % (li["name"], li["host"]), "", "La session sera fermée."])
+                        "Fermer l'équipe distante",
+                        ["« %s » sur %s" % (li["name"], li["host"]), "", "L'équipe sera fermée."])
                     if ok:
                         subprocess.run(
                             ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes",
@@ -2064,9 +2064,9 @@ class Picker:
                              "bash -lic 'zellij delete-session %s --force 2>&1'" % li["name"]],
                             capture_output=True, timeout=10)
                         self._refresh_remote(li["host"])
-                        self.msg = "session « %s » fermée sur %s" % (li["name"], li["host"])
+                        self.msg = "équipe « %s » fermée sur %s" % (li["name"], li["host"])
                 else:
-                    self.msg = "sélectionne une session à gauche"
+                    self.msg = "sélectionne une équipe à gauche"
             elif ch in (curses.KEY_DC, 519):  # Suppr / Ctrl+Suppr : supprimer session + historique
                 li = self.left_item() if self.focus == "left" else None
                 if li and li.get("kind") == "ws":
@@ -2080,8 +2080,8 @@ class Picker:
                         subprocess.run(["zellij", "delete-session", w["name"], "--force"],
                                        capture_output=True)
                         self._refresh_local()
-                        # registre dev-claudes
-                        subprocess.run([os.path.expanduser("~/.local/bin/dev-claude-reg"),
+                        # registre soldats
+                        subprocess.run([os.path.expanduser("~/.local/bin/reg-soldat"),
                                         "gc", "0"], capture_output=True)
                         # historique Claude : dossier ~/.claude/projects/<encoded_cwd>
                         cwd = w.get("cwd", "")
@@ -2093,7 +2093,7 @@ class Picker:
                                 shutil.rmtree(claude_proj, ignore_errors=True)
                         self.msg = "session « %s » supprimée" % w["name"]
                 else:
-                    self.msg = "sélectionne une session locale à gauche"
+                    self.msg = "sélectionne une équipe locale à gauche"
             elif ch == 27:  # Esc : efface le filtre, sinon revient aux sessions, sinon quitte
                 if self.filt:
                     self.filt = ""; self.li = 0

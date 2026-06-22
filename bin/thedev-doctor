@@ -36,7 +36,7 @@ if command -v engine >/dev/null 2>&1; then
 else ko "engine absent du PATH → relance ./install.sh"; fi
 
 hr "hooks Claude (settings.json)"
-if grep -q 'dev-claude-track' "$HOME/.claude/settings.json" 2>/dev/null; then ok "hook dev-claude-track câblé"
+if grep -q 'soldat-track' "$HOME/.claude/settings.json" 2>/dev/null; then ok "hook soldat-track câblé"
 else wa "hook non câblé → registre/busy/pulse/nudge désactivés (relance ./install.sh)"; fi
 
 hr "lancement"

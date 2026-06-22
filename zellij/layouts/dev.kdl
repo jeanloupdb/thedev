@@ -27,8 +27,8 @@ layout {
         }
     }
 
-    // Page 1 — code page : editor (nvim) | claude (stack des claudes) + barre ＋
-    tab name="code page" focus=true {
+    // Page 1 — le front : editor (nvim) | claude (stack des claudes) + barre ＋
+    tab name="le front" focus=true {
         pane split_direction="vertical" {
             pane size="20%" name="editor" command="/home/jlal/.local/bin/editor-pane" {
                 args "."
@@ -44,13 +44,13 @@ layout {
         }
     }
 
-    // Page 2 — sandbox (territoire de Claude, peuplé via `crun`)
-    tab name="sandbox" {
-        pane name="welcome" command="/home/jlal/.local/bin/agents-welcome"
+    // Page 2 — le camp (territoire de Claude, peuplé via `soutien`)
+    tab name="le camp" {
+        pane name="garnison" command="/home/jlal/.local/bin/garnison"
     }
 
-    // Page 3 — my space : shell + git (terminaux perso, côte à côte)
-    tab name="my space" {
+    // Page 3 — la tente : shell + git (terminaux perso, côte à côte)
+    tab name="la tente" {
         pane split_direction="vertical" {
             pane name="shell" command="/home/jlal/.local/bin/shell-pane"
             pane name="git" command="/home/jlal/.local/bin/git-pane"

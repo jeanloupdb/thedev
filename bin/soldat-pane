@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# @thedev session lance le Claude principal d'un pane (surcouche prompt, remote-control, auto-open liens)
+# @thedev session lance le soldat principal d'un pane (surcouche prompt, remote-control, auto-open liens)
 # Keep the zellij pane alive even if claude exits. On exit, drop into a
 # shell with the launch command preloaded in history — press ↑ to relaunch.
 #
@@ -18,14 +18,43 @@
 # pane → on le désactive (le nom du pane est géré par rename-pane/pane-name).
 export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
 
+# Écran de chargement : le pane reste NOIR le temps du sleep anti-storm + du
+# chargement de la conversation par claude. On y met un spinner minimal centré
+# (palette muted thedev) tant que claude n'a pas pris l'écran. Tué juste avant le
+# lancement de claude (qui bascule en plein écran). Pane interactif seulement (pas
+# les asides « once », ouverts à la demande sans attente).
+_loader_pid=""
+_loader_stop() {
+  [ -n "$_loader_pid" ] || return 0
+  kill "$_loader_pid" 2>/dev/null; wait "$_loader_pid" 2>/dev/null; _loader_pid=""
+  printf '\033[?25h\033[2J\033[H' >/dev/tty 2>/dev/null   # curseur visible + écran net
+}
+if [ -z "${CLAUDE_PANE_ONCE:-}" ] && [ -t 1 ]; then
+  (
+    label='chargement…'; frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'; i=0
+    printf '\033[?25l\033[2J'                              # cache le curseur, efface une fois
+    while :; do
+      cols=$(tput cols 2>/dev/null); lines=$(tput lines 2>/dev/null)
+      [ -n "$cols" ]  || cols=80; [ -n "$lines" ] || lines=24
+      ch=${frames:i:1}; i=$(( (i + 1) % ${#frames} ))
+      text="$ch  $label"
+      row=$(( lines / 2 )); col=$(( (cols - ${#text}) / 2 )); [ "$col" -lt 1 ] && col=1
+      printf '\033[%d;%dH\033[38;5;108m%s\033[0m' "$row" "$col" "$text"
+      sleep 0.12
+    done
+  ) >/dev/tty 2>/dev/null &
+  _loader_pid=$!
+  trap _loader_stop EXIT
+fi
+
 # Delay startup to avoid I/O storm when zellij spawns all panes at once.
-# Les Claude secondaires (aside) sont lancés seuls à la demande → pas de storm,
+# Les soldats secondaires (aside) sont lancés seuls à la demande → pas de storm,
 # ouverture directe.
 [ -z "${CLAUDE_PANE_ONCE:-}" ] && sleep 2
 
 # Repo thedev résolu depuis l'emplacement RÉEL de ce script (relocatable : marche
 # quel que soit l'endroit où thedev est cloné). $0 peut être un nom nu (exec
-# claude-pane) → on le résout via PATH avant readlink.
+# soldat-pane) → on le résout via PATH avant readlink.
 _self="$0"; case "$_self" in */*) ;; *) _self="$(command -v -- "$_self")" ;; esac
 THEDEV_ROOT="$(cd "$(dirname "$(readlink -f -- "$_self")")/.." && pwd)"
 ZELLIJ_PROMPT_FILE="$THEDEV_ROOT/claude/zellij-pane-prompt.md"
@@ -40,7 +69,7 @@ append=""
 prompt_args=()
 [ -n "$append" ] && prompt_args=(--append-system-prompt "$append")
 
-# Message initial (ex. « ajuster une automatisation » depuis l'accueil) : passé en
+# Message initial (ex. « ajuster la garde » depuis l'etat-major) : passé en
 # positionnel à claude → 1er message de la conversation neuve. One-shot (la relance
 # manuelle via ↑ rejoue `claude` nu, sans ce prompt). Deux sources : CLAUDE_PANE_INIT
 # (inline) ou CLAUDE_PANE_INIT_FILE (chemin — évite le quoting à travers ssh/zellij ;
@@ -100,27 +129,27 @@ fi
 
 # Sur un VPS distant : ajoute le label au titre du pane (« claude [indice] »)
 # pour voir d'un coup d'œil qu'on n'est pas en local. rename-pane fixe le nom →
-# claude ne peut pas l'écraser via son titre OSC. (Les Claude secondaires sont
-# nommés par claude-aside, pas ici.)
+# claude ne peut pas l'écraser via son titre OSC. (Les soldats secondaires sont
+# nommés par renfort, pas ici.)
 if [ -f "$HOME/.config/dev-vps" ] && [ -z "${CLAUDE_PANE_ONCE:-}" ] && [ -n "${ZELLIJ_PANE_ID:-}" ]; then
   zellij action rename-pane -p "$ZELLIJ_PANE_ID" "claude [$(cat "$HOME/.config/dev-vps")]" 2>/dev/null
 fi
 
-# Restauration des Claude secondaires (asides) ouverts avant un « quitter » (kill).
+# Restauration des soldats secondaires (asides) ouverts avant un « quitter » (kill).
 # Le launcher pose DEV_RESTORE=1 sur une reprise (pas sur une session NEUVE) ; on
-# relit le registre pour CE dossier et on respawn un aside --resume par claude
+# relit le registre pour CE dossier et on respawn un aside --resume par soldat
 # secondaire. Pane principal uniquement (pas en mode once), une seule fois.
-if [ "${DEV_RESTORE:-}" = "1" ] && [ -z "${CLAUDE_PANE_ONCE:-}" ] && command -v dev-claude-reg >/dev/null 2>&1; then
+if [ "${DEV_RESTORE:-}" = "1" ] && [ -z "${CLAUDE_PANE_ONCE:-}" ] && command -v reg-soldat >/dev/null 2>&1; then
   _real=$(realpath "$(pwd -P)" 2>/dev/null || pwd -P)
   while IFS=$'\t' read -r _aid _acwd _arole _aname _azs _ast _aen; do
     [ "$_arole" = "aside" ] && [ -n "$_aid" ] || continue
-    claude-aside --resume "$_aid" --name "$_aname" 2>/dev/null
-  done < <(dev-claude-reg restore "$_real" 2>/dev/null)
+    renfort --resume "$_aid" --name "$_aname" 2>/dev/null
+  done < <(reg-soldat restore "$_real" 2>/dev/null)
 fi
 unset DEV_RESTORE
 
 # Nom du pane transmis au hook SessionStart comme défaut (évite que le hook
-# écrase le nom). Pour un aside, claude-aside l'a déjà posé → on ne touche pas ;
+# écrase le nom). Pour un aside, renfort l'a déjà posé → on ne touche pas ;
 # pour le principal, c'est « claude » (ou « claude [vps] »).
 if [ -z "${CLAUDE_PANE_NAME:-}" ]; then
   CLAUDE_PANE_NAME="claude"
@@ -135,8 +164,8 @@ export CLAUDE_PANE_NAME
 # l'appareil une fois (claude.ai/code ou app) pour que la session soit pilotable
 # — sinon la session interactive marche quand même, juste non exposée.
 rc_args=()
-# CLAUDE_PANE_RC : marqueur hérité par le hook SessionStart → dev-claude-reg, pour
-# que le registre sache si CE pane est RÉELLEMENT lancé en remote control (l'accueil
+# CLAUDE_PANE_RC : marqueur hérité par le hook SessionStart → reg-soldat, pour
+# que le registre sache si CE pane est RÉELLEMENT lancé en remote control (l'etat-major
 # n'affiche « remote » que dans ce cas). 1 uniquement quand --remote-control est posé.
 export CLAUDE_PANE_RC=0
 if [ -f "$HOME/.config/dev-vps" ] && [ -z "${CLAUDE_PANE_ONCE:-}" ]; then
@@ -144,7 +173,7 @@ if [ -f "$HOME/.config/dev-vps" ] && [ -z "${CLAUDE_PANE_ONCE:-}" ]; then
   CLAUDE_PANE_RC=1
 fi
 
-# Sur VPS : auto-open des liens thedev — l'espace devient joignable par des missions
+# Sur VPS : auto-open des liens thedev — l'equipe devient joignable par des missions
 # dès son démarrage (watcher dans la sandbox), sans avoir à taper `thedev-link open`.
 # Pane principal seulement. Délai pour laisser la session/sandbox se mettre en place.
 if [ -f "$HOME/.config/dev-vps" ] && [ -z "${CLAUDE_PANE_ONCE:-}" ] && command -v thedev-link >/dev/null 2>&1; then
@@ -156,6 +185,8 @@ fi
 model_args=()
 [ -n "${CLAUDE_PANE_MODEL:-}" ] && model_args=(--model "$CLAUDE_PANE_MODEL")
 
+_loader_stop   # claude prend l'écran → on retire le spinner de chargement
+
 CLAUDE_CODE_NO_FLICKER=1 claude \
   --dangerously-skip-permissions \
   "${rc_args[@]}" \
@@ -165,7 +196,7 @@ CLAUDE_CODE_NO_FLICKER=1 claude \
   "${init_args[@]}" \
   "$@"
 
-# Mode "once" (Claude secondaire via `aside`) : pas de keep-alive → le pane se
+# Mode "once" (soldat secondaire via `aside`) : pas de keep-alive → le pane se
 # ferme dès que tu quittes Claude (/exit), combiné à `zellij run --close-on-exit`.
 [ -n "${CLAUDE_PANE_ONCE:-}" ] && exit 0
 

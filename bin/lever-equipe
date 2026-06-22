@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
-# @thedev session crée un nouveau projet en déléguant le bootstrap à un Claude distant (VPS auto)
-# new-project — orchestrateur de création de projet. Choisit un VPS (le moins chargé), ouvre
-# un espace détaché via `space-open` avec un Claude briefé pour scaffolder le projet, et
+# @thedev session crée un nouveau projet en déléguant le bootstrap à un soldat distant (VPS auto)
+# lever-equipe — orchestrateur de création de projet. Choisit un VPS (le moins chargé), ouvre
+# un equipe détaché via `team-open` avec un soldat briefé pour scaffolder le projet, et
 # inscrit l'entrée dans PROJECTS.md (registre local). Couche cadrage = skill `/new-project`.
 #
-#   new-project <nom> [--machine <host>] [--local] [--stack "<s>"] [--goal "<g>"] [--desc "<d>"]
+#   lever-equipe <nom> [--machine <host>] [--local] [--stack "<s>"] [--goal "<g>"] [--desc "<d>"]
 #
-#   <nom>       nom du projet (= espace zellij). alphanum . _ -
+#   <nom>       nom du projet (= equipe zellij). alphanum . _ -
 #   --machine   force le VPS cible (sinon auto : le moins chargé de ~/.config/thedev-machines)
 #   --local     crée sur la machine locale (exception ; défaut = VPS)
-#   --stack     stack souhaitée (sinon le Claude distant propose selon l'objectif)
+#   --stack     stack souhaitée (sinon le soldat distant propose selon l'objectif)
 #   --goal      objectif du projet (1 phrase)
 #   --desc      description courte (pour PROJECTS.md)
 #
-# Délégation : c'est le Claude distant qui fait git init / CLAUDE.md / scaffold / `/start`.
+# Délégation : c'est le soldat distant qui fait git init / CLAUDE.md / scaffold / `/start`.
 set -euo pipefail
 
-die() { echo "new-project: $*" >&2; exit 1; }
+die() { echo "lever-equipe: $*" >&2; exit 1; }
 
-[ $# -ge 1 ] || die "usage: new-project <nom> [--machine <host>] [--local] [--stack \"…\"] [--goal \"…\"] [--desc \"…\"]"
+[ $# -ge 1 ] || die "usage: lever-equipe <nom> [--machine <host>] [--local] [--stack \"…\"] [--goal \"…\"] [--desc \"…\"]"
 nom="$1"; shift
 machine=""; want_local=""; stack=""; goal=""; desc=""
 while [ $# -gt 0 ]; do
@@ -44,7 +44,7 @@ fi
 if [ -n "$want_local" ]; then
   machine=local
 elif [ -z "$machine" ]; then
-  # Auto : sonde chaque VPS de thedev-machines, choisit la charge (miss+cruns) minimale.
+  # Auto : sonde chaque VPS de thedev-machines, choisit la charge (miss+soutiens) minimale.
   machines_file="$HOME/.config/thedev-machines"
   [ -f "$machines_file" ] || die "auto-choix impossible : $machines_file absent (utilise --machine ou --local)"
   best=""; best_load=999999
@@ -66,7 +66,7 @@ elif [ -z "$machine" ]; then
   echo "→ VPS choisi : $machine (charge $best_load)" >&2
 fi
 
-# --- 2. Brief du Claude distant ----------------------------------------------
+# --- 2. Brief du soldat distant ----------------------------------------------
 brief=$(mktemp "${TMPDIR:-/tmp}/newproj-brief.XXXXXX")
 trap 'rm -f "$brief"' EXIT
 {
@@ -87,9 +87,9 @@ Ne déploie rien et ne lance pas de serveur tant qu'on ne te le demande pas.
 EOF
 } > "$brief"
 
-# --- 3. Ouvre l'espace détaché briefé ----------------------------------------
-command -v space-open >/dev/null || die "brique 'space-open' introuvable (PATH)"
-space-open "$machine" "$nom" --init-file "$brief"
+# --- 3. Ouvre l'equipe détaché briefé ----------------------------------------
+command -v team-open >/dev/null || die "brique 'team-open' introuvable (PATH)"
+team-open "$machine" "$nom" --init-file "$brief"
 
 # --- 4. Inscrit PROJECTS.md (registre local) ---------------------------------
 if [ -f "$PROJECTS_MD" ]; then

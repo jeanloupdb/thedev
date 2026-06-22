@@ -54,7 +54,7 @@ rsync -az --delete \
   "$src/" "$machine:$dest/" \
   || die "rsync a échoué"
 
-# Renvoie le chemin distant absolu résolu (utile pour chaîner crun/tsnode).
+# Renvoie le chemin distant absolu résolu (utile pour chaîner soutien/tsnode).
 remote="$(ssh $SSH_OPTS "$machine" "cd \"$dest\" && pwd -P" 2>/dev/null)"
 ok "envoyé : $machine:${remote:-$dest}"
 printf '%s\n' "${remote:-$dest}"

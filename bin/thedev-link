@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# @thedev liens ouvre un espace aux missions entrantes (watcher inbox, modele via Model:)
-# thedev-link — ouvre/ferme un ESPACE aux MISSIONS (liens thedev, cross-machine).
-# Voir NAMING.md + plans/thedev-liens.md. Modèle plat : des espaces pairs s'envoient
+# @thedev liens ouvre une equipe aux missions entrantes (watcher inbox, modele via Model:)
+# thedev-link — ouvre/ferme une EQUIPE aux MISSIONS (liens thedev, cross-machine).
+# Voir NAMING.md + plans/thedev-liens.md. Modèle plat : des equipes pairs s'envoient
 # des missions ; ici on est le CÔTÉ QUI REÇOIT (le watcher + l'exécution).
 #
-#   thedev-link open      lance le watcher de l'espace courant (dans la sandbox) + s'inscrit
+#   thedev-link open      lance le watcher de l'equipe courante (dans le camp) + s'inscrit
 #   thedev-link close     arrête le watcher + se désinscrit
 #   thedev-link status    ouvert ? combien de missions en cours ?
 #
-# Le watcher (crun bash, gratuit) surveille l'inbox ; à l'arrivée d'une mission il lance
-# un crun-mission = `claude "<mission>"` INTERACTIF (abonnement, pas `-p`/crédits), qui
+# Le watcher (soutien bash, gratuit) surveille l'inbox ; à l'arrivée d'une mission il lance
+# un soutien-mission = `claude "<mission>"` INTERACTIF (abonnement, pas `-p`/crédits), qui
 # écrit son résultat dans l'outbox. Séquentiel (1 mission à la fois). Timeout 600s défaut.
 # Une mission plus vieille que MISSION_TTL (défaut 600s) est écartée (stale) sans être exécutée.
 set -u
@@ -22,7 +22,7 @@ me="$(basename "$0")"
 _self="$0"; case "$_self" in */*) ;; *) _self="$(command -v -- "$_self")" ;; esac
 ENGINE="$(dirname "$(readlink -f -- "$_self")")/engine"
 
-espace_name()  { printf '%s' "${ZELLIJ_SESSION_NAME:-$(basename "$(pwd -P)")}"; }
+equipe_name()  { printf '%s' "${ZELLIJ_SESSION_NAME:-$(basename "$(pwd -P)")}"; }
 machine_name() { cat "$HOME/.config/dev-vps" 2>/dev/null || hostname -s; }
 
 # alias → id de modèle complet (l'émetteur peut écrire `Model: fable`). Un id
@@ -38,44 +38,44 @@ _norm_model() {
 }
 
 cmd_open() {
-  local esp cwd; esp="$(espace_name)"; cwd="$(pwd -P)"
-  command -v crun >/dev/null 2>&1 || { echo "✗ crun requis (sandbox)"; exit 1; }
-  crun "link-$esp" -- "$(readlink -f "$0")" __watch "$esp" "$cwd"
-  echo "✓ espace '$esp' OUVERT aux missions — watcher dans la sandbox ('crun list')."
+  local eq cwd; eq="$(equipe_name)"; cwd="$(pwd -P)"
+  command -v soutien >/dev/null 2>&1 || { echo "✗ soutien requis (le camp)"; exit 1; }
+  soutien "link-$eq" -- "$(readlink -f "$0")" __watch "$eq" "$cwd"
+  echo "✓ equipe '$eq' OUVERTE aux missions — watcher dans le camp ('soutien list')."
 }
 
 cmd_close() {
-  local esp; esp="$(espace_name)"
-  crun kill "link-$esp" 2>/dev/null
-  rm -f "$ROOT/links/$esp"
-  echo "✓ espace '$esp' FERMÉ aux missions."
+  local eq; eq="$(equipe_name)"
+  soutien kill "link-$eq" 2>/dev/null
+  rm -f "$ROOT/links/$eq"
+  echo "✓ equipe '$eq' FERMÉE aux missions."
 }
 
 cmd_status() {
-  local esp; esp="$(espace_name)"
-  if [ -f "$ROOT/links/$esp" ]; then
-    echo "● OUVERT :"; sed 's/^/   /' "$ROOT/links/$esp"
-    echo "   missions en cours : $(find "$ROOT/spaces/$esp/work" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)"
+  local eq; eq="$(equipe_name)"
+  if [ -f "$ROOT/links/$eq" ]; then
+    echo "● OUVERT :"; sed 's/^/   /' "$ROOT/links/$eq"
+    echo "   missions en cours : $(find "$ROOT/spaces/$eq/work" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)"
   else
-    echo "○ FERMÉ — l'espace '$esp' n'écoute pas (thedev-link open pour ouvrir)."
+    echo "○ FERMÉ — l'equipe '$eq' n'écoute pas (thedev-link open pour ouvrir)."
   fi
 }
 
-# ── LE WATCHER (tourne comme crun dans la sandbox) ───────────────────────────
+# ── LE WATCHER (tourne comme soutien dans le camp) ───────────────────────────
 cmd_watch() {
-  local esp="$1" cwd="$2"
-  local sdir="$ROOT/spaces/$esp" reg="$ROOT/links/$esp"
+  local eq="$1" cwd="$2"
+  local sdir="$ROOT/spaces/$eq" reg="$ROOT/links/$eq"
   WATCHER_START=$(date +%s)   # global lu par _process pour distinguer backlog / file live
   mkdir -p "$sdir"/inbox "$sdir"/outbox "$sdir"/work "$sdir"/done "$ROOT/links"
   cat > "$reg" <<EOF
-espace=$esp
+equipe=$eq
 machine=$(machine_name)
 cwd=$cwd
 watcher_pid=$$
 opened=$(date -Iseconds)
 EOF
-  trap 'rm -f "$reg"; echo "🔗 watcher '"'"$esp"'"' arrêté."; exit 0' EXIT INT TERM
-  echo "🔗 watcher '$esp' ACTIF — inbox: $sdir/inbox (Ctrl-C pour fermer)"
+  trap 'rm -f "$reg"; echo "🔗 watcher '"'"$eq"'"' arrêté."; exit 0' EXIT INT TERM
+  echo "🔗 watcher '$eq' ACTIF — inbox: $sdir/inbox (Ctrl-C pour fermer)"
   local m id
   while true; do
     for m in "$sdir"/inbox/*.mission; do
@@ -84,7 +84,7 @@ EOF
       mkdir -p "$sdir/work/$id"
       mv "$m" "$sdir/work/$id/mission" 2>/dev/null || continue
       echo "→ mission $id reçue, traitement…"
-      _process "$esp" "$cwd" "$id"
+      _process "$eq" "$cwd" "$id"
       echo "✓ mission $id terminée."
     done
     if command -v inotifywait >/dev/null 2>&1; then
@@ -96,8 +96,8 @@ EOF
 }
 
 _process() {
-  local esp="$1" cwd="$2" id="$3"
-  local sdir="$ROOT/spaces/$esp" wdir="$ROOT/spaces/$esp/work/$3"
+  local eq="$1" cwd="$2" id="$3"
+  local sdir="$ROOT/spaces/$eq" wdir="$ROOT/spaces/$eq/work/$3"
   local out="$sdir/outbox/$id.result"
 
   # Garde-fou TTL — n'écarte QUE le BACKLOG : une mission déposée AVANT le démarrage
@@ -122,10 +122,10 @@ _process() {
 
   # Attente du résultat : pilotée par la VIVACITÉ du pane, pas par un timeout fixe.
   # Un `Timeout:` dans la mission = plafond DUR optionnel (utile pour borner une
-  # mission courte). Absent = pas de plafond : on attend tant que le crun-mission
+  # mission courte). Absent = pas de plafond : on attend tant que le soutien-mission
   # tourne (un workflow de refonte peut durer des heures). Garde-fou ultime
   # MISSION_HARDCAP (défaut 6 h) pour qu'un process vivant-mais-bloqué ne fige
-  # pas l'espace indéfiniment (le watcher est séquentiel). 0 = aucun plafond.
+  # pas l'equipe indéfiniment (le watcher est séquentiel). 0 = aucun plafond.
   local timeout body hardcap="${MISSION_HARDCAP:-21600}"
   timeout="$(grep -i '^Timeout:' "$wdir/mission" | head -1 | tr -dc '0-9')"   # vide = pas de plafond mission
   body="$(awk 'f{print} /^[[:space:]]*$/{f=1}' "$wdir/mission")"
@@ -138,14 +138,14 @@ _process() {
     model_line="export CLAUDE_PANE_MODEL=$(printf '%q' "$model_id")"
   fi
   cat > "$wdir/prompt" <<EOF
-Tu es un crun-mission de thedev (réseau d'espaces pairs — voir ~/.claude/CLAUDE.md et NAMING.md).
-On t'a envoyé cette MISSION via un lien depuis un autre espace :
+Tu es un soutien-mission de thedev (réseau d'equipes pairs — voir ~/.claude/CLAUDE.md et NAMING.md).
+On t'a envoyé cette MISSION via un lien depuis une autre equipe :
 
 --- MISSION ---
 $body
 --- FIN MISSION ---
 
-Exécute-la dans cet espace (« $esp », dossier $cwd). Tu peux lancer d'autres cruns si utile.
+Exécute-la dans cette equipe (« $eq », dossier $cwd). Tu peux lancer d'autres soutiens si utile.
 Quand tu as TERMINÉ, écris ton résultat (texte clair, concis, le résultat seulement) ainsi :
   1. écris-le dans : $out.tmp
   2. puis renomme : mv $out.tmp $out
@@ -155,26 +155,26 @@ en arrière-plan, ATTENDS leur fin complète avant d'écrire ce fichier : l'écr
 trop tôt tuerait le travail encore en cours.
 (Filet : si tu n'écris pas ce fichier, ta DERNIÈRE réponse sera capturée comme
 résultat — termine donc toujours par le résultat complet, autonome.)
-Reste STRICTEMENT dans le périmètre de cet espace (règles de ~/.claude/CLAUDE.md).
+Reste STRICTEMENT dans le périmètre de cette equipe (règles de ~/.claude/CLAUDE.md).
 EOF
   cat > "$wdir/run.sh" <<EOF
 #!/usr/bin/env bash
 cd $(printf '%q' "$cwd") || exit 1
-# Via engine launch (→ claude-pane) : le Claude de mission reçoit la surcouche
-# zellij (crun, pane-name, vocabulaire thedev) et les bons flags. ONCE=1 →
+# Via engine launch (→ soldat-pane) : le soldat de mission reçoit la surcouche
+# zellij (soutien, pane-name, vocabulaire thedev) et les bons flags. ONCE=1 →
 # pas de keep-alive ni de sleep ; PANE_NAME=mission-* → le hook SessionStart
-# n'enregistre pas et ne renomme pas (pane géré par crun).
+# n'enregistre pas et ne renomme pas (pane géré par soutien).
 unset CLAUDE_RESUME_ID   # une mission est toujours une session neuve
 export CLAUDE_PANE_ONCE=1 CLAUDE_PANE_NAME=$(printf '%q' "mission-$id")
 $model_line
 exec engine launch -- "\$(cat $(printf '%q' "$wdir/prompt"))"
 EOF
   chmod +x "$wdir/run.sh"
-  crun "mission-$id" -- "$wdir/run.sh"
+  soutien "mission-$id" -- "$wdir/run.sh"
   # Boucle tant que : pas de résultat ET (pane vivant) ET (sous le plafond mission,
-  # s'il y en a un) ET (sous le hardcap). On sonde la vivacité du pane via crun
+  # s'il y en a un) ET (sous le hardcap). On sonde la vivacité du pane via soutien
   # plutôt que de parier sur une durée. grace : laisse 2 sondes au pane pour
-  # apparaître dans le registre crun avant de le croire mort.
+  # apparaître dans le registre soutien avant de le croire mort.
   local waited=0 grace=0 reason="" te tp tmt now idle="${MISSION_IDLE_GRACE:-30}" tidle="${MISSION_TRANSCRIPT_IDLE:-150}"
   while [ ! -f "$out" ]; do
     sleep 3; waited=$((waited+3)); now=$(date +%s)
@@ -194,7 +194,7 @@ EOF
       tmt=$(stat -c %Y "$tp" 2>/dev/null || echo "$now")
       [ $(( now - tmt )) -ge "$tidle" ] && { reason="transcript-idle"; break; }
     fi
-    if [ "$grace" -ge 4 ] && ! crun alive "mission-$id" 2>/dev/null; then reason="dead"; break; fi
+    if [ "$grace" -ge 4 ] && ! soutien alive "mission-$id" 2>/dev/null; then reason="dead"; break; fi
     # Boot-grace : aucun signe de vie de la SESSION (ni transcript_path posé par
     # SessionStart, ni turn-ended) après boot s → la session n'a jamais démarré
     # (dialogue trust/permissions bloquant, crash au boot…). On conclut tout de
@@ -207,8 +207,8 @@ EOF
 
   # Capture d'écran du pane AVANT de le tuer (révèle un dialogue interactif bloquant,
   # une erreur au boot…) → archivée avec la mission. Puis kill.
-  crun logs "mission-$id" > "$wdir/screen.txt" 2>/dev/null || true
-  crun kill "mission-$id" 2>/dev/null
+  soutien logs "mission-$id" > "$wdir/screen.txt" 2>/dev/null || true
+  soutien kill "mission-$id" 2>/dev/null
 
   # SOURCE DE VÉRITÉ : le transcript JSONL (écrit par Claude Code, pas par le LLM).
   # Toujours archivé → on a TOUJOURS le déroulé exact, succès comme échec.

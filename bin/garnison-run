@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # @thedev infra heartbeat autonome (DORMANT, coupe 2026-06 pour cout)
-# heartbeat-run — battement de cœur proactif du serveur (inspiré d'OpenClaw).
+# garnison-run — battement de cœur proactif du serveur (inspiré d'OpenClaw).
 #
-# Un timer systemd --user lance ce script périodiquement. Il exécute un Claude
-# headless qui lit ~/HEARTBEAT.md (checklist : checks récurrents, inbox, rappels),
+# Un timer systemd --user lance ce script périodiquement. Il exécute un soldat
+# en garnison qui lit ~/HEARTBEAT.md (checklist : checks récurrents, inbox, rappels),
 # fait ce qui est dû, journalise, et n'émet « NOTIFY: <msg> » QUE si quelque
 # chose mérite l'attention de l'utilisateur → le script l'envoie sur Telegram.
 #
-#   heartbeat-run                   # un battement (défaut)
-#   heartbeat-run install [30min]   # crée + active le timer systemd --user
-#   heartbeat-run status            # état timer + dernier journal
-#   heartbeat-run off               # désactive le timer
+#   garnison-run                   # un battement (défaut)
+#   garnison-run install [30min]   # crée + active le timer systemd --user
+#   garnison-run status            # état timer + dernier journal
+#   garnison-run off               # désactive le timer
 #
 # Config : ~/.config/heartbeat/heartbeat.env →
 #   TELEGRAM_BOT_TOKEN=…   TELEGRAM_CHAT_ID=…   (notification ; optionnel)
@@ -80,11 +80,11 @@ cmd_install() {
   mkdir -p "$UNIT_DIR"
   cat > "$UNIT_DIR/heartbeat.service" <<EOF
 [Unit]
-Description=Heartbeat proactif (claude headless lit HEARTBEAT.md)
+Description=Heartbeat proactif (soldat en garnison lit HEARTBEAT.md)
 [Service]
 Type=oneshot
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/.local/bin/heartbeat-run
+ExecStart=%h/.local/bin/garnison-run
 EOF
   cat > "$UNIT_DIR/heartbeat.timer" <<EOF
 [Unit]
@@ -113,5 +113,5 @@ case "${1:-}" in
   status)  cmd_status ;;
   off)     systemctl --user disable --now heartbeat.timer && echo "✓ timer coupé" ;;
   ""|now)  cmd_beat ;;
-  *) die "usage: heartbeat-run [now|install [30min]|status|off]" ;;
+  *) die "usage: garnison-run [now|install [30min]|status|off]" ;;
 esac

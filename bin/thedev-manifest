@@ -21,14 +21,14 @@ BIN="$REPO/bin"
 export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
 
 # Ordre d'affichage des catégories + libellé humain.
-CAT_ORDER="picker session naming registry run liens liens-deprecated expose infra"
+CAT_ORDER="etat-major session naming registry run liens liens-deprecated expose infra"
 cat_label() {
   case "$1" in
-    picker)            echo "Lancement (picker)";;
+    etat-major)        echo "Lancement (etat-major)";;
     session)           echo "Session & panes";;
     naming)            echo "Nommage";;
     registry)          echo "Registre";;
-    run)               echo "Exécution (crun)";;
+    run)               echo "Exécution (soutien)";;
     liens)             echo "Liens cross-machine";;
     liens-deprecated)  echo "Liens — déprécié";;
     expose)            echo "Exposition réseau";;
@@ -95,8 +95,8 @@ cmd_render() {
 
 ## Modèle mental
 
-**machine** → **espace** (1 projet × 1 machine, tous pairs) → **pages** (\`code page\` = nvim + stack de Claude · \`sandbox\` = territoire agents/cruns · \`my space\` = terminaux humains) → **panes**.
-Un **crun** = un pane long-running lancé dans la sandbox. Les espaces s'échangent des **missions** cross-machine (interactif, sur l'abonnement). Vocabulaire complet : \`NAMING.md\` · liens : \`plans/thedev-liens.md\`.
+**machine** → **equipe** (1 projet × 1 machine, tous pairs) → **pages** (\`le front\` = nvim + stack de Claude · \`le camp\` = territoire agents/soutiens · \`la tente\` = terminaux humains) → **panes**.
+Un **soutien** = un pane long-running lancé dans le camp. Les equipes s'échangent des **missions** cross-machine (interactif, sur l'abonnement). Vocabulaire complet : \`NAMING.md\` · liens : \`plans/thedev-liens.md\`.
 
 ## Commandes
 EOF

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# @thedev liens état des automatisations thedev de CETTE machine (timers systemd --user)
-# thedev-autos — une ligne TSV par automatisation : <état>\t<nom>\t<prochain>\t<dernier>
+# @thedev liens état de la garde thedev de CETTE machine (timers systemd --user)
+# garde-list — une ligne TSV par garde : <état>\t<nom>\t<prochain>\t<dernier>
 #   état : running (une mission feed tourne) · active (timer planifié) · inactive (arrêté)
-# Convention : une automatisation thedev = un TIMER systemd --user dont le service activé a
+# Convention : une garde thedev = un TIMER systemd --user dont le service activé a
 # une Description contenant « thedev ». → tout nouveau feed apparaît tout seul, zéro liste à tenir.
-# Lu par thedev-status ET l'accueil (écran infos), en local et via ssh.
+# Lu par thedev-status ET l'etat-major (écran infos), en local et via ssh.
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 ROOT="$HOME/.cache/thedev"
 command -v systemctl >/dev/null 2>&1 || exit 0
@@ -49,41 +49,41 @@ systemctl --user list-unit-files --type=timer --no-legend 2>/dev/null | awk '{pr
     [ -n "$last" ] || last="?"
   fi
 
-  # espace cible : d'abord l'espace ÉPINGLÉ dans l'ExecStart (« feed <name> <espace> »),
+  # equipe cible : d'abord l'equipe ÉPINGLÉE dans l'ExecStart (« feed <name> <equipe> »),
   # qui est le lien réel et déterministe ; sinon, déduit de l'historique des missions.
-  esp=""
+  eq=""
   argv=$(systemctl --user show "$svc" -p ExecStart --value 2>/dev/null | sed -n 's/.*argv\[\]=\([^;]*\).*/\1/p')
-  esp=$(printf '%s' "$argv" | awk 'NF>=3{print $3}')   # « feed <name> <espace> » → $3
-  if [ -z "$esp" ]; then
+  eq=$(printf '%s' "$argv" | awk 'NF>=3{print $3}')   # « feed <name> <equipe> » → $3
+  if [ -z "$eq" ]; then
     ep=$(ls -dt "$ROOT"/spaces/*/done/feed-"$name"-* "$ROOT"/spaces/*/work/feed-"$name"-* "$ROOT"/spaces/*/inbox/feed-"$name"-*.mission 2>/dev/null | head -1)
-    [ -n "$ep" ] && { esp="${ep#"$ROOT"/spaces/}"; esp="${esp%%/*}"; }
+    [ -n "$ep" ] && { eq="${ep#"$ROOT"/spaces/}"; eq="${eq%%/*}"; }
   fi
 
-  # ESPACE OUVERT ? = watcher vivant (links/<esp> présent ET son watcher_pid en vie).
-  # cwd = où relancer un thedev pour réactiver l'auto : depuis links/ si ouvert, sinon
-  # depuis le run.sh d'une mission archivée (on sait donc OÙ même quand l'espace est fermé).
+  # EQUIPE OUVERTE ? = watcher vivant (links/<eq> présent ET son watcher_pid en vie).
+  # cwd = où relancer un thedev pour réactiver la garde : depuis links/ si ouvert, sinon
+  # depuis le run.sh d'une mission archivée (on sait donc OÙ même quand l'equipe est fermée).
   open=0; cwd=""
-  if [ -n "$esp" ] && [ -f "$ROOT/links/$esp" ]; then
-    cwd=$(sed -n 's/^cwd=//p' "$ROOT/links/$esp" 2>/dev/null | head -1)
-    wpid=$(sed -n 's/^watcher_pid=//p' "$ROOT/links/$esp" 2>/dev/null | head -1)
+  if [ -n "$eq" ] && [ -f "$ROOT/links/$eq" ]; then
+    cwd=$(sed -n 's/^cwd=//p' "$ROOT/links/$eq" 2>/dev/null | head -1)
+    wpid=$(sed -n 's/^watcher_pid=//p' "$ROOT/links/$eq" 2>/dev/null | head -1)
     [ -n "$wpid" ] && kill -0 "$wpid" 2>/dev/null && open=1
   fi
-  if [ -z "$cwd" ] && [ -n "$esp" ]; then
-    rs=$(ls -dt "$ROOT"/spaces/"$esp"/done/feed-"$name"-*/run.sh 2>/dev/null | head -1)
+  if [ -z "$cwd" ] && [ -n "$eq" ]; then
+    rs=$(ls -dt "$ROOT"/spaces/"$eq"/done/feed-"$name"-*/run.sh 2>/dev/null | head -1)
     [ -n "$rs" ] && cwd=$(sed -n 's/^cd \(.*\) || exit.*/\1/p' "$rs" 2>/dev/null | head -1)
   fi
-  # Dernier recours : espace fermé ET jamais de mission archivée (ex. veille qui n'a
+  # Dernier recours : equipe fermée ET jamais de mission archivée (ex. veille qui n'a
   # pas encore tourné) → retrouver le dossier par son NOM, sinon « relancer » depuis
-  # l'accueil ne sait pas OÙ rouvrir le thedev (cwd « ? », Entrée sans effet).
-  #   1) $HOME/<esp> (cas courant : l'espace est un dossier direct du home),
-  #   2) sinon un cwd de transcript Claude dont le basename == esp ET qui existe encore.
-  if [ -z "$cwd" ] && [ -n "$esp" ]; then
-    if [ -d "$HOME/$esp" ]; then
-      cwd="$HOME/$esp"
+  # l'etat-major ne sait pas OÙ rouvrir le thedev (cwd « ? », Entrée sans effet).
+  #   1) $HOME/<eq> (cas courant : l'equipe est un dossier direct du home),
+  #   2) sinon un cwd de transcript Claude dont le basename == eq ET qui existe encore.
+  if [ -z "$cwd" ] && [ -n "$eq" ]; then
+    if [ -d "$HOME/$eq" ]; then
+      cwd="$HOME/$eq"
     elif [ -d "$HOME/.claude/projects" ]; then
       cwd=$(grep -rhoE '"cwd":"[^"]+"' "$HOME/.claude/projects" 2>/dev/null \
             | sed 's/"cwd":"//; s/"$//' | sort -u \
-            | while IFS= read -r p; do [ "$(basename "$p")" = "$esp" ] && [ -d "$p" ] && { printf '%s' "$p"; break; }; done)
+            | while IFS= read -r p; do [ "$(basename "$p")" = "$eq" ] && [ -d "$p" ] && { printf '%s' "$p"; break; }; done)
     fi
   fi
 
@@ -91,5 +91,5 @@ systemctl --user list-unit-files --type=timer --no-legend 2>/dev/null | awk '{pr
   mdesc=$(printf '%s' "$desc" | sed -n 's/.*(\(.*\)).*/\1/p')
   [ -n "$mdesc" ] || mdesc=$(printf '%s' "$desc" | sed 's/^[Tt]hedev[[:space:]]*[—:-]*[[:space:]]*//')
 
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$state" "$name" "$next" "$last" "$esp" "$cwd" "$mdesc" "$open"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$state" "$name" "$next" "$last" "$eq" "$cwd" "$mdesc" "$open"
 done

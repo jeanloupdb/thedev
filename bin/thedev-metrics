@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # @thedev infra métriques limitantes locales (RAM/disque/load) — source unique
-# Affichées en permanence : l'accueil (ligne du bas) et la ligne « ＋ Nouveau Claude ».
+# Affichées en permanence : l'etat-major (ligne du bas) et la ligne « ＋ Nouveau soldat ».
 #   thedev-metrics            bande ANSI colorée (vert<70 · jaune<88 · rouge sinon)
-#   thedev-metrics --raw      valeurs machine, 1/ligne (pour le picker, qui colore en curses)
+#   thedev-metrics --raw      valeurs machine, 1/ligne (pour l'etat-major, qui colore en curses)
 # RAM% et disque% = couperets DURS (OOM / écritures qui échouent). load = saturation
 # (à comparer aux cœurs). Usage Claude (fenêtre Max 5x) = claude-window-usage (endpoint
 # OAuth interne, GRATUIT) — le couperet le plus limitant pour le travail d'agents.

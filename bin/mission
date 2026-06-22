@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
-# @thedev liens envoie une mission a un espace distant (async par defaut, result/list/cancel)
-# mission — envoie une MISSION à un ESPACE distant (lien thedev) et récupère le RÉSULTAT.
+# @thedev liens envoie une mission a une equipe distante (async par defaut, result/list/cancel)
+# mission — envoie une MISSION à une EQUIPE distante (lien thedev) et récupère le RÉSULTAT.
 # Voir NAMING.md + plans/thedev-liens.md. CÔTÉ ÉMETTEUR (cross-machine, via SSH).
 #
-#   mission [--model <m>] [--wait] <machine>/<espace> "<texte>"
+#   mission [--model <m>] [--wait] <machine>/<equipe> "<texte>"
 #                                   envoie une mission. Par DÉFAUT ASYNCHRONE : dépose,
 #                                   rend la main, affiche l'id. --wait = bloque jusqu'au
 #                                   résultat (pratique pour relayer dans la foulée).
 #   mission result <machine> <id>   récupère le résultat (ou l'état : en attente / en cours)
 #   mission list   <machine>        liste les missions et leur état sur la machine
 #   mission cancel <machine> <id>   annule une mission EN ATTENTE (pas encore prise)
-#   mission ls     <machine>        liste les espaces ouverts aux missions
+#   mission ls     <machine>        liste les equipes ouvertes aux missions
 #
 # Async par défaut → on n'est plus OTAGE de la connexion SSH : le résultat est écrit
 # côté serveur et reste récupérable plus tard via `mission result`, même si le laptop
 # se ferme ou que le wifi saute entre-temps.
 # Réglages : TIMEOUT=<sec> = plafond DUR optionnel (défaut 0 = pas de plafond ; la fin
 # de mission est détectée par vivacité du pane + sentinelle ⭐2, avec un hardcap 6 h côté
-# watcher). --model <m> = modèle du Claude de mission. L'espace doit être OUVERT.
+# watcher). --model <m> = modèle du soldat de mission. L'equipe doit être OUVERTE.
 set -u
 me="$(basename "$0")"
 from="$( { cat "$HOME/.config/dev-vps" 2>/dev/null || hostname -s; } )/${ZELLIJ_SESSION_NAME:-shell}"
@@ -25,19 +25,19 @@ SSH="ssh -o ConnectTimeout=10"
 
 cmd_ls() {
   local machine="$1"
-  echo "Espaces joignables sur $machine :"
-  $SSH "$machine" 'shopt -s nullglob; n=0; for f in ~/.cache/thedev/links/*; do e=$(basename "$f"); c=$(sed -n "s/^cwd=//p" "$f"); printf "  ● %s  (%s)\n" "$e" "$c"; n=$((n+1)); done; if [ $n -eq 0 ]; then echo "  (aucun espace ouvert)"; fi; exit 0' 2>/dev/null \
+  echo "Equipes joignables sur $machine :"
+  $SSH "$machine" 'shopt -s nullglob; n=0; for f in ~/.cache/thedev/links/*; do e=$(basename "$f"); c=$(sed -n "s/^cwd=//p" "$f"); printf "  ● %s  (%s)\n" "$e" "$c"; n=$((n+1)); done; if [ $n -eq 0 ]; then echo "  (aucune equipe ouverte)"; fi; exit 0' 2>/dev/null \
     || { echo "  ✗ injoignable (ssh $machine)"; return 1; }
 }
 
-# Liste les missions de TOUS les espaces de la machine + leur état (file/en cours/fini).
+# Liste les missions de TOUTES les equipes de la machine + leur état (file/en cours/fini).
 cmd_list() {
   local machine="$1"
   $SSH "$machine" '
     base="$HOME/.cache/thedev/spaces"; shopt -s nullglob
-    emit(){ rel="${1#$base/}"; esp="${rel%%/*}"; printf "  %-30s  %-11s  %s\n" "$2" "$3" "$esp"; }
+    emit(){ rel="${1#$base/}"; eq="${rel%%/*}"; printf "  %-30s  %-11s  %s\n" "$2" "$3" "$eq"; }
     n=0
-    printf "  %-30s  %-11s  %s\n" MISSION ÉTAT ESPACE
+    printf "  %-30s  %-11s  %s\n" MISSION ÉTAT EQUIPE
     for f in "$base"/*/inbox/*.mission;  do emit "$f" "$(basename "$f" .mission)" "en attente"; n=$((n+1)); done
     for d in "$base"/*/work/*;           do [ -d "$d" ] && { emit "$d" "$(basename "$d")" "en cours"; n=$((n+1)); }; done
     for f in "$base"/*/outbox/*.result;  do emit "$f" "$(basename "$f" .result)" "fini"; n=$((n+1)); done
@@ -46,7 +46,7 @@ cmd_list() {
     || { echo "  ✗ injoignable (ssh $machine)"; return 1; }
 }
 
-# Récupère le résultat d'une mission par id (cherche dans tous les espaces).
+# Récupère le résultat d'une mission par id (cherche dans toutes les equipes).
 cmd_result() {
   local machine="$1" id="$2"
   $SSH "$machine" "
@@ -72,22 +72,22 @@ cmd_cancel() {
 
 cmd_send() {
   local addr="$1" text="$2" model="$3" wait_flag="$4"
-  local machine="${addr%%/*}" espace="${addr#*/}"
-  [ "$machine" = "$addr" ] && { echo "✗ format : <machine>/<espace>"; exit 1; }
+  local machine="${addr%%/*}" equipe="${addr#*/}"
+  [ "$machine" = "$addr" ] && { echo "✗ format : <machine>/<equipe>"; exit 1; }
   local id="m-$(date +%Y%m%d-%H%M%S)-$RANDOM"
   local plafond="${TIMEOUT:-0}"
   local model_hdr=""; [ -n "$model" ] && model_hdr="Model: $model"$'\n'
-  # 1. l'espace est-il ouvert ?
-  if ! $SSH "$machine" "[ -f \$HOME/.cache/thedev/links/$espace ]" 2>/dev/null; then
-    echo "✗ '$espace' n'est pas ouvert aux missions sur $machine."
-    echo "  (là-bas, dans l'espace : thedev-link open ; ici : mission ls $machine)"
+  # 1. l'equipe est-elle ouverte ?
+  if ! $SSH "$machine" "[ -f \$HOME/.cache/thedev/links/$equipe ]" 2>/dev/null; then
+    echo "✗ '$equipe' n'est pas ouverte aux missions sur $machine."
+    echo "  (là-bas, dans l'equipe : thedev-link open ; ici : mission ls $machine)"
     exit 1
   fi
   # 2. dépôt ATOMIQUE : on écrit en .tmp puis `mv` (atomique) → le watcher, qui
   #    globe inbox/*.mission, ne peut JAMAIS tomber sur un fichier à moitié écrit.
   printf 'From: %s\nCreated: %s\nTimeout: %s\n%s\n%s\n' \
       "$from" "$(date -Iseconds)" "$plafond" "$model_hdr" "$text" \
-    | $SSH "$machine" "d=\$HOME/.cache/thedev/spaces/$espace/inbox; mkdir -p \"\$d\"
+    | $SSH "$machine" "d=\$HOME/.cache/thedev/spaces/$equipe/inbox; mkdir -p \"\$d\"
         cat > \"\$d/$id.mission.tmp\" && mv \"\$d/$id.mission.tmp\" \"\$d/$id.mission\"" \
     || { echo "✗ échec dépôt mission"; exit 1; }
   # 3a. ASYNC (défaut) : on rend la main, le résultat se récupère plus tard.
@@ -97,10 +97,10 @@ cmd_send() {
     return 0
   fi
   # 3b. --wait : bloque jusqu'au résultat (une seule connexion). Si elle saute, le
-  #     résultat reste récupérable via 'mission result' (l'espace l'a écrit côté serveur).
+  #     résultat reste récupérable via 'mission result' (l'equipe l'a écrit côté serveur).
   echo "→ mission $id → $addr — attente du résultat (--wait)…"
   local loops; if [ "$plafond" -eq 0 ] 2>/dev/null; then loops=$((21600/3)); else loops=$(( (plafond+60)/3 )); fi
-  $SSH "$machine" "f=\$HOME/.cache/thedev/spaces/$espace/outbox/$id.result
+  $SSH "$machine" "f=\$HOME/.cache/thedev/spaces/$equipe/outbox/$id.result
     for i in \$(seq 1 $loops); do [ -f \"\$f\" ] && { echo '──────── RÉSULTAT ────────'; cat \"\$f\"; exit 0; }; sleep 3; done
     exit 7" \
     || { echo "✗ pas de résultat dans le délai — récupère-le plus tard : mission result $machine $id"; exit 1; }
@@ -114,7 +114,7 @@ case "${1:-}" in
   cancel) shift; { [ -n "${1:-}" ] && [ -n "${2:-}" ]; } || { echo "usage: $me cancel <machine> <id>"; exit 1; }; cmd_cancel "$1" "$2"; exit $? ;;
 esac
 
-# envoi : --model / --wait optionnels avant <machine>/<espace> "<texte>"
+# envoi : --model / --wait optionnels avant <machine>/<equipe> "<texte>"
 model=""; wait_flag=""
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -124,7 +124,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 if [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
-  printf 'usage:\n  %s [--model <m>] [--wait] <machine>/<espace> "<texte>"\n  %s result|cancel <machine> <id>\n  %s list|ls <machine>\n' "$me" "$me" "$me"
+  printf 'usage:\n  %s [--model <m>] [--wait] <machine>/<equipe> "<texte>"\n  %s result|cancel <machine> <id>\n  %s list|ls <machine>\n' "$me" "$me" "$me"
   exit 1
 fi
 cmd_send "$1" "$2" "$model" "$wait_flag"

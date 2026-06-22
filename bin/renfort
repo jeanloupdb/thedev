@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# @thedev session ouvre un Claude secondaire empile (aside) sans toucher la session
-# claude-aside — ouvre un Claude SUPPLÉMENTAIRE (numéroté : claude 2, claude 3…)
-# dans la stack du tab courant, sans toucher au Claude principal ni à sa session
+# @thedev session ouvre un soldat secondaire empile (aside) sans toucher la session
+# renfort — ouvre un soldat SUPPLÉMENTAIRE (numéroté : claude 2, claude 3…)
+# dans la stack du tab courant, sans toucher au soldat principal ni à sa session
 # (pas de `dev`, donc pas d'écrasement).
 #
 # À lancer depuis le pane `shell` :
@@ -9,14 +9,14 @@
 #   aside -f        # version flottante (overlay) au lieu de la stack
 #   aside <dir>     # dans un autre dossier
 #
-# Pour FERMER un Claude secondaire : tape simplement /exit dedans → le pane se
+# Pour FERMER un soldat secondaire : tape simplement /exit dedans → le pane se
 # ferme tout seul (close-on-exit). Aucun raccourci à retenir.
 #
 # Session NEUVE (CLAUDE_RESUME_ID forcé vide). Le nouveau pane est inséré dans la
 # stack et remonté au-dessus de shell/git (best-effort : zellij CLI ne permet pas
 # un placement exact garanti — ajuste MOVE_UP si l'ordre n'est pas bon).
 
-[ -n "${ZELLIJ:-}" ] || { echo "claude-aside : pas dans une session zellij." >&2; exit 1; }
+[ -n "${ZELLIJ:-}" ] || { echo "renfort : pas dans une session zellij." >&2; exit 1; }
 
 float=""
 dir="$(pwd -P)"
@@ -39,7 +39,7 @@ else
   count=$(zellij action dump-layout 2>/dev/null | grep -cE 'name="claude')
   [ "$count" -lt 1 ] 2>/dev/null && count=1
   name="claude $((count + 1))"
-  # Sur un VPS distant : même repère que le Claude principal (« claude N [indice] »).
+  # Sur un VPS distant : même repère que le soldat principal (« claude N [indice] »).
   [ -f "$HOME/.config/dev-vps" ] && name="$name [$(cat "$HOME/.config/dev-vps")]"
 fi
 

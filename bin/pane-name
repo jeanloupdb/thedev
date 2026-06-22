@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
-# @thedev naming nomme et persiste le titre d'un pane Claude (prefixe VPS auto)
+# @thedev naming nomme et persiste le titre d'un pane soldat (prefixe VPS auto)
 # pane-name "<label>" — renomme le pane zellij courant ET persiste ce nom pour
 # la conversation Claude en cours, afin de le retrouver après avoir quitté puis
 # relancé (le hook SessionStart le ré-applique à la reprise).
 #
-# À utiliser à la place de `zellij action rename-pane` brut quand tu (Claude)
+# À utiliser à la place de `zellij action rename-pane` brut quand tu (soldat)
 # nommes ton propre pane « <sujet> » (sans glyphe : le losange ◆ est ajouté
 # automatiquement quand tu travailles, retiré au repos). Voir zellij-pane-prompt.md.
 
-# Assainit : le registre est du TSV (1 ligne par Claude) → tab/newline interdits
+# Assainit : le registre est du TSV (1 ligne par soldat) → tab/newline interdits
 # dans le label, sinon la ligne se corrompt.
 name=$(printf '%s' "$*" | tr '\t\n\r' '   ' | sed -e 's/  */ /g' -e 's/^ *//' -e 's/ *$//')
 [ -n "$name" ] || { echo "usage: pane-name <label>" >&2; exit 1; }
 
 # Le losange ◆ est l'indicateur d'ACTIVITÉ (ajouté/retiré aux bornes de tour par
-# le hook), jamais un préfixe de nom : on le strippe si Claude l'a mis (vieille
+# le hook), jamais un préfixe de nom : on le strippe si le soldat l'a mis (vieille
 # habitude / ancienne guidance), pour ne stocker que le nom nu.
 name=${name#◆ }
 
 # Sur un VPS : insère le repère [<vps>] automatiquement (« [indice] fix x »).
-# Claude n'a plus à penser au préfixe ; pas de doublon s'il l'a déjà mis.
+# Le soldat n'a plus à penser au préfixe ; pas de doublon s'il l'a déjà mis.
 if [ -f "$HOME/.config/dev-vps" ]; then
   vps=$(cat "$HOME/.config/dev-vps")
   case "$name" in
@@ -28,16 +28,16 @@ if [ -f "$HOME/.config/dev-vps" ]; then
   esac
 fi
 
-# Si un tour est en cours (marqueur busy posé par le hook dev-claude-track),
+# Si un tour est en cours (marqueur busy posé par le hook soldat-track),
 # garde l'effet ◆ sur le titre AFFICHÉ — mais persiste toujours le nom NU au
 # registre (le hook Stop ré-appliquera le nom nu en fin de tour).
 display="$name"
-if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && [ -e "$HOME/.cache/dev-claude-busy/$CLAUDE_CODE_SESSION_ID" ]; then
+if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && [ -e "$HOME/.cache/soldat-busy/$CLAUDE_CODE_SESSION_ID" ]; then
   display="◆ $name"
 fi
 [ -n "${ZELLIJ_PANE_ID:-}" ] && zellij action rename-pane -p "$ZELLIJ_PANE_ID" "$display" 2>/dev/null
 
 # Persiste le nom pour CETTE conversation (id exposé par Claude dans l'env).
-[ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && dev-claude-reg setname "$CLAUDE_CODE_SESSION_ID" "$name" 2>/dev/null
+[ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && reg-soldat setname "$CLAUDE_CODE_SESSION_ID" "$name" 2>/dev/null
 
 exit 0

@@ -1,44 +1,49 @@
 # thedev — manifest
 
 > **Généré** par `thedev-manifest` depuis les tags `# @thedev` des scripts `bin/`.
-> Ne pas éditer à la main. Régénérer : `thedev-manifest --write`. 27 commandes.
+> Ne pas éditer à la main. Régénérer : `thedev-manifest --write`. 34 commandes.
 
 ## Modèle mental
 
-**machine** → **espace** (1 projet × 1 machine, tous pairs) → **pages** (`code page` = nvim + stack de Claude · `sandbox` = territoire agents/cruns · `my space` = terminaux humains) → **panes**.
-Un **crun** = un pane long-running lancé dans la sandbox. Les espaces s'échangent des **missions** cross-machine (interactif, sur l'abonnement). Vocabulaire complet : `NAMING.md` · liens : `plans/thedev-liens.md`.
+**machine** → **equipe** (1 projet × 1 machine, tous pairs) → **pages** (`le front` = nvim + stack de Claude · `le camp` = territoire agents/soutiens · `la tente` = terminaux humains) → **panes**.
+Un **soutien** = un pane long-running lancé dans le camp. Les equipes s'échangent des **missions** cross-machine (interactif, sur l'abonnement). Vocabulaire complet : `NAMING.md` · liens : `plans/thedev-liens.md`.
 
 ## Commandes
 
-### Lancement (picker)
-- **dev-picker** — selecteur de machine/projet au lancement (fzf, multi-serveurs)
+### Lancement (etat-major)
+- **etat-major** — selecteur de machine/projet au lancement (fzf, multi-serveurs)
 
 ### Session & panes
-- **agents-welcome** — pane d'accueil de la sandbox (badge VPS)
-- **aside-button** — barre + pour ajouter un Claude aside a la stack
-- **claude-aside** — ouvre un Claude secondaire empile (aside) sans toucher la session
-- **claude-pane** — lance le Claude principal d'un pane (surcouche prompt, remote-control, auto-open liens)
-- **dev-quit-impact** — résumé COMPACT de ce que « fermer cet espace » va couper (Ctrl+Q).
-- **dev-quit-menu** — menu de fermeture propre de la session
+- **aside-button** — barre + pour ajouter un soldat aside a la stack
+- **debrief-impact** — résumé COMPACT de ce que « fermer cette equipe » va couper (Ctrl+Q).
+- **debrief-menu** — menu de fermeture propre de la session
 - **editor-pane** — pane nvim de la code page (badge VPS)
+- **garnison** — pane de garnison de la sandbox (badge VPS)
 - **git-pane** — pane git-centric (alias g/gs)
+- **lever-equipe** — crée un nouveau projet en déléguant le bootstrap à un soldat distant (VPS auto)
+- **renfort** — ouvre un soldat secondaire empile (aside) sans toucher la session
 - **shell-pane** — pane shell perso de my space (badge VPS)
+- **soldat-pane** — lance le soldat principal d'un pane (surcouche prompt, remote-control, auto-open liens)
+- **team-open** — ouvre un equipe (local ou distant) DÉTACHÉ avec un soldat déjà briefé (prompt injecté)
 
 ### Nommage
-- **pane-name** — nomme et persiste le titre d'un pane Claude (prefixe VPS auto)
+- **claude-goto-waiting** — saute au pane soldat qui « t'attend » (QCM bloquant) — bind Alt+W
+- **pane-name** — nomme et persiste le titre d'un pane soldat (prefixe VPS auto)
+- **pane-pulse** — anime (pulse ◆↔◇) le titre des panes soldat en cours de réponse
+- **wait-bar** — alerte rouge « action t'attend · Alt+W » dans la barre zjstatus
 
 ### Registre
-- **dev-claude-reg** — registre des Claude ouverts (resume + noms de pane persistants)
+- **reg-soldat** — registre des soldats ouverts (resume + noms de pane persistants)
 
-### Exécution (crun)
-- **crun** — lance et gere tout process long-running dans la sandbox (dedup, vivacite, crun alive)
+### Exécution (soutien)
+- **soutien** — lance et gere tout process long-running dans la sandbox (dedup, vivacite, soutien alive)
 
 ### Liens cross-machine
-- **mission** — envoie une mission a un espace distant (async par defaut, result/list/cancel)
+- **garde-list** — état de la garde thedev de CETTE machine (timers systemd --user)
+- **mission** — envoie une mission a une equipe distante (async par defaut, result/list/cancel)
 - **ship** — pousse un dossier local vers une machine (rsync, respecte gitignore)
-- **thedev-autos** — état des automatisations thedev de CETTE machine (timers systemd --user)
-- **thedev-link** — ouvre un espace aux missions entrantes (watcher inbox, modele via Model:)
-- **thedev-status** — board cross-machine compact (espaces ouverts, missions en cours, cruns)
+- **thedev-link** — ouvre une equipe aux missions entrantes (watcher inbox, modele via Model:)
+- **thedev-status** — board cross-machine compact (equipes ouvertes, missions en cours, soutiens)
 
 ### Liens — déprécié
 - **cremote** — commande claude one-shot distante (DEPRECATED: claude -p = pool credits, prefere mission)
@@ -48,12 +53,14 @@ Un **crun** = un pane long-running lancé dans la sandbox. Les espaces s'échang
 
 ### Infra
 - **claude-window-usage** — % d'utilisation de la fenêtre de rate-limit Max 5x (5h/7d) — GRATUIT
-- **heartbeat-run** — heartbeat autonome (DORMANT, coupe 2026-06 pour cout)
+- **garnison-run** — heartbeat autonome (DORMANT, coupe 2026-06 pour cout)
+- **thedev-doctor** — diagnostic d'installation : deps, scripts symlinkés, engine, hooks, lancement
 - **thedev-manifest** — genere le manifest de thedev depuis les tags @thedev des scripts bin/
 - **thedev-metrics** — métriques limitantes locales (RAM/disque/load) — source unique
-- **thedev-propose** — proposeur de tâches par signaux (parc git + todos + autos) — zéro IA, zéro coût
+- **thedev-propose** — proposeur de tâches par signaux (parc git + todos + la garde) — zéro IA, zéro coût
 
 ### Autres
+- **engine** (moteur) — façade moteur-agnostique : lance/liste/lit/observe un agent (voir ENGINE-ADAPTER.md)
 - **feed** (veille) — déclenche un feed (cron-as-mission) : dépose une mission locale dans l'inbox
 - **tg** (veille) — envoie texte/photo sur Telegram (Bot API, curl) — livraison des feeds & alertes
 

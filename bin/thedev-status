@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# @thedev liens board cross-machine compact (espaces ouverts, missions en cours, cruns)
+# @thedev liens board cross-machine compact (equipes ouvertes, missions en cours, soutiens)
 # thedev-status — tableau de bord cross-machine de thedev, pour l'orchestrateur.
 # Fan-out ssh sur chaque machine connue (+ local), digère l'état SUR PLACE et
 # n'en ramène qu'un résumé DENSE : but explicite = polluer un minimum le
 # contexte du Claude qui l'appelle. Read-only.
 #
 #   thedev-status        board compact (défaut) — 1 ligne/machine au repos
-#   thedev-status -v     verbeux : noms des cruns vivants en plus (pour TOI, pas pour l'orchestrateur)
+#   thedev-status -v     verbeux : noms des soutiens vivants en plus (pour TOI, pas pour l'orchestrateur)
 #   thedev-status __probe   interne : état machine-local compact (appelé via ssh)
 #
 # Sources : ~/.config/thedev-machines (1 hôte ssh par ligne, # = commentaire).
@@ -27,36 +27,36 @@ human_age() {  # secondes → "12m" / "3h" / "2j"
 
 # ── PROBE : tourne SUR une machine, émet des lignes taguées compactes ─────────
 #   S <open_csv> <n_miss> <n_alive> <n_dead>
-#   M <id> <age> <espace>          (1 par mission en cours)
-#   C <●|○> <name>                 (1 par crun)
+#   M <id> <age> <equipe>          (1 par mission en cours)
+#   C <●|○> <name>                 (1 par soutien)
 cmd_probe() {
   local now; now=$(date +%s)
   shopt -s nullglob
 
-  # espaces ouverts
+  # equipes ouvertes
   local open=() f
   for f in "$THEDEV"/links/*; do open+=("$(basename "$f")"); done
   local open_csv="-"; [ "${#open[@]}" -gt 0 ] && open_csv=$(IFS=,; echo "${open[*]}")
 
-  # missions en cours : spaces/<esp>/work/<id>/ (pas encore déplacées en done/)
-  local n_miss=0 d id esp age
+  # missions en cours : spaces/<eq>/work/<id>/ (pas encore déplacées en done/)
+  local n_miss=0 d id eq age
   for d in "$THEDEV"/spaces/*/work/*/; do
     [ -d "$d" ] || continue
-    id=$(basename "$d"); esp=$(basename "$(dirname "$(dirname "$d")")")
+    id=$(basename "$d"); eq=$(basename "$(dirname "$(dirname "$d")")")
     age=$(human_age $(( now - $(stat -c %Y "$d" 2>/dev/null || echo "$now") )))
-    printf 'M\t%s\t%s\t%s\n' "$id" "$age" "$esp"
+    printf 'M\t%s\t%s\t%s\n' "$id" "$age" "$eq"
     n_miss=$((n_miss+1))
   done
 
-  # cruns : registre crun + vivacité (crun alive)
-  # chemin absolu : le probe tourne en ssh non-interactif → crun pas dans le PATH
-  local crun="$HOME/.local/bin/crun" n_alive=0 n_dead=0 name mark
-  if [ -f "$HOME/.cache/claude-agents" ]; then
+  # soutiens : registre soutien + vivacité (soutien alive)
+  # chemin absolu : le probe tourne en ssh non-interactif → soutien pas dans le PATH
+  local soutien="$HOME/.local/bin/soutien" n_alive=0 n_dead=0 name mark
+  if [ -f "$HOME/.cache/thedev-soutien" ]; then
     while IFS=$'\t' read -r name _; do
       [ -n "$name" ] || continue
-      if "$crun" alive "$name" 2>/dev/null; then mark="●"; n_alive=$((n_alive+1)); else mark="○"; n_dead=$((n_dead+1)); fi
+      if "$soutien" alive "$name" 2>/dev/null; then mark="●"; n_alive=$((n_alive+1)); else mark="○"; n_dead=$((n_dead+1)); fi
       printf 'C\t%s\t%s\n' "$mark" "$name"
-    done < "$HOME/.cache/claude-agents"
+    done < "$HOME/.cache/thedev-soutien"
   fi
 
   printf 'S\t%s\t%s\t%s\t%s\n' "$open_csv" "$n_miss" "$n_alive" "$n_dead"
@@ -78,17 +78,17 @@ render_machine() {
   if [ "$open" = "-" ] && [ "$n_miss" = "0" ] && [ "$n_alive" = "0" ] && [ "$n_dead" = "0" ]; then
     printf '%-9s idle\n' "$machine"; return
   fi
-  printf '%-9s esp:%-14s miss:%s  crun:●%s ○%s\n' "$machine" "$open" "$n_miss" "$n_alive" "$n_dead"
+  printf '%-9s eq:%-14s miss:%s  soutien:●%s ○%s\n' "$machine" "$open" "$n_miss" "$n_alive" "$n_dead"
 
-  # détails toujours utiles : missions en cours + cruns MORTS (= un truc a cassé)
-  local id age esp m mk nm
-  while IFS=$'\t' read -r _ id age esp; do
-    [ -n "$id" ] && printf '            ↳ %s  (%s, %s)\n' "$id" "$esp" "$age"
+  # détails toujours utiles : missions en cours + soutiens MORTS (= un truc a cassé)
+  local id age eq m mk nm
+  while IFS=$'\t' read -r _ id age eq; do
+    [ -n "$id" ] && printf '            ↳ %s  (%s, %s)\n' "$id" "$eq" "$age"
   done < <(grep '^M' "$pf")
   while IFS=$'\t' read -r _ mk nm; do
     [ "$mk" = "○" ] && printf '            ↳ ○ %s (mort)\n' "$nm"
   done < <(grep '^C' "$pf")
-  # noms des cruns vivants : seulement en -v (sinon on pollue)
+  # noms des soutiens vivants : seulement en -v (sinon on pollue)
   if [ "$verbose" = "1" ]; then
     while IFS=$'\t' read -r _ mk nm; do
       [ "$mk" = "●" ] && printf '            ↳ ● %s\n' "$nm"
@@ -133,6 +133,6 @@ case "${1:-}" in
   __probe) cmd_probe ;;
   -v)      cmd_board -v ;;
   "")      cmd_board ;;
-  -h|--help) printf 'usage: %s [-v]\n  board cross-machine compact (defaut)\n  -v : + noms des cruns vivants\n' "$me" ;;
+  -h|--help) printf 'usage: %s [-v]\n  board cross-machine compact (defaut)\n  -v : + noms des soutiens vivants\n' "$me" ;;
   *)       printf 'usage: %s [-v]\n' "$me"; exit 1 ;;
 esac

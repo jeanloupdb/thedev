@@ -161,7 +161,7 @@ keybinds clear-defaults=true {
         bind "Alt k" { MoveFocus "up"; }
         bind "Alt l" { MoveFocusOrTab "right"; }
         bind "Alt n" { NewPane; }
-        bind "Alt c" { Run "claude-aside" { close_on_exit true; }; }
+        bind "Alt c" { Run "renfort" { close_on_exit true; }; }
         bind "Alt o" { MoveTab "right"; }
         bind "Alt p" { TogglePaneInGroup; }
         bind "Alt Shift p" { ToggleGroupMarking; }
@@ -187,7 +187,7 @@ keybinds clear-defaults=true {
         // fermer (tuer) la session. Toute autre touche = annuler. (Détacher reste
         // aussi sur Alt+s d, fermer sur Alt+s q.)
         bind "Ctrl q" {
-            Run "dev-quit-menu" {
+            Run "debrief-menu" {
                 floating true
                 close_on_exit true
                 name "quitter"

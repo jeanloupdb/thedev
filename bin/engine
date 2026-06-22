@@ -10,7 +10,7 @@ set -u
 THEDEV_ENGINE="${THEDEV_ENGINE:-claude}"
 
 # Repo thedev résolu depuis l'emplacement RÉEL de ce script (relocatable, marche
-# même appelé via symlink depuis ~/.local/bin) — même idiome que claude-pane.
+# même appelé via symlink depuis ~/.local/bin) — même idiome que soldat-pane.
 _self="$0"; case "$_self" in */*) ;; *) _self="$(command -v -- "$_self")" ;; esac
 ROOT="$(cd "$(dirname "$(readlink -f -- "$_self")")/.." && pwd)"
 BACKEND="$ROOT/lib/engine/$THEDEV_ENGINE.sh"
@@ -32,8 +32,8 @@ case "$verb" in
         --resume)         resume="$2"; shift 2 ;;
         --init)           init="$2"; shift 2 ;;
         --init-file)      initfile="$2"; shift 2 ;;
-        --remote-control) shift 2 ;;   # auto sur VPS (claude-pane) — accepté, délégué
-        --system-append)  shift 2 ;;   # prompt zellij natif (claude-pane) — délégué
+        --remote-control) shift 2 ;;   # auto sur VPS (soldat-pane) — accepté, délégué
+        --system-append)  shift 2 ;;   # prompt zellij natif (soldat-pane) — délégué
         --)               shift; extra+=("$@"); break ;;
         *)                extra+=("$1"); shift ;;
       esac

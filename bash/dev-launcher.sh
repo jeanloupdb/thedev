@@ -1,16 +1,16 @@
 # dev-launcher.sh — sourced from ~/.bashrc
 # Lanceur zellij.
-#   dev          → sélecteur TUI 2 panneaux (sessions + dossiers) via dev-picker
+#   dev          → sélecteur TUI 2 panneaux (sessions + dossiers) via etat-major
 #   dev <chemin> → cible/crée un dossier, session neuve (~, relatif, $DEV_ROOT/<nom>)
 #   dev .        → dossier courant
-# La session choisie est reprise en passant CLAUDE_RESUME_ID (lu par claude-pane).
+# La session choisie est reprise en passant CLAUDE_RESUME_ID (lu par soldat-pane).
 # Recrée toujours la session zellij pour prendre en compte le layout.
 
 export DEV_ROOT="${DEV_ROOT:-$HOME/jlal_perso}"
 
 # Raccourci : 2e Claude en parallèle dans le tab courant (sans toucher au
 # Claude en cours). À lancer depuis le pane `shell`. `aside -f` = flottant.
-alias aside='claude-aside'
+alias aside='renfort'
 
 # srv [projet|list] — dev sur le serveur distant via SSH.
 #   srv            → ouvre le sélecteur dev sur le serveur
@@ -23,27 +23,27 @@ alias aside='claude-aside'
 srv() {
   local host="${SRV_HOST:-jlax}"
   # ConnectTimeout : si le VPS est down, on échoue en ~8s (pas un long hang) et on
-  # rend la main proprement → l'accueil thedev se ré-affiche (boucle de dev()).
+  # rend la main proprement → l'etat-major thedev se ré-affiche (boucle de dev()).
   case "${1:-}" in
     list) ssh -o ConnectTimeout=8 "$host" 'PATH="$HOME/.local/bin:$PATH" zellij list-sessions' ;;
     *)    printf '\033[1;34m→ connexion à %s…\033[0m\n' "$host"
           ssh -o ConnectTimeout=8 -t "$host" "bash -lic 'dev ${1:-}'" \
-            || { echo "✗ $host injoignable — retour à l'accueil thedev."; sleep 1; } ;;
+            || { echo "✗ $host injoignable — retour à l'etat-major thedev."; sleep 1; } ;;
   esac
 }
 
 # (Re)crée la session zellij `$1` dans $PWD et RESTAURE les Claude qui étaient
 # ouverts. Sur une reprise ($2 = id non vide), on relit le registre
-# (dev-claude-reg) du dossier : le Claude principal reprend sa conversation
-# (CLAUDE_RESUME_ID) et DEV_RESTORE=1 dit à claude-pane de respawn un aside
+# (reg-soldat) du dossier : le Claude principal reprend sa conversation
+# (CLAUDE_RESUME_ID) et DEV_RESTORE=1 dit à soldat-pane de respawn un aside
 # --resume par claude secondaire. Session NEUVE ($2 vide) : démarrage propre.
 _dev_spawn() {
   local session="$1" resume="$2" real main_id="" restore=""
   if [ -n "$resume" ]; then
     restore=1
-    if command -v dev-claude-reg >/dev/null 2>&1; then
+    if command -v reg-soldat >/dev/null 2>&1; then
       real=$(realpath "$PWD" 2>/dev/null || pwd -P)
-      main_id=$(dev-claude-reg list "$real" \
+      main_id=$(reg-soldat list "$real" \
                   | awk -F'\t' '$3=="main"{print $6"\t"$1}' | sort -n | tail -1 | cut -f2)
     fi
   fi
@@ -72,7 +72,7 @@ _dev_launch() {
 }
 
 # Force la fermeture d'une session vivante puis la relance (choix "fermer &
-# relancer" du picker sur une session ● en cours). $2 = id à reprendre.
+# relancer" de l'etat-major sur une session ● en cours). $2 = id à reprendre.
 _dev_recreate() {
   local target="$1" resume="$2" session
   cd "$target" || return
@@ -97,7 +97,7 @@ _dev_open_path() {
 }
 
 # Met à jour la config dev depuis le git d'origine (déclenché par le bouton
-# « mettre à jour dev » du picker, qui n'apparaît que si on est en retard).
+# « mettre à jour dev » de l'etat-major, qui n'apparaît que si on est en retard).
 # git pull --ff-only puis install-dev.sh (symlinks des nouveaux scripts + hooks).
 _dev_update() {
   local repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -119,8 +119,8 @@ dev() {
   # Argument explicite : on cible/crée un dossier, session neuve.
   [ -n "$1" ] && { _dev_open_path "$1"; return; }
 
-  local picker="$HOME/.local/bin/dev-picker" outf out cwd id start
-  if ! command -v python3 >/dev/null || [ ! -x "$picker" ]; then
+  local etajm="$HOME/.local/bin/etat-major" outf out cwd id start
+  if ! command -v python3 >/dev/null || [ ! -x "$etajm" ]; then
     _dev_launch "$PWD" ""; return   # repli : session neuve dans le dossier courant
   fi
 
@@ -132,7 +132,7 @@ dev() {
     cd "$start" 2>/dev/null
     outf=$(mktemp)
     # stdout NON capturé → le TUI garde le terminal ; la décision est écrite dans outf.
-    "$picker" "$(pwd -P)" "$outf"
+    "$etajm" "$(pwd -P)" "$outf"
     out=$(cat "$outf" 2>/dev/null); rm -f "$outf"
     [ -z "$out" ] && break          # annulé (Esc) → retour au shell
 
@@ -142,24 +142,24 @@ dev() {
       NEW*)      _dev_launch "$cwd" "" ;;
       RESUME*)   _dev_launch "$cwd" "$id" ;;
       RECREATE*) _dev_recreate "$cwd" "$id" ;;   # fermer & relancer (session ● en cours)
-      SERVER*)   SRV_HOST="$cwd" srv "$id" ;;    # dev distant : $cwd=hôte ; $id=cwd distant (vide → picker serveur ; sinon attache la session)
-      ADJUST*)   _dev_adjust_auto "$cwd" "$(printf '%s' "$out" | cut -f3)" "$(printf '%s' "$out" | cut -f4)" ;;  # $cwd=machine, f3=cwd espace, f4=nom auto
-      UPDATE*)   _dev_update ;;                  # met à jour la config dev (git pull) puis ré-affiche le picker
+      SERVER*)   SRV_HOST="$cwd" srv "$id" ;;    # dev distant : $cwd=hôte ; $id=cwd distant (vide → etat-major serveur ; sinon attache la session)
+      ADJUST*)   _dev_adjust_auto "$cwd" "$(printf '%s' "$out" | cut -f3)" "$(printf '%s' "$out" | cut -f4)" ;;  # $cwd=machine, f3=cwd equipe, f4=nom auto
+      UPDATE*)   _dev_update ;;                  # met à jour la config dev (git pull) puis ré-affiche l'etat-major
     esac
   done
 }
 
-# Ajuster une automatisation : ouvre le thedev CONCERNÉ par l'auto (son espace, machine +
+# Ajuster une garde : ouvre le thedev CONCERNÉ par l'auto (son equipe, machine +
 # cwd) et y ajoute un NOUVEAU pane claude « aside » déjà briefé sur la tâche (contexte
 # pré-écrit). Le prompt du feed est versionné/partagé (git) → on l'édite et on sync.
-#   $1=machine ('local' ou hôte ssh)  $2=cwd de l'espace  $3=nom de l'auto
-# Espace OUVERT (session zellij vivante) → on injecte l'aside dans la session existante par
-# son nom, puis on s'y attache. Espace FERMÉ → on ouvre le thedev, Claude principal briefé.
+#   $1=machine ('local' ou hôte ssh)  $2=cwd de l'equipe  $3=nom de l'auto
+# Equipe OUVERTE (session zellij vivante) → on injecte l'aside dans la session existante par
+# son nom, puis on s'y attache. Equipe FERMÉE → on ouvre le thedev, soldat principal briefé.
 _dev_adjust_auto() {
   local machine="$1" cwd="$2" name="$3" sess task f
-  [ -n "$cwd" ] || { echo "✗ cwd de l'espace inconnu (espace fermé sans historique)"; sleep 1.5; return; }
+  [ -n "$cwd" ] || { echo "✗ cwd de l'equipe inconnu (equipe fermée sans historique)"; sleep 1.5; return; }
   sess=$(basename "$cwd")
-  task="Tu es un Claude d'AJUSTEMENT ouvert dans l'espace « $sess » (machine $machine). Objectif : améliorer l'automatisation thedev « $name » (timer $name.timer). Son prompt de mission est dans ~/jlal_perso/config/feeds/$name.prompt (versionné, partagé via git) — lis-le, propose et applique des améliorations (clarté, robustesse, anti-flood, étapes). Garde-le SYNCHRONE : jamais de Workflow/agent détaché dans une mission. Quand tu as fini : commit et push depuis ~/jlal_perso/config (le timer relira le prompt au prochain tir). Tu peux tester avec « systemctl --user start $name.service ». Ne touche pas au reste de l'espace."
+  task="Tu es un soldat d'AJUSTEMENT ouvert dans l'equipe « $sess » (machine $machine). Objectif : améliorer la garde thedev « $name » (timer $name.timer). Son prompt de mission est dans ~/jlal_perso/config/feeds/$name.prompt (versionné, partagé via git) — lis-le, propose et applique des améliorations (clarté, robustesse, anti-flood, étapes). Garde-le SYNCHRONE : jamais de Workflow/agent détaché dans une mission. Quand tu as fini : commit et push depuis ~/jlal_perso/config (le timer relira le prompt au prochain tir). Tu peux tester avec « systemctl --user start $name.service ». Ne touche pas au reste de l'equipe."
   f="$HOME/.cache/thedev/adjust-$name.txt"      # contexte passé par FICHIER (zéro quoting)
 
   if [ "$machine" = local ]; then
@@ -169,7 +169,7 @@ _dev_adjust_auto() {
         -- bash -lc "CLAUDE_PANE_INIT_FILE=$f CLAUDE_PANE_ONCE=1 exec engine launch"
       zellij attach "$sess"
     else
-      CLAUDE_PANE_INIT="$task" _dev_launch "$cwd" ""     # espace fermé → on l'ouvre, Claude principal briefé
+      CLAUDE_PANE_INIT="$task" _dev_launch "$cwd" ""     # equipe fermée → on l'ouvre, soldat principal briefé
     fi
   else
     # Distant : dépose le contexte (base64, zéro quoting) puis injecte l'aside si la session

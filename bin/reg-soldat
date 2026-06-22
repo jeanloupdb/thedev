@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# @thedev registry registre des Claude ouverts (resume + noms de pane persistants)
-# dev-claude-reg — registre des Claude d'un espace de dev, pour les retrouver
+# @thedev registry registre des soldats ouverts (resume + noms de pane persistants)
+# reg-soldat — registre des soldats d'une equipe de dev, pour les retrouver
 # après avoir quitté (Ctrl+Q→fermer OU /exit) et les relancer via --resume avec
 # leur nom de pane persistant.
 #
-# Problème résolu : sur un quit, Claude intercepte le signal et déclenche
-# SessionEnd (reason "other") pour TOUS les Claude — même reason qu'un /exit
+# Problème résolu : sur un quit, le soldat intercepte le signal et déclenche
+# SessionEnd (reason "other") pour TOUS les soldats — même reason qu'un /exit
 # volontaire. On ne peut donc pas « supprimer sur SessionEnd » (ça effacerait
 # tout avant la relance). À la place on HORODATE la fin (ended), sans supprimer,
 # et à la relance on restaure la « cohorte du quit » : les asides dont la fin
@@ -13,9 +13,9 @@
 # ou qui n'ont jamais reçu de SessionEnd (ended=0, tués net). Un aside fermé
 # exprès bien avant le quit a un `ended` plus ancien → il n'est PAS restauré.
 #
-# Fichier TSV (~/.cache/dev-claudes), une ligne par Claude :
+# Fichier TSV (~/.cache/soldats), une ligne par soldat :
 #   id  cwd_realpath  role(main|aside)  nom_pane  session_zellij  started  ended  rc
-#   (ended = 0 tant que le Claude est ouvert ; sinon timestamp de SessionEnd)
+#   (ended = 0 tant que le soldat est ouvert ; sinon timestamp de SessionEnd)
 #   (rc = 1 si lancé en remote control — posé via CLAUDE_PANE_RC ; absent/0 sinon)
 #
 # Sous-commandes :
@@ -27,7 +27,7 @@
 #   restore <cwd> [window_s]                            (asides de la cohorte du quit à respawn)
 #   gc [jours]                                          (purge les lignes finies/ouvertes > N jours)
 
-REG="$HOME/.cache/dev-claudes"
+REG="$HOME/.cache/soldats"
 LOCK="$REG.lock"
 WINDOW_DEFAULT=45      # s : étalement max d'une rafale de SessionEnd au quit
 cmd="${1:-}"; shift 2>/dev/null || true
@@ -105,7 +105,7 @@ case "$cmd" in
       && mv "$REG.tmp" "$REG"
     ;;
   *)
-    echo "usage: dev-claude-reg upsert|setname|markend|list|restore|gc …" >&2
+    echo "usage: reg-soldat upsert|setname|markend|list|restore|gc …" >&2
     exit 1
     ;;
 esac

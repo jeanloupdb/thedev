@@ -3,11 +3,11 @@
 # + animation du titre de pane (pulse ◆↔◇ pendant un tour). L'ÉTAT (registre, busy,
 # sentinelles de mission) est délégué à `engine event` ; restent ICI les mécanismes
 # propres au hook Claude : rename de pane, pulse ◆, et nudge pane-name (stdout injecté
-# dans le contexte de Claude). No-op hors d'un pane zellij.
+# dans le contexte du soldat). No-op hors d'un pane zellij.
 
-BUSY_DIR="$HOME/.cache/dev-claude-busy"        # 1 fichier par session active
-NUDGE_DIR="$HOME/.cache/dev-claude-nudge"      # 1 fichier par session (mtime = dernier nudge)
-WAITING_DIR="$HOME/.cache/dev-claude-waiting"  # Claude bloqué sur un QCM (contenu = pane_id\tsession)
+BUSY_DIR="$HOME/.cache/soldat-busy"        # 1 fichier par session active
+NUDGE_DIR="$HOME/.cache/soldat-nudge"      # 1 fichier par session (mtime = dernier nudge)
+WAITING_DIR="$HOME/.cache/soldat-waiting"  # Soldat bloqué sur un QCM (contenu = pane_id\tsession)
 
 # Adaptateur moteur résolu en VOISIN (le hook est câblé en chemin absolu du repo dans
 # settings.json → $0 = ce fichier ; ../../bin/engine = l'engine du repo). Pas de
@@ -26,8 +26,8 @@ tp=$(printf '%s' "$payload"  | jq -r '.transcript_path // empty' 2>/dev/null)
 [ -n "$cwd" ] || cwd="$PWD"
 cwd=$(realpath "$cwd" 2>/dev/null || printf '%s' "$cwd")
 
-# Pane « géré » = lancé par claude-pane/claude-aside (CLAUDE_PANE_NAME posé) et pas
-# une mission (pane crun « mission-… »). Seuls ces panes voient leur titre touché.
+# Pane « géré » = lancé par soldat-pane/renfort (CLAUDE_PANE_NAME posé) et pas
+# une mission (pane soutien « mission-… »). Seuls ces panes voient leur titre touché.
 is_managed_pane() {
   [ -n "${ZELLIJ_PANE_ID:-}" ] && [ -n "${CLAUDE_PANE_NAME:-}" ] || return 1
   case "$CLAUDE_PANE_NAME" in mission-*) return 1 ;; esac
@@ -40,7 +40,7 @@ is_managed_pane() {
 pane_busy_title() {   # $1 = 1 (en cours) | 0 (au repos)
   is_managed_pane || return 0
   local nm
-  nm=$(dev-claude-reg get "$sid" 2>/dev/null | cut -f4)
+  nm=$(reg-soldat get "$sid" 2>/dev/null | cut -f4)
   [ -n "$nm" ] || nm="$CLAUDE_PANE_NAME"
   nm=${nm#◆ }
   [ "$1" = "1" ] && nm="◆ $nm"
@@ -71,15 +71,15 @@ case "$ev" in
     fi
     ;;
   UserPromptSubmit)
-    # Un tour démarre → « calcule » (busy + animations). Pour un claude non géré,
-    # engine event busy pose juste le marqueur vide (le picker n'utilise que le sid).
+    # Un tour démarre → « calcule » (busy + animations). Pour un soldat non géré,
+    # engine event busy pose juste le marqueur vide (l'etat-major n'utilise que le sid).
     _mark_busy
 
-    # --- Nudge pane-name (stdout → contexte de Claude) — mécanisme propre au hook ---
+    # --- Nudge pane-name (stdout → contexte du soldat) — mécanisme propre au hook ---
     # Uniquement pour les panes gérés, jamais pour les missions.
     [ -n "${CLAUDE_PANE_NAME:-}" ] || exit 0
     case "$CLAUDE_PANE_NAME" in mission-*) exit 0 ;; esac
-    row=$(dev-claude-reg get "$sid" 2>/dev/null)
+    row=$(reg-soldat get "$sid" 2>/dev/null)
     [ -n "$row" ] || exit 0
     name=$(printf '%s' "$row" | cut -f4)
     started=$(printf '%s' "$row" | cut -f6)
@@ -119,7 +119,7 @@ case "$ev" in
     pane_busy_title 0
     ;;
   PreToolUse)
-    # Claude va poser un QCM bloquant (AskUserQuestion) → il TE bloque, état « t'attend »
+    # Le soldat va poser un QCM bloquant (AskUserQuestion) → il TE bloque, état « t'attend »
     # (≠ « calcule »). Le matcher du hook restreint déjà à cet outil ; on revérifie
     # tool_name par sécurité.
     case "$(printf '%s' "$payload" | jq -r '.tool_name // empty' 2>/dev/null)" in
@@ -135,7 +135,7 @@ case "$ev" in
     esac
     ;;
   PostToolUse)
-    # Tu as répondu au QCM → Claude reprend : retour en « calcule ».
+    # Tu as répondu au QCM → le soldat reprend : retour en « calcule ».
     case "$(printf '%s' "$payload" | jq -r '.tool_name // empty' 2>/dev/null)" in
       AskUserQuestion) _mark_busy ;;
     esac

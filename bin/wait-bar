@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # @thedev naming alerte rouge « action t'attend · Alt+W » dans la barre zjstatus
-# Tant qu'un Claude de CETTE session zellij est bloqué sur un QCM (marqueur waiting),
+# Tant qu'un soldat de CETTE session zellij est bloqué sur un QCM (marqueur waiting),
 # pousse une alerte ROUGE dans zjstatus (widget pipe_wait). S'efface et s'éteint dès
 # que plus aucun n'attend. Lancé détaché par le hook (PreToolUse), 1 instance/session
 # (flock). Pas d'animation : un repos rouge = « va répondre », pas un clignotant.
 set -u
 ZS="${ZELLIJ_SESSION_NAME:-}"
-WAITING_DIR="$HOME/.cache/dev-claude-waiting"
+WAITING_DIR="$HOME/.cache/soldat-waiting"
 [ -n "$ZS" ] || exit 0
 [ -d "$WAITING_DIR" ] || exit 0
 
-LOCK_DIR="$HOME/.cache/dev-claude-pulse"; mkdir -p "$LOCK_DIR" 2>/dev/null
+LOCK_DIR="$HOME/.cache/soldat-pulse"; mkdir -p "$LOCK_DIR" 2>/dev/null
 safe=$(printf '%s' "$ZS" | tr -c 'A-Za-z0-9._-' '_')
 exec 9>"$LOCK_DIR/$safe.wait.lock" 2>/dev/null || exit 0
 flock -n 9 2>/dev/null || exit 0   # un wait-bar tourne déjà pour cette session

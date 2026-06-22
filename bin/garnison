@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# @thedev session pane d'accueil de la sandbox (badge VPS)
-# agents-welcome — pane d'accueil pour la page `sandbox`.
+# @thedev session pane de garnison de la sandbox (badge VPS)
+# garnison — pane de garnison pour la page `le camp`.
 # Affiche un message statique et reste en bash interactif (le pane survit).
-# Quand crun lance un vrai agent, il pourrait fermer ce pane, mais simplest :
+# Quand soutien lance un vrai agent, il pourrait fermer ce pane, mais simplest :
 # il reste, juste comme un panneau d'info.
 
 # Sur un serveur distant : le titre du pane devient le marqueur VPS rouge
-# (🔴 <label>) au lieu de « welcome » — le 🔴 porte la couleur, zellij ne
+# (🔴 <label>) au lieu de « garnison » — le 🔴 porte la couleur, zellij ne
 # colore pas le texte des titres de pane. No-op en local.
 if [ -f "$HOME/.config/dev-vps" ] && [ -n "${ZELLIJ_PANE_ID:-}" ]; then
   vps_label="🔴 $(cat "$HOME/.config/dev-vps")"
@@ -15,29 +15,29 @@ if [ -f "$HOME/.config/dev-vps" ] && [ -n "${ZELLIJ_PANE_ID:-}" ]; then
   ( sleep 3; zellij action rename-pane -p "$ZELLIJ_PANE_ID" "$vps_label" 2>/dev/null ) &
 fi
 
-# Expose l'id de CE pane pour que crun puisse le masquer (quand un crun tourne)
-# et le réafficher (quand la sandbox se vide). Cf. crun: hide_welcome/show_welcome.
+# Expose l'id de CE pane pour que soutien puisse le masquer (quand un soutien tourne)
+# et le réafficher (quand la sandbox se vide). Cf. soutien: hide_welcome/show_welcome.
 if [ -n "${ZELLIJ_PANE_ID:-}" ]; then
   mkdir -p "$HOME/.cache"
-  printf '%s\n' "$ZELLIJ_PANE_ID" > "$HOME/.cache/claude-welcome-${ZELLIJ_SESSION_NAME:-default}.id" 2>/dev/null || true
+  printf '%s\n' "$ZELLIJ_PANE_ID" > "$HOME/.cache/garnison-${ZELLIJ_SESSION_NAME:-default}.id" 2>/dev/null || true
 fi
 
 cat <<'EOF'
 
   ╭───────────────────────────────────────────────────────╮
   │                                                       │
-  │   Sandbox de Claude                                   │
+  │   Le camp du soldat                                   │
   │                                                       │
-  │   Cet espace accueille les processes lancés par       │
-  │   Claude (serveurs, watchers, tests, sous-claudes,    │
-  │   …) via la commande `crun`.                          │
+  │   Ce camp accueille les process lancés par            │
+  │   le soldat (serveurs, watchers, tests, soutiens,     │
+  │   …) via la commande `soutien`.                       │
   │                                                       │
   │   Actuellement : vide.                                │
   │                                                       │
   │   Commandes utiles :                                  │
-  │     crun list                  # voir ce qui tourne   │
-  │     crun kill <name>           # arrêter un agent     │
-  │     crun cleanup               # fermer les morts     │
+  │     soutien list               # voir ce qui tourne   │
+  │     soutien kill <name>        # arrêter un agent     │
+  │     soutien cleanup            # fermer les morts     │
   │                                                       │
   │   Ce pane peut accueillir des commandes shell         │
   │   normales si besoin.                                 │
@@ -50,7 +50,7 @@ EOF
 tmprc=$(mktemp)
 cat > "$tmprc" <<EOF
 [ -f ~/.bashrc ] && . ~/.bashrc
-PS1='\[\033[1;35m\][sandbox]\[\033[0m\] \W\$ '
+PS1='\[\033[1;35m\][le camp]\[\033[0m\] \W\$ '
 rm -f "$tmprc"
 EOF
 
