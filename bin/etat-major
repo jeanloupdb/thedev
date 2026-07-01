@@ -1982,9 +1982,12 @@ class Picker:
                 li = self.left_item() if self.focus == "left" else None
                 if li and li.get("kind") == "ws":
                     w = li["w"]
+                    _body = ["« %s »" % w["name"]]
+                    if w["name"] in self.live:
+                        _body += ["", "équipe ouverte -> fermée & relancée",
+                                  "(réancrage : soutiens et buffers non sauvés perdus)"]
                     ok, new_name = self._modal(
-                        "Renommer l'équipe",
-                        ["« %s »" % w["name"]],
+                        "Renommer l'équipe", _body,
                         input_label="Nouveau nom :", default=w["name"])
                     if ok and new_name and new_name != w["name"]:
                         if not re.match(r'^[A-Za-z0-9._-]+$', new_name):
@@ -1995,6 +1998,7 @@ class Picker:
                                 import shutil as _shutil
                                 old_name = w["name"]
                                 old_cwd  = w["cwd"]
+                                was_live = old_name in self.live
                                 if os.path.isdir(old_cwd):
                                     os.rename(old_cwd, new_cwd)
                                 if old_name in self.live:
@@ -2027,9 +2031,25 @@ class Picker:
                                                     _fh.write(_data.replace(_o, _n))
                                         except OSError:
                                             pass
-                                # recharger depuis zellij (état vrai après propagation)
+                                # réancrage : les process de l'équipe vivante gardent
+                                # l'ANCIEN cwd (on ne peut pas chdir un process de
+                                # l'extérieur) → hooks cassés, chemins morts. On relance
+                                # depuis le nouveau chemin via une décision RECREATE
+                                # (delete-session + relance du layout, conv reprise). Le
+                                # rename-session ci-dessus a déjà mis la session vivante
+                                # au nouveau nom → delete-session basename(new_cwd) la vise.
+                                if was_live and os.environ.get("ZELLIJ_SESSION_NAME") != old_name:
+                                    self.decision = ("RECREATE", new_cwd, w.get("id") or "")
+                                    return
+                                # sinon (équipe fermée, ou etat-major tourne DANS la
+                                # session à renommer → un delete-session se tuerait) :
+                                # renommage disque seulement, pas de relance auto.
                                 self._refresh_local()
-                                self.msg = "renommé : %s → %s" % (old_name, new_name)
+                                if was_live:
+                                    self.msg = ("renommé ; détache (Ctrl+Q) puis rouvre "
+                                                "« %s » pour réancrer" % new_name)
+                                else:
+                                    self.msg = "renommé : %s → %s" % (old_name, new_name)
                             except Exception as e:
                                 self.msg = "échec : %s" % str(e)[:60]
                     else:
