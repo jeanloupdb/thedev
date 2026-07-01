@@ -29,7 +29,11 @@ flock -n 9 2>/dev/null || exit 0   # un pulser tourne déjà pour cette session
 INTERVAL=1.0
 
 rename() {  # $1=pane_id $2=titre ; exit≠0 si le pane a disparu
-  zellij --session "$ZS" action rename-pane -p "$1" "$2" 2>/dev/null
+  # PAS de --session : on cible via le socket $ZELLIJ (hérité du pane). Le nom de
+  # session peut être PÉRIMÉ dans $ZELLIJ_SESSION_NAME après un `rename-session`
+  # (l'env d'un pane vivant n'est pas mis à jour) → `--session "$ZS"` taperait dans
+  # le vide et tuerait le pulse. Le socket suit la session quel que soit son nom.
+  zellij action rename-pane -p "$1" "$2" 2>/dev/null
 }
 nu_name() {  # $1=sid → nom nu (sans ◆/◇) depuis le registre ; vide si absent
   local n; n=$(reg-soldat get "$1" 2>/dev/null | cut -f4)
