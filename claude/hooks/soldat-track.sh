@@ -44,7 +44,10 @@ pane_busy_title() {   # $1 = 1 (en cours) | 0 (au repos)
   [ -n "$nm" ] || nm="$CLAUDE_PANE_NAME"
   nm=${nm#◆ }
   [ "$1" = "1" ] && nm="◆ $nm"
-  zellij action rename-pane -p "$ZELLIJ_PANE_ID" "$nm" 2>/dev/null
+  # timeout : sur une session en fermeture, le serveur zellij meurt → `zellij action`
+  # peut hanger indéfiniment (attente d'un serveur mort). On borne à 2s pour ne jamais
+  # bloquer le hook (le rename est cosmétique).
+  timeout 2 zellij action rename-pane -p "$ZELLIJ_PANE_ID" "$nm" 2>/dev/null
 }
 
 # Marque le tour « en cours » (calcule) : busy + marqueur enrichi pour pane-pulse
@@ -68,6 +71,21 @@ case "$ev" in
     name=$("$ENGINE" event session-start --session "$sid" --cwd "$cwd" --transcript "$tp" 2>/dev/null)
     if [ -n "${CLAUDE_PANE_NAME:-}" ] && [ -n "$name" ]; then
       zellij action rename-pane -p "$ZELLIJ_PANE_ID" "${name#◆ }" 2>/dev/null
+    fi
+    # Carte d'equipe (brique 1 commandement) : (re)construit le miroir runtime depuis
+    # .thedev/equipe.md + les derives. Principal d'une VRAIE equipe seulement
+    # (is_managed_pane exclut les missions ; -z CLAUDE_PANE_ONCE exclut les asides).
+    # Best-effort, jamais bloquant.
+    if is_managed_pane && [ -z "${CLAUDE_PANE_ONCE:-}" ]; then
+      equipe card --cwd "$cwd" >/dev/null 2>&1 || true
+      # pane-id + sid + transcript du soldat PRINCIPAL, persistés par session → le
+      # débrief riche (debrief-menu, option « r ») sait quel pane cibler et quel
+      # transcript lire au moment du close. Clé = nom de session assaini.
+      if [ -n "${ZELLIJ_SESSION_NAME:-}" ]; then
+        md="$HOME/.cache/soldat-main"; mkdir -p "$md" 2>/dev/null \
+          && printf '%s\t%s\t%s\n' "$ZELLIJ_PANE_ID" "$sid" "$tp" \
+             > "$md/$(printf '%s' "$ZELLIJ_SESSION_NAME" | tr -c 'A-Za-z0-9._-' '_')" 2>/dev/null || true
+      fi
     fi
     ;;
   UserPromptSubmit)
@@ -116,6 +134,18 @@ case "$ev" in
     # Quit/exit → l'adaptateur horodate la fin (markend) et nettoie busy/nudge ; on
     # remet le titre nu (nettoie un ◆ figé, ex. /exit → shell keep-alive).
     "$ENGINE" event session-end --session "$sid" --cwd "$cwd" 2>/dev/null
+    # Debrief-au-quit minimal (brique 1 commandement) : flush derive zero-IA de
+    # l'etat de l'equipe pour la remontee hierarchique. Principal d'une vraie equipe
+    # uniquement. FLUSHÉ EN PREMIER, avant tout appel zellij : sur une fermeture
+    # d'équipe (delete-session) le serveur zellij de la session meurt → un
+    # `zellij action` peut hanger et empêcher le débrief. La donnée durable d'abord,
+    # le cosmétique après. (Un vrai crash ne lance aucun hook → pas de debrief.)
+    if is_managed_pane && [ -z "${CLAUDE_PANE_ONCE:-}" ]; then
+      reason=$(printf '%s' "$payload" | jq -r '.reason // empty' 2>/dev/null)
+      equipe debrief --reason "${reason:-quit}" --session "$sid" --cwd "$cwd" --transcript "$tp" >/dev/null 2>&1 || true
+    fi
+    # Cosmétique (titre nu) en DERNIER : peut hanger sans conséquence (session qui
+    # ferme), et le `timeout` de pane_busy_title borne l'attente.
     pane_busy_title 0
     ;;
   PreToolUse)

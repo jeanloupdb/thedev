@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# @thedev commandement pousse le briefing (l'arbre carte) sur Telegram via tg
+# briefing — envoie l'etat de l'armee (la carte) sur ton Telegram. La "peau" PUSH
+# du contrat (plans/commandement.md). Sur le SOMMET, carte voit toute la flotte
+# => briefing complet ; ailleurs, la vue locale. Schedulable (cron/timer) pour un
+# briefing du matin. Sens phone->thedev (ordres) = bot officiel + carte/mission.
+set -u
+TG="$HOME/.local/bin/tg";       [ -x "$TG" ]    || TG=tg
+CARTE="$HOME/.local/bin/carte"; [ -x "$CARTE" ] || CARTE=carte
+
+command -v "$TG" >/dev/null 2>&1 || { echo "briefing: 'tg' introuvable (canal telegram non configure)"; exit 1; }
+
+body="$("$CARTE" 2>/dev/null)"
+[ -n "$body" ] || body="(carte vide)"
+# --plain : la carte contient des glyphes d'arbre + des noms libres → pas de Markdown
+"$TG" --plain "briefing — $(date '+%a %d %b %H:%M')
+$body"

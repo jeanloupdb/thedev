@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# @thedev commandement remonte les cartes+debriefs locaux vers le sommet (VPS)
+# remonter — pousse ~/.cache/thedev/command/ de CETTE machine vers le SOMMET, dans
+# son sous-arbre command-fleet/<machine>/command/. rsync sur SSH (meme tuyau que ship).
+# Un sous-dossier par machine => --delete sans danger (chacun ne touche que le sien).
+# No-op propre si : pas de sommet declare, sommet injoignable (rattrape au prochain
+# appel), ou si CETTE machine EST le sommet (ses cartes sont deja locales pour carte).
+#
+#   remonter            pousse maintenant
+#   remonter -n         dry-run : montre les commandes, n'execute rien
+set -u
+SRC="$HOME/.cache/thedev/command"
+SOMMET_FILE="$HOME/.config/thedev-sommet"
+DRY=0; [ "${1:-}" = "-n" ] || [ "${1:-}" = "--dry-run" ] && DRY=1
+
+machine_self() { local m; m="$(head -n1 "$HOME/.config/dev-vps" 2>/dev/null)"; [ -n "$m" ] || m="$(hostname -s)"; printf '%s' "$m"; }
+me="$(machine_self)"
+
+[ -f "$SOMMET_FILE" ] || { echo "remonter: aucun sommet declare (~/.config/thedev-sommet) — cross-machine off."; exit 0; }
+sommet="$(grep -vE '^\s*#|^\s*$' "$SOMMET_FILE" | head -n1 | tr -d '[:space:]')"
+[ -n "$sommet" ] || { echo "remonter: sommet vide — off."; exit 0; }
+
+if [ "$me" = "$sommet" ] || [ "$(hostname -s)" = "$sommet" ]; then
+  echo "remonter: cette machine ($me) EST le sommet — rien a pousser (carte lit deja le local)."
+  exit 0
+fi
+[ -d "$SRC" ] || { echo "remonter: rien a pousser (pas de $SRC)."; exit 0; }
+
+dest="~/.cache/thedev/command-fleet/$me/command"
+mk="ssh -o ConnectTimeout=10 $sommet mkdir -p $dest"
+rs="rsync -az --delete -e 'ssh -o ConnectTimeout=10' $SRC/ $sommet:$dest/"
+
+if [ "$DRY" = 1 ]; then
+  echo "# dry-run — commandes qui SERAIENT lancees :"
+  echo "$mk"
+  echo "$rs"
+  exit 0
+fi
+
+# 1) prepare le sous-arbre distant (echoue vite si le sommet dort)
+if ! ssh -o ConnectTimeout=10 "$sommet" "mkdir -p $dest" 2>/dev/null; then
+  echo "remonter: sommet '$sommet' injoignable — la remontee attend (retentee au prochain appel)."
+  exit 0
+fi
+# 2) pousse (--delete borne a MON sous-arbre)
+if rsync -az --delete -e "ssh -o ConnectTimeout=10" "$SRC/" "$sommet:$dest/" 2>/dev/null; then
+  echo "remonter: ✓ cartes+debriefs remontes vers $sommet:command-fleet/$me/"
+else
+  echo "remonter: rsync a echoue vers '$sommet' — reessayer plus tard."
+  exit 0
+fi

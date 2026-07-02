@@ -461,6 +461,44 @@ def load_workspaces():
     return out
 
 
+def load_domaines():
+    """{cwd_realpath: domaine} depuis les cartes de commandement
+    (~/.cache/thedev/command/equipes/*.md, champs `cwd:` et `domaine:` du frontmatter).
+    Absent → dict vide : l'accueil retombe proprement sur le nom d'équipe comme domaine
+    (aucune dépendance dure à la couche commandement)."""
+    out = {}
+    d = os.path.expanduser("~/.cache/thedev/command/equipes")
+    try:
+        names = os.listdir(d)
+    except OSError:
+        return out
+    for fn in names:
+        if not fn.endswith(".md"):
+            continue
+        cwd = dom = ""
+        infm = False
+        try:
+            with open(os.path.join(d, fn), encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    line = line.rstrip("\n")
+                    if line == "---":
+                        if infm:
+                            break
+                        infm = True
+                        continue
+                    if not infm:
+                        continue
+                    if line.startswith("cwd:"):
+                        cwd = line[4:].strip()
+                    elif line.startswith("domaine:"):
+                        dom = line[8:].strip()
+        except OSError:
+            continue
+        if cwd and dom:
+            out[os.path.realpath(cwd)] = dom
+    return out
+
+
 def list_dirs(path):
     out = []
     try:
@@ -504,6 +542,7 @@ class Picker:
         self.scr = scr
         self.cur_dir = cur_dir
         self.ws = load_workspaces()   # équipes de dev (un par dossier, dédup realpath)
+        self.domaines = load_domaines()  # {cwd: domaine} des cartes de commandement (niveau 2)
         self.live = live_sessions()   # sessions zellij vivantes (basename du cwd)
         self.busy_cwds = set()        # cwd (realpath) des équipes avec un Claude en plein tour
         self.waiting_cwds = set()     # … bloqué sur une question/permission (t'attend)
@@ -719,6 +758,7 @@ class Picker:
                 break
             try:
                 self.live = live_sessions()
+                self.domaines = load_domaines()   # une carte fraîchement ouverte se regroupe
             except Exception:
                 pass
         self.local_refreshing = False
@@ -892,21 +932,58 @@ class Picker:
                         scored.append((s, w))
                 scored.sort(key=lambda x: -x[0])
                 return [w for _, w in scored]
-            # Une équipe = un dossier. Ouverts ● = session zellij vivante (rejoint
-            # par attach) ; récents = fermés (même de force), relancés + repris.
-            live, rest = self.split_live()
-            live, rest = rank(live), rank(rest)
+            # Une équipe = un dossier ; ouverte ● = session zellij vivante, sinon fermée.
+            # NIVEAU 2 — l'accueil montre la HIÉRARCHIE : équipes groupées par DOMAINE
+            # (carte de commandement ; à défaut le nom d'équipe fait office de domaine).
+            # Un domaine réel (déclaré ou partagé par plusieurs équipes) a un en-tête
+            # « ◆ domaine » ; une équipe seule non déclarée reste nue (pas de header
+            # « ◆ nom / nom » redondant). Live d'abord — dans le tri des domaines et
+            # dans chaque domaine.
+            live_list, rest_list = self.split_live()
+            live_list, rest_list = rank(live_list), rank(rest_list)
+            def dom_of(w):
+                return self.domaines.get(os.path.realpath(w["cwd"]), w["name"])
+            groups, order = {}, []
+            for w in live_list:
+                d = dom_of(w)
+                if d not in groups:
+                    groups[d] = []; order.append(d)
+                groups[d].append((w, True))
+            for w in rest_list:
+                d = dom_of(w)
+                if d not in groups:
+                    groups[d] = []; order.append(d)
+                groups[d].append((w, False))
+            # Domaine RÉEL = cluster de ≥2 équipes, OU domaine ≠ nom d'équipe (déclaré
+            # vers un autre nom). → en-tête « ◆ domaine ». Une équipe seule non déclarée
+            # reste dans la liste plate classique (ouvertes / récentes), inchangée : le
+            # niveau 2 n'ajoute la hiérarchie que là où elle existe.
+            real, plain_live, plain_rest = [], [], []
+            for d in order:
+                items = sorted(groups[d], key=lambda t: (not t[1], -t[0]["mtime"]))
+                if len(items) > 1 or d != items[0][0]["name"]:
+                    real.append((d, items))
+                elif items[0][1]:
+                    plain_live.append(items[0][0])
+                else:
+                    plain_rest.append(items[0][0])
+            real.sort(key=lambda t: (not any(l for _, l in t[1]),
+                                     -max(w["mtime"] for w, _ in t[1])))
+            for d, items in real:
+                rows.append({"kind": "header", "text": "◆ " + d})
+                for w, is_live in items:
+                    rows.append({"kind": "ws", "w": w, "live": is_live})
             lim = 10 ** 9 if (self.show_all or f) else self.CAP
-            if live:
+            if plain_live:
                 rows.append({"kind": "header", "text": "équipes ouvertes"})
-                for w in live:
+                for w in plain_live:
                     rows.append({"kind": "ws", "w": w, "live": True})
-            if rest:
+            if plain_rest:
                 rows.append({"kind": "header", "text": "équipes récentes"})
-                for w in rest[:lim]:
+                for w in plain_rest[:lim]:
                     rows.append({"kind": "ws", "w": w, "live": False})
-                if len(rest) > lim:
-                    rows.append({"kind": "more", "n": len(rest) - lim})
+                if len(plain_rest) > lim:
+                    rows.append({"kind": "more", "n": len(plain_rest) - lim})
             if not rows:
                 rows.append({"kind": "header", "text": "(aucune équipe thedev)"})
         else:

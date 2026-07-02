@@ -10,6 +10,13 @@
 sess="${ZELLIJ_SESSION_NAME:-}"
 [ -z "$sess" ] && sess=$(zellij list-sessions --no-formatting 2>/dev/null | awk '/\(current\)/{print $1; exit}')
 
+# Adaptateur moteur résolu en voisin (lit le dernier message = le résumé du soldat, pour
+# le débrief riche). Helpers de clé : MÊME schéma que `equipe` (node_key).
+_self="$0"; case "$_self" in */*) ;; *) _self="$(command -v -- "$_self")" ;; esac
+ENGINE="$(dirname "$(readlink -f -- "$_self")")/engine"
+_safe() { printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_'; }
+_node_key() { local m; m="$(head -n1 "$HOME/.config/dev-vps" 2>/dev/null)"; [ -n "$m" ] || m="$(hostname -s)"; printf '%s__%s' "$(_safe "$m")" "$(_safe "$sess")"; }
+
 R=$'\033[0m'; B=$'\033[1m'; D=$'\033[2m'; CY=$'\033[36m'
 G=$'\033[1;32m'; RED=$'\033[1;31m'
 GCHIP=$'\033[1;42;30m'   # puce fond vert, texte noir
@@ -21,6 +28,7 @@ printf '     %sQuitter%s  %s%s%s\n' "$B" "$R" "$CY" "$sess" "$R"
 printf '     %s───────────────────────────────%s\n\n' "$D" "$R"
 printf '      %s  d  %s   %sDÉTACHER%s   %sla session reste vivante%s\n\n' "$GCHIP" "$R" "$G" "$R" "$D" "$R"
 printf '      %s  f  %s   %sFERMER%s     %sla session est tuée%s\n' "$RCHIP" "$R" "$RED" "$R" "$D" "$R"
+printf '      %s  r  %s   %sRÉSUMER%s    %sle soldat débriefe (1 tour) puis ferme%s\n' "$RCHIP" "$R" "$CY" "$R" "$D" "$R"
 # Conséquences concrètes de « fermer », en compact, juste sous FERMER (rouge = tué,
 # ○ violet = une garde qui passe inactive). Affiché seulement si qqch tourne.
 impact=$(debrief-impact "$sess" 2>/dev/null)
@@ -39,6 +47,33 @@ case "$key" in
     else
       printf '\n  %sSession introuvable — rien fermé (sécurité).%s\n' "$RED" "$R"; sleep 1.5
     fi
+    ;;
+  r|R)
+    # Débrief RICHE : le soldat résume son état (1 tour d'abo), capturé, PUIS fermeture.
+    # Best-effort — chaque étape peut échouer, mais on ferme TOUJOURS à la fin.
+    main="$HOME/.cache/soldat-main/$(_safe "$sess")"
+    if [ -n "$sess" ] && [ -f "$main" ]; then
+      IFS=$'\t' read -r pane sid tp < "$main"
+      if [ -n "${pane:-}" ] && [ -n "${tp:-}" ]; then
+        printf '\n     %s… le soldat rédige son débrief (résume puis ferme)…%s\n' "$D" "$R"
+        pre="$("$ENGINE" read --transcript "$tp" 2>/dev/null)"
+        zellij action focus-pane-id "$pane" 2>/dev/null
+        zellij action write-chars "[thedev] Avant fermeture : résume en UNE ligne ton état pour le débrief — où ça en est + ce qui reste à faire. Réponds SEULEMENT cette ligne, rien d'autre." 2>/dev/null
+        zellij action write 13 2>/dev/null      # Entrée → lance le tour
+        # attend un NOUVEAU dernier-message (le résumé), timeout ~90s
+        cur=""
+        for _ in $(seq 1 45); do
+          sleep 2
+          cur="$("$ENGINE" read --transcript "$tp" 2>/dev/null)"
+          [ -n "$cur" ] && [ "$cur" != "$pre" ] && { sleep 1; cur="$("$ENGINE" read --transcript "$tp" 2>/dev/null)"; break; }
+        done
+        if [ -n "$cur" ] && [ "$cur" != "$pre" ]; then
+          pd="$HOME/.cache/thedev/command/pending-etat"; mkdir -p "$pd" 2>/dev/null \
+            && printf '%s' "$cur" | tr '\n' ' ' | cut -c1-300 > "$pd/$(_node_key)" 2>/dev/null
+        fi
+      fi
+    fi
+    [ -n "$sess" ] && zellij delete-session --force "$sess"
     ;;
   *)   : ;;
 esac

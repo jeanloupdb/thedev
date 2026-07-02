@@ -1,0 +1,10 @@
+[Unit]
+Description=thedev — remonte les cartes+debriefs de cette machine vers le sommet
+Documentation=file:%h/jlal_perso/thedev/plans/commandement.md
+
+[Service]
+Type=oneshot
+# remonter s'auto-neutralise si pas de sommet / sommet injoignable / si on EST
+# le sommet. Best-effort : un echec n'est jamais fatal (la prochaine passe rattrape).
+ExecStart=%h/.local/bin/remonter
+Nice=10

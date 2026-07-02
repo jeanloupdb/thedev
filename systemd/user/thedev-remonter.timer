@@ -1,0 +1,13 @@
+[Unit]
+Description=thedev — remontee periodique des cartes+debriefs vers le sommet
+
+[Timer]
+# 2 min apres le login (le systemd --user demarre), puis toutes les 15 min.
+# Linger=no => ne tourne QUE pendant une session active = quand tu bosses
+# (la remontee n'a de sens que si des cartes/debriefs bougent). Coût ∝ activité.
+OnStartupSec=2min
+OnUnitActiveSec=15min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

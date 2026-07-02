@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+# @thedev commandement carte d'equipe + debrief-au-quit (brique 1 du plan commandement)
+# equipe — lit/derive la CARTE d'une equipe et flushe un DEBRIEF minimal a la sortie.
+# Voir plans/commandement.md. Namespace cache neuf : ~/.cache/thedev/command/.
+# (les spaces/ et links/ de thedev-link ne bougent pas.)
+#
+#   equipe card [--cwd C]                        (re)construit le miroir runtime de la carte
+#   equipe show [--cwd C]                         affiche le miroir (le construit si absent)
+#   equipe debrief [--reason R] [--session S] [--cwd C] [--transcript T]
+#                                                 flushe un debrief minimal (derive, zero IA)
+#
+# Source de verite de la carte : .thedev/equipe.md a la racine du projet (in-repo,
+# OPTIONNEL). Absente → carte minimale derivee (nom + machine + cwd + branche). Le
+# miroir (jetable) vit dans le cache ; il fait autorite pour les chefs / le general.
+# Identite d'equipe (cle du noeud, jamais declaree) : <machine>/<equipe>, meme
+# resolution que thedev-link / soldat-track — on ne reinvente pas.
+set -u
+
+ROOT="$HOME/.cache/thedev/command"
+
+equipe_name()  { printf '%s' "${ZELLIJ_SESSION_NAME:-$(basename "$(pwd -P)")}"; }
+machine_name() {
+  local m; m="$(head -n1 "$HOME/.config/dev-vps" 2>/dev/null)"
+  [ -n "$m" ] || m="$(hostname -s)"
+  printf '%s' "$m"
+}
+# cle <machine>__<equipe> assainie pour un nom de fichier
+node_key() {
+  printf '%s__%s' \
+    "$(machine_name | tr -c 'A-Za-z0-9._-' '_')" \
+    "$(equipe_name  | tr -c 'A-Za-z0-9._-' '_')"
+}
+
+# --- lecture du frontmatter YAML (1er bloc --- … ---) : champs key: value simples --
+_fm() {   # $1=file $2=key
+  awk -v k="$2" '
+    NR==1 && $0=="---" {fm=1; next}
+    fm && $0=="---" {exit}
+    fm && $0 ~ "^"k":[ \t]*" { sub("^"k":[ \t]*",""); print; exit }
+  ' "$1"
+}
+_body() { # $1=file : corps apres le frontmatter (ou fichier entier si pas de FM)
+  if [ "$(head -n1 "$1" 2>/dev/null)" = "---" ]; then
+    awk 'NR==1&&$0=="---"{fm=1;next} fm&&$0=="---"{fm=0;body=1;next} body{print}' "$1"
+  else
+    cat "$1"
+  fi
+}
+
+# ── equipe card : (re)construit le miroir de la carte ────────────────────────
+cmd_card() {
+  local cwd; cwd="$(pwd -P)"
+  while [ $# -gt 0 ]; do case "$1" in --cwd) cwd="${2:-$cwd}"; shift 2 ;; *) shift ;; esac; done
+
+  local eq mc key out src cwd_real branch domaine statut tags summary declared
+  eq="$(equipe_name)"; mc="$(machine_name)"; key="$(node_key)"
+  mkdir -p "$ROOT/equipes" || return 0
+  out="$ROOT/equipes/$key.md"
+  src="$cwd/.thedev/equipe.md"
+  cwd_real="$(cd "$cwd" 2>/dev/null && pwd -P || printf '%s' "$cwd")"
+  branch="$(git -C "$cwd" symbolic-ref --quiet --short HEAD 2>/dev/null)"; [ -n "$branch" ] || branch="-"
+
+  domaine=""; statut="actif"; tags=""; summary=""; declared="non"
+  if [ -f "$src" ]; then
+    declared="oui"
+    if [ "$(head -n1 "$src")" = "---" ]; then
+      domaine="$(_fm "$src" domaine)"
+      local s; s="$(_fm "$src" statut)"; [ -n "$s" ] && statut="$s"
+      tags="$(_fm "$src" tags)"
+    fi
+    summary="$(_body "$src")"
+  fi
+  [ -n "$domaine" ] || domaine="$eq"   # defaut : le nom d'equipe fait office de domaine
+
+  {
+    printf -- '---\n'
+    printf 'equipe: %s/%s\n' "$mc" "$eq"
+    printf 'machine: %s\n'   "$mc"
+    printf 'cwd: %s\n'       "$cwd_real"
+    printf 'branche: %s\n'   "$branch"
+    printf 'domaine: %s\n'   "$domaine"
+    printf 'statut: %s\n'    "$statut"
+    [ -n "$tags" ] && printf 'tags: %s\n' "$tags"
+    printf 'chef:\n'                        # pose mais non rempli (regle recursive = brique 3)
+    printf 'carte_declaree: %s\n' "$declared"
+    printf 'genere_le: %s\n' "$(date -Iseconds)"
+    printf -- '---\n\n'
+    if [ -n "$summary" ]; then printf '%s\n' "$summary"; fi
+  } > "$out" 2>/dev/null
+  printf '%s\n' "$out"
+}
+
+cmd_show() {
+  local out; out="$ROOT/equipes/$(node_key).md"
+  [ -f "$out" ] || out="$(cmd_card "$@")"
+  [ -f "$out" ] && cat "$out"
+}
+
+# ── equipe debrief : flush minimal derive a la sortie ────────────────────────
+cmd_debrief() {
+  local reason="quit" sid="" tp="" cwd; cwd="$(pwd -P)"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason)     reason="${2:-quit}"; shift 2 ;;
+      --session)    sid="${2:-}";        shift 2 ;;
+      --cwd)        cwd="${2:-$cwd}";     shift 2 ;;
+      --transcript) tp="${2:-}";          shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  # SessionEnd ne distingue pas detach/quit/crash ; on coerce vers l'enum de la
+  # carte (un vrai crash ne lance aucun hook → pas de debrief : limite assumee).
+  case "$reason" in detach|quit|crash) ;; *) reason="quit" ;; esac
+
+  local eq mc key dir ts out cwd_real branch subject changed
+  eq="$(equipe_name)"; mc="$(machine_name)"; key="$(node_key)"
+  dir="$ROOT/debriefs/$key"; mkdir -p "$dir" || return 0
+  ts="$(date +%Y%m%dT%H%M%S)"; out="$dir/$ts.md"
+  cwd_real="$(cd "$cwd" 2>/dev/null && pwd -P || printf '%s' "$cwd")"
+  branch="$(git -C "$cwd" symbolic-ref --quiet --short HEAD 2>/dev/null)"; [ -n "$branch" ] || branch="-"
+
+  # dernier sujet = nom de pane du soldat dans le registre (~/.cache/soldats)
+  subject=""
+  [ -n "$sid" ] && subject="$(reg-soldat get "$sid" 2>/dev/null | cut -f4)"
+  subject="${subject#◆ }"; [ -n "$subject" ] || subject="(sans sujet)"
+  changed="$(git -C "$cwd" status --short 2>/dev/null)"
+
+  # Débrief RICHE : si debrief-menu a capturé un résumé du soldat (pending-etat, écrit
+  # par l'option « r » avant fermeture), il PRIME sur le sujet de pane. Consommé (one-shot).
+  local niveau="minimal" pend="$ROOT/pending-etat/$key" rich=""
+  if [ -f "$pend" ]; then
+    rich="$(cat "$pend" 2>/dev/null)"; rm -f "$pend" 2>/dev/null
+    [ -n "$rich" ] && { subject="$rich"; niveau="riche"; }
+  fi
+
+  {
+    printf -- '---\n'
+    printf 'equipe: %s/%s\n' "$mc" "$eq"
+    printf 'quand: %s\n'     "$(date -Iseconds)"
+    printf 'raison: %s\n'    "$reason"
+    printf 'session: %s\n'   "$sid"
+    printf 'branche: %s\n'   "$branch"
+    printf 'niveau: %s\n' "$niveau"
+    printf -- '---\n\n'
+    printf '## Etat\n%s\n\n' "$subject"
+    printf '## Change\n'
+    if [ -n "$changed" ]; then printf '```\n%s\n```\n\n' "$changed"
+    else printf 'rien (arbre git propre ou hors git)\n\n'; fi
+    printf '## Ordres en cours\naucun\n\n'
+    printf '## Artefacts\n'
+    [ -n "$tp" ] && printf -- '- transcript : %s\n' "$tp"
+    printf -- '- cwd        : %s\n' "$cwd_real"
+  } > "$out" 2>/dev/null || return 0
+  printf '%s\n' "$out"
+}
+
+cmd="${1:-}"; shift 2>/dev/null || true
+case "$cmd" in
+  card)    cmd_card    "$@" ;;
+  show)    cmd_show    "$@" ;;
+  debrief) cmd_debrief "$@" ;;
+  *) echo "usage: equipe card|show|debrief …" >&2; exit 1 ;;
+esac

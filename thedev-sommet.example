@@ -1,0 +1,6 @@
+# thedev-sommet — alias ssh de la machine SOMMET (le plan de contrôle, toujours allumé).
+# Copie ce fichier en « thedev-sommet » (sans .example) et mets l'alias ssh de TON sommet.
+# Constante de flotte : même valeur sur toutes tes machines (versionnée, symliquée).
+# Les machines y REMONTENT leurs cartes+débriefs (`remonter`) ; le sommet les agrège.
+# 1 seul alias, doit marcher en « ssh <alias> ». Vide/absent => cross-machine off.
+mon-vps

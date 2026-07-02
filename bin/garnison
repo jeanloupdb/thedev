@@ -46,6 +46,16 @@ cat <<'EOF'
 
 EOF
 
+# Aperçu d'état-major : l'arbre des équipes connu de cette machine (verbe
+# « donne-moi l'arbre » de la couche commandement). Chemin absolu car le PATH
+# interactif n'est pas encore chargé ici. Best-effort, no-op si absent.
+if [ -x "$HOME/.local/bin/carte" ]; then
+  "$HOME/.local/bin/carte"
+  echo
+  echo "  carte = rafraîchir/déplier   ·   mission <machine>/<equipe> \"<ordre>\" = donner un ordre"
+  echo
+fi
+
 # Keep the pane alive with a normal interactive shell
 tmprc=$(mktemp)
 cat > "$tmprc" <<EOF

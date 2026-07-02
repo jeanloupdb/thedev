@@ -1,7 +1,7 @@
 # thedev — manifest
 
 > **Généré** par `thedev-manifest` depuis les tags `# @thedev` des scripts `bin/`.
-> Ne pas éditer à la main. Régénérer : `thedev-manifest --write`. 34 commandes.
+> Ne pas éditer à la main. Régénérer : `thedev-manifest --write`. 38 commandes.
 
 ## Modèle mental
 
@@ -60,6 +60,10 @@ Un **soutien** = un pane long-running lancé dans le camp. Les equipes s'échang
 - **thedev-propose** — proposeur de tâches par signaux (parc git + todos + la garde) — zéro IA, zéro coût
 
 ### Autres
+- **briefing** (commandement) — pousse le briefing (l'arbre carte) sur Telegram via tg
+- **carte** (commandement) — carte d'etat-major : l'arbre des equipes, groupe par domaine
+- **equipe** (commandement) — carte d'equipe + debrief-au-quit (brique 1 du plan commandement)
+- **remonter** (commandement) — remonte les cartes+debriefs locaux vers le sommet (VPS)
 - **engine** (moteur) — façade moteur-agnostique : lance/liste/lit/observe un agent (voir ENGINE-ADAPTER.md)
 - **feed** (veille) — déclenche un feed (cron-as-mission) : dépose une mission locale dans l'inbox
 - **tg** (veille) — envoie texte/photo sur Telegram (Bot API, curl) — livraison des feeds & alertes

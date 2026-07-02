@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# @thedev commandement carte d'etat-major : l'arbre des equipes, groupe par domaine
+# carte — agrege les cartes d'equipe (equipes/*.md) + le DERNIER debrief de chacune
+# (debriefs/<cle>/) du namespace ~/.cache/thedev/command/, et rend l'ARBRE groupe par
+# `domaine`. Tant que l'arbre est plat, le domaine EST le proto-chef. C'est le verbe
+# « donne-moi l'arbre » du contrat (plans/commandement.md, brique 2). Read-only.
+#
+#   carte                 rend l'arbre
+#   (ordre vers une feuille = `mission <machine>/<equipe> "<ordre>"`, transport existant)
+set -u
+ROOT="$HOME/.cache/thedev/command"
+FLEET="$HOME/.cache/thedev/command-fleet"   # sous-arbres remontes par les autres machines
+
+_fm()      { awk -v k="$2" 'NR==1&&$0=="---"{fm=1;next} fm&&$0=="---"{exit} fm&&$0~"^"k":[ \t]*"{sub("^"k":[ \t]*","");print;exit}' "$1"; }
+_section() { awk -v t="$2" '$0=="## "t{f=1;next} f&&/^## /{exit} f&&NF{print;exit}' "$1"; }
+machine_self() { local m; m="$(head -n1 "$HOME/.config/dev-vps" 2>/dev/null)"; [ -n "$m" ] || m="$(hostname -s)"; printf '%s' "$m"; }
+
+_ago() {   # $1 = timestamp ISO → "il y a X" (ou vide si illisible)
+  local t now d; [ -n "$1" ] || return 0
+  t=$(date -d "$1" +%s 2>/dev/null) || return 0
+  now=$(date +%s); d=$(( now - t )); [ "$d" -lt 0 ] && d=0
+  if   [ "$d" -lt 3600 ];  then printf 'il y a %dmin' $(( d/60 ))
+  elif [ "$d" -lt 86400 ]; then printf 'il y a %dh'   $(( d/3600 ))
+  else                          printf 'il y a %dj'   $(( d/86400 )); fi
+}
+
+# titre conscient du sommet + racines a lire (local + chaque machine remontee)
+me="$(machine_self)"
+sommet="$(grep -vE '^\s*#|^\s*$' "$HOME/.config/thedev-sommet" 2>/dev/null | head -n1 | tr -d '[:space:]')"
+if [ -n "$sommet" ] && { [ "$me" = "$sommet" ] || [ "$(hostname -s)" = "$sommet" ]; }; then
+  title="la carte — $me (sommet · général)"
+elif [ -n "$sommet" ]; then
+  title="la carte — vue locale de $me · sommet: $sommet"
+else
+  title="la carte — $me (local, pas de sommet)"
+fi
+roots=("$ROOT")
+if [ -d "$FLEET" ]; then
+  for d in "$FLEET"/*/command; do [ -d "$d" ] && roots+=("$d"); done
+fi
+
+# --- état VIVANT (registre local, vérité-terrain) ---------------------------------
+# Une équipe OUVERTE ne tire pas son état d'un débrief (qui n'existe qu'à la fermeture)
+# mais du REGISTRE live : un process `claude` tourne dans son cwd (même détection que
+# l'état-major) → on montre son sujet + busy, en direct, sans jamais rien fermer. Le
+# débrief reste le fallback des équipes FERMÉES. Local seulement : l'état live des
+# équipes distantes viendra quand le registre sera remonté (brique 2.5).
+REG="$HOME/.cache/soldats"
+live_cwds=$'\n'
+for _p in $(pgrep -x claude 2>/dev/null); do
+  _c=$(readlink "/proc/$_p/cwd" 2>/dev/null) && live_cwds+="$_c"$'\n'
+done
+busy_sids=$(find "$HOME/.cache/soldat-busy" -type f -mmin -30 -printf '%f\n' 2>/dev/null)
+
+# _live <cwd> → "sujet\tlive|busy" pour l'équipe ouverte à ce cwd (ended==0 = ouvert),
+# le sujet = nom de pane du soldat ouvert le plus récent ; busy si un de ses sids a un
+# marqueur frais. Rien n'est écrit : lecture pure du registre.
+_live() {
+  local cwd="$1" subj s state=live
+  subj=$(awk -F'\t' -v c="$cwd" '$2==c && $7==0 && $6+0>=m {m=$6; n=$4} END{print n}' "$REG" 2>/dev/null)
+  subj=${subj#◆ }
+  for s in $(awk -F'\t' -v c="$cwd" '$2==c && $7==0 {print $1}' "$REG" 2>/dev/null); do
+    printf '%s\n' "$busy_sids" | grep -qx "$s" && { state=busy; break; }
+  done
+  printf '%s\t%s' "${subj:-claude}" "$state"
+}
+
+# rien du tout ?
+have=0
+for r in "${roots[@]}"; do ls -1 "$r"/equipes/*.md >/dev/null 2>&1 && { have=1; break; }; done
+if [ "$have" = 0 ]; then
+  echo "$title"
+  echo "  (aucune equipe connue — le namespace se peuple a l'ouverture des equipes / aux remontees)"
+  exit 0
+fi
+
+# collecte : 1 ligne TSV par equipe → domaine \t equipe \t statut \t etat \t ago \t live
+# (dedup par cle : local prioritaire, puis les remontees ; jamais de doublon)
+tmp=$(mktemp); declare -A seen
+for r in "${roots[@]}"; do
+  eqd="$r/equipes"; dbd="$r/debriefs"
+  [ -d "$eqd" ] || continue
+  for f in "$eqd"/*.md; do
+    [ -e "$f" ] || continue
+    key=$(basename "$f" .md)
+    [ -n "${seen[$key]:-}" ] && continue
+    seen[$key]=1
+    eq=$(_fm "$f" equipe); dom=$(_fm "$f" domaine); st=$(_fm "$f" statut)
+    mc=$(_fm "$f" machine); cwd=$(_fm "$f" cwd)
+    [ -n "$eq" ]  || eq="$key"
+    [ -n "$dom" ] || dom="(sans domaine)"
+    [ -n "$st" ]  || st="actif"
+    etat="—"; ago=""; live=0
+    if { [ -z "$mc" ] || [ "$mc" = "$me" ]; } && [ -n "$cwd" ] && grep -qxF "$cwd" <<<"$live_cwds"; then
+      # équipe LOCALE avec un claude vivant → état LIVE (registre), pas débrief
+      IFS=$'\t' read -r etat live < <(_live "$cwd")
+      ago="actif"; [ "$live" = busy ] && ago="en cours"
+    else
+      # équipe FERMÉE (ou distante) → dernier débrief
+      last=$(ls -1 "$dbd/$key"/*.md 2>/dev/null | sort | tail -1)
+      if [ -n "$last" ]; then
+        e=$(_section "$last" "Etat"); [ -n "$e" ] && etat="$e"
+        ago=$(_ago "$(_fm "$last" quand)")
+      fi
+    fi
+    # live en 1er : le seul champ possiblement VIDE (ago) reste en DERNIER, où le
+    # collapse de champ vide par `read` (tab = whitespace) est sans conséquence.
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$live" "$dom" "$eq" "$st" "$etat" "$ago" >> "$tmp"
+  done
+done
+
+echo "$title"
+doms=$(cut -f2 "$tmp" | sort -u)
+nd=$(printf '%s\n' "$doms" | grep -c .)
+i=0
+printf '%s\n' "$doms" | while IFS= read -r d; do
+  [ -n "$d" ] || continue
+  i=$((i+1)); dbr="├─"; [ "$i" = "$nd" ] && dbr="└─"
+  printf '%s ◆ %s\n' "$dbr" "$d"
+  cont="│ "; [ "$i" = "$nd" ] && cont="  "
+  rows=$(awk -F'\t' -v d="$d" '$2==d{print}' "$tmp")
+  ne=$(printf '%s\n' "$rows" | grep -c .)
+  j=0
+  printf '%s\n' "$rows" | while IFS=$'\t' read -r live dom eq st etat ago; do
+    j=$((j+1)); lb="├─"; [ "$j" = "$ne" ] && lb="└─"
+    # Présence-d'abord : le dot dit s'il y a un soldat vivant, pas le statut déclaré.
+    case "$live" in
+      busy) dot="◆" ;;   # soldat en train de répondre
+      live) dot="●" ;;   # équipe ouverte, soldat au repos
+      *)    dot="○" ;;   # aucun soldat vivant — le débrief dit ce qu'elle faisait
+    esac
+    printf '%s  %s %s %-28s %s %s\n' "$cont" "$lb" "$dot" "$eq" "$etat" "${ago:+· $ago}"
+  done
+done
+rm -f "$tmp"
