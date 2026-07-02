@@ -97,6 +97,11 @@ for r in "${roots[@]}"; do
     if { [ -z "$mc" ] || [ "$mc" = "$me" ]; } && [ -n "$cwd" ] && grep -qxF "$cwd" <<<"$live_cwds"; then
       # équipe LOCALE avec un claude vivant → état LIVE (registre), pas débrief
       IFS=$'\t' read -r etat live < <(_live "$cwd")
+      # état de SUIVI (le soldat l'a enrichi via `equipe etat`) prime sur le titre de pane
+      if [ -f "$ROOT/etat-live/$key" ]; then
+        e=$(grep -v '^[[:space:]]*$' "$ROOT/etat-live/$key" 2>/dev/null | tail -1)
+        [ -n "$e" ] && etat="$e"
+      fi
       ago="actif"; [ "$live" = busy ] && ago="en cours"
     else
       # équipe FERMÉE (ou distante) → dernier débrief

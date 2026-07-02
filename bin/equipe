@@ -127,11 +127,18 @@ cmd_debrief() {
 
   # Débrief RICHE : si debrief-menu a capturé un résumé du soldat (pending-etat, écrit
   # par l'option « r » avant fermeture), il PRIME sur le sujet de pane. Consommé (one-shot).
-  local niveau="minimal" pend="$ROOT/pending-etat/$key" rich=""
+  local niveau="minimal" pend="$ROOT/pending-etat/$key" live_etat="$ROOT/etat-live/$key" rich=""
+  # état de SUIVI : le soldat l'a enrichi en pleine action (`equipe etat`) → prime sur le titre
+  if [ -f "$live_etat" ]; then
+    local e; e="$(grep -v '^[[:space:]]*$' "$live_etat" 2>/dev/null | tail -1)"
+    [ -n "$e" ] && { subject="$e"; niveau="suivi"; }
+  fi
+  # résumé RICHE au close (debrief-menu « f ») → prime sur tout
   if [ -f "$pend" ]; then
     rich="$(cat "$pend" 2>/dev/null)"; rm -f "$pend" 2>/dev/null
     [ -n "$rich" ] && { subject="$rich"; niveau="riche"; }
   fi
+  rm -f "$live_etat" 2>/dev/null   # session fermée → on nettoie le suivi
 
   {
     printf -- '---\n'
@@ -154,10 +161,23 @@ cmd_debrief() {
   printf '%s\n' "$out"
 }
 
+# ── equipe etat : le soldat enrichit son état de SUIVI en pleine action ───────
+# Appelé par le soldat lui-même pendant qu'il bosse. Chaque appel AJOUTE une ligne au
+# suivi vivant ; `carte` (équipe ouverte) et le débrief-au-quit affichent la DERNIÈRE.
+# Pas besoin d'attendre la fermeture pour que l'état soit à jour.
+cmd_etat() {
+  local txt="$*"
+  [ -n "$txt" ] || { echo "usage: equipe etat \"<ligne d'état>\"" >&2; return 1; }
+  local dir="$ROOT/etat-live"; mkdir -p "$dir" || return 0
+  printf '%s\n' "$txt" >> "$dir/$(node_key)"
+  echo "✓ état de suivi mis à jour."
+}
+
 cmd="${1:-}"; shift 2>/dev/null || true
 case "$cmd" in
   card)    cmd_card    "$@" ;;
   show)    cmd_show    "$@" ;;
   debrief) cmd_debrief "$@" ;;
-  *) echo "usage: equipe card|show|debrief …" >&2; exit 1 ;;
+  etat)    cmd_etat    "$@" ;;
+  *) echo "usage: equipe card|show|debrief|etat …" >&2; exit 1 ;;
 esac
