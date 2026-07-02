@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# @thedev commandement ordre — commande VERTICALE du général vers une équipe
+# ordre — le général (sur le sommet) commande une équipe d'une machine. L'ordre est
+# DÉPOSÉ dans la file du sommet (pas d'appel direct : une machine feuille — un laptop —
+# n'est pas joignable depuis le VPS). La machine cible le CONSOMME à son réveil
+# (`ordres pull`). C'est l'axe descendant de la couche commandement (cf. VISION §« Ordres
+# ↓ » et plans/commandement.md). Distinct de `mission` (horizontal, synchrone, SSH direct).
+#
+#   ordre <machine>/<equipe> "<intention>"     dépose un ordre
+#   ordre list [<machine>]                       liste les ordres en attente dans la file
+#
+# La file vit sur le SOMMET : ~/.cache/thedev/command/ordres/<machine>/<id>.ordre. Lancé
+# depuis le sommet (le général), on écrit en local ; ailleurs, on dépose via SSH au sommet.
+set -u
+
+sommet="$(grep -vE '^\s*#|^\s*$' "$HOME/.config/thedev-sommet" 2>/dev/null | head -n1 | tr -d '[:space:]')"
+me="$( { cat "$HOME/.config/dev-vps" 2>/dev/null || hostname -s; } )"
+on_sommet() { [ -n "$sommet" ] && { [ "$me" = "$sommet" ] || [ "$(hostname -s)" = "$sommet" ]; }; }
+QROOT='$HOME/.cache/thedev/command/ordres'   # non-expansé : évalué là où la file vit
+
+cmd_list() {
+  local machine="${1:-}"
+  local sh='shopt -s nullglob; base="'"$QROOT"'"; n=0;
+    for d in "$base"/*/; do m=$(basename "$d"); [ -n "'"$machine"'" ] && [ "$m" != "'"$machine"'" ] && continue;
+      for f in "$d"*.ordre; do t=$(sed -n "s/^Target: //p" "$f"); fr=$(sed -n "s/^From: //p" "$f");
+        printf "  ● %s/%s  (de %s)  id %s\n" "$m" "$t" "$fr" "$(basename "$f" .ordre)"; n=$((n+1)); done; done;
+    [ $n -eq 0 ] && echo "  (aucun ordre en attente)"; true'
+  if on_sommet; then eval "$sh"
+  else [ -n "$sommet" ] && ssh -o ConnectTimeout=10 "$sommet" "$sh" || echo "ordre: pas de sommet joignable"; fi
+}
+
+# --- dépôt d'un ordre --------------------------------------------------------
+tgt="${1:-}"
+case "$tgt" in
+  list) shift; cmd_list "${1:-}"; exit 0 ;;
+  */*)  ;;
+  *)    echo "usage: ordre <machine>/<equipe> \"<intention>\"   |   ordre list [<machine>]" >&2; exit 1 ;;
+esac
+shift; txt="$*"
+[ -n "$txt" ] || { echo "ordre: intention vide" >&2; exit 1; }
+machine="${tgt%%/*}"; equipe="${tgt#*/}"
+from="$me/${ZELLIJ_SESSION_NAME:-general}"
+ts="$(date +%Y%m%dT%H%M%S)-$$"
+
+# corps de l'ordre (From/Target/Created + texte), déposé atomiquement (.tmp → mv)
+body="$(printf 'From: %s\nTarget: %s\nCreated: %s\n\n%s\n' "$from" "$equipe" "$(date -Iseconds)" "$txt")"
+
+if on_sommet; then
+  dir="$HOME/.cache/thedev/command/ordres/$machine"; mkdir -p "$dir" || exit 1
+  printf '%s' "$body" > "$dir/$ts.ordre.tmp" && mv "$dir/$ts.ordre.tmp" "$dir/$ts.ordre"
+else
+  [ -n "$sommet" ] || { echo "ordre: aucun sommet déclaré (~/.config/thedev-sommet)" >&2; exit 1; }
+  printf '%s' "$body" | ssh -o ConnectTimeout=10 "$sommet" \
+    "d=\$HOME/.cache/thedev/command/ordres/$machine; mkdir -p \"\$d\" && cat > \"\$d/$ts.ordre.tmp\" && mv \"\$d/$ts.ordre.tmp\" \"\$d/$ts.ordre\"" \
+    || { echo "ordre: dépôt au sommet '$sommet' échoué" >&2; exit 1; }
+fi
+echo "✓ ordre déposé pour $machine/$equipe (file du sommet) — id $ts"
+echo "  $machine le consommera à son réveil (\`ordres pull\`)."

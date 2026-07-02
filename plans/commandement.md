@@ -9,12 +9,14 @@ d'agents » et du vocabulaire [`NAMING.md`](../NAMING.md). On construit l'arbre
 La hiérarchie est un **arbre n-aire auto-équilibré** (un B-tree *sémantique*) :
 
 - Les **feuilles** sont de vraies équipes (1 projet / 1 machine), soldats pairs.
-- Un **chef** est un **rôle convocable** (charte + inbox + liste d'équipes, en
-  fichiers) — **pas** une session debout 24/7. Il se réveille sur événement
-  (ordre à router, débrief à agréger), produit, se rendort. Coût ∝ activité.
-- Le **général** est la **racine**. Tant que `équipes ≤ n`, c'est **toi +
-  l'état-major** (aucun agent debout, coût nul). Le général-agent ne se
-  matérialise qu'à la **première scission**.
+- **Un seul objet : le `chef`.** Convocable à tout moment (une session briefée,
+  **pas** debout 24/7), il tient le **contexte agrégé** de tout son sous-arbre
+  (sous-chefs ou équipes). Il se réveille sur événement (ordre à router, débrief à
+  agréger, question), produit, se rendort. Coût ∝ activité.
+- **Le « général en chef » n'est pas un type à part — c'est le `chef` à la racine**
+  (sur le sommet). Des chefs partout, un seul tout en haut. Il existe dès qu'il y a
+  quelque chose à commander ; ce qui « apparaît » à une scission, c'est un **étage**,
+  pas le premier agent.
 
 **Règle récursive de placement** (uniforme à chaque étage) :
 
@@ -38,16 +40,50 @@ Invariants :
    la scission, pas un mur d'aiguillage.
 2. **`n` = span de contrôle (~7), avec hystérésis.** Scinder à `n`, fusionner
    bien en dessous (~`n/2`) — jamais au même seuil, sinon l'arbre oscille.
-3. **L'arbre respire dans les deux sens.** Toute scission a son miroir de
-   fusion : un chef sous le seuil est replié ; un général à un seul vrai chef est
-   **dissous** (la hauteur diminue). Sans ça, tour de chefs vides = mur de coût.
-4. **Un seul re-partitionneur par étage** : le parent (le général pour le
-   sommet). Pas de réunion multi-sessions — le général redessine la carte, seul,
-   sur événement de débordement.
+3. **Croissance par split de racine (la racine reste toujours unique).** Quand la
+   racine déborde, on ne la met **pas** en plusieurs pairs — on crée **un seul chef
+   au-dessus** qui les contient : la hauteur monte de 1. C'est l'invariant B-tree
+   (seul le split de la *racine* fait grandir la hauteur). Miroir en fusion : un
+   chef sous le seuil est replié ; une racine à un seul vrai chef est **dissoute**
+   (la hauteur baisse). Sans ça, tour de chefs vides = mur de coût.
+4. **Un seul re-partitionneur par étage** : le parent (le chef-racine au sommet).
+   Pas de réunion multi-sessions — le chef redessine la carte, seul, sur événement
+   de débordement. La surcharge est **remarquée pendant une session quelconque** et
+   la réorg **invoquée** là (pas de moniteur debout) : opportuniste, event-driven.
 
 Le garde-fou de VISION reste la loi : la réorg déplace une équipe sous un autre
 chef, elle ne change **jamais** la *mission* d'une équipe, et le général
 court-circuite la carte à volonté.
+
+## L'ossature figée (décision) — général → chef-machine → domaine → équipe
+
+Le B-tree ci-dessus décrit la *mécanique* ; voici l'**ossature concrète, figée**,
+qui la plaque sur le réel (machines + accès téléphone) :
+
+- **Le général** — une **vraie session Claude sur le sommet** (le VPS toujours
+  allumé, `thedev-sommet`). Point d'accès unique (téléphone → sommet). Il voit la
+  flotte (`carte` agrégée) et commande vers le bas (`ordre`). **Convocable** :
+  ouvert quand tu veux commander, pas debout 24/7.
+- **Un chef par machine** — sous le général, **exactement un chef local par
+  machine** (jlal-pc, indice…). C'est le **point d'entrée unique** d'une machine :
+  le général commande une machine *à travers son chef-machine*, jamais N racines
+  qui flottent. **Une machine ne peut pas avoir plusieurs chefs-racines.**
+- **Le domaine organise *sous* le chef-machine** — domaine-d'abord s'applique
+  **à l'intérieur** d'une machine (grouper ses équipes par projet). Le chef-machine
+  est le niveau que voit le *général* ; le domaine, le niveau que voit le
+  *chef-machine*.
+- **L'équipe** — la feuille (1 projet / 1 machine, soldats pairs).
+
+**Pourquoi machine avant domaine** : le **contrôle** et l'**accès** priment. Le
+général (et le téléphone) ont besoin d'**un handle par machine**, pas d'un handle
+par domaine éparpillé. Prix assumé : un domaine réparti sur 2 machines apparaît
+sous 2 chefs-machine — l'unité cross-machine d'un projet cède le pas à l'unité de
+contrôle.
+
+La règle récursive (scission/fusion, seuils `n`, hystérésis) s'applique **dans le
+sous-arbre d'un chef-machine** : trop de domaines sur une machine → son chef scinde
+en sous-chefs de domaine ; la machine se vide → ils fusionnent. Le chef-machine,
+lui, subsiste tant que la machine a des équipes.
 
 ---
 
@@ -72,15 +108,14 @@ Distinction qui sauve le coût — **plan de contrôle vs calcul** :
   réorg), lit l'état sur le VPS, produit, se rendort. Le VPS ne dort pas ;
   l'*agent*, si.
 
-**L'arbre est *sémantique*, pas *physique* — décision figée (domaine-d'abord).**
-Le commandement groupe par **domaine, à travers les machines** ; la machine n'est
-**jamais** un étage de l'arbre, seulement (a) un **attribut** de chaque feuille et
-(b) une partition de **transport** (`command-fleet/<machine>/`) qui n'existe que
-pour garder le `rsync --delete` sans collision. Un domaine réparti sur plusieurs
-machines (ex. *indicefossile* = mobile en local + backend sur indice) reste **un
-seul nœud** avec des feuilles de machines différentes — pas deux sous-arbres.
-Poser une équipe = ajouter une feuille sous **son domaine** ; le sommet assemble
-l'arbre domaine-d'abord depuis l'union de ce que les machines remontent.
+**Le premier étage est la MACHINE (décision figée — cf. § L'ossature figée).**
+Le général voit **un chef par machine** ; le `command-fleet/<machine>/` est à la
+fois la partition de **transport** (rsync `--delete` sans collision) **et** le
+sous-arbre de ce chef-machine. Poser une équipe = ajouter une feuille sous **son
+domaine, sous le chef de sa machine** ; le sommet assemble l'arbre
+`général → chef-machine → domaine → équipe` depuis l'union des remontées. Un
+domaine réparti sur 2 machines apparaît sous 2 chefs-machine — prix assumé de
+l'unité de contrôle.
 
 Les trois murs, assumés :
 

@@ -461,44 +461,6 @@ def load_workspaces():
     return out
 
 
-def load_domaines():
-    """{cwd_realpath: domaine} depuis les cartes de commandement
-    (~/.cache/thedev/command/equipes/*.md, champs `cwd:` et `domaine:` du frontmatter).
-    Absent → dict vide : l'accueil retombe proprement sur le nom d'équipe comme domaine
-    (aucune dépendance dure à la couche commandement)."""
-    out = {}
-    d = os.path.expanduser("~/.cache/thedev/command/equipes")
-    try:
-        names = os.listdir(d)
-    except OSError:
-        return out
-    for fn in names:
-        if not fn.endswith(".md"):
-            continue
-        cwd = dom = ""
-        infm = False
-        try:
-            with open(os.path.join(d, fn), encoding="utf-8", errors="replace") as fh:
-                for line in fh:
-                    line = line.rstrip("\n")
-                    if line == "---":
-                        if infm:
-                            break
-                        infm = True
-                        continue
-                    if not infm:
-                        continue
-                    if line.startswith("cwd:"):
-                        cwd = line[4:].strip()
-                    elif line.startswith("domaine:"):
-                        dom = line[8:].strip()
-        except OSError:
-            continue
-        if cwd and dom:
-            out[os.path.realpath(cwd)] = dom
-    return out
-
-
 def list_dirs(path):
     out = []
     try:
@@ -542,7 +504,6 @@ class Picker:
         self.scr = scr
         self.cur_dir = cur_dir
         self.ws = load_workspaces()   # équipes de dev (un par dossier, dédup realpath)
-        self.domaines = load_domaines()  # {cwd: domaine} des cartes de commandement (niveau 2)
         self.live = live_sessions()   # sessions zellij vivantes (basename du cwd)
         self.busy_cwds = set()        # cwd (realpath) des équipes avec un Claude en plein tour
         self.waiting_cwds = set()     # … bloqué sur une question/permission (t'attend)
@@ -573,6 +534,8 @@ class Picker:
         self.rc_stop = threading.Event()   # arrête le polling à la fermeture de l'etat-major
         if self.rc_hosts:
             threading.Thread(target=self._rc_worker, daemon=True).start()
+        self.carte_nodes = None       # écran Commandement : arbre de nœuds (None = chargement)
+        self.ci = 0                   # sélection dans la page Commandement (index sélectionnable)
         # Automatisations (timers thedev) : gather en fond pour le bouton + l'écran dédié.
         self.autos = None
         self.ai = 0                   # sélection dans l'écran gardes
@@ -668,6 +631,74 @@ class Picker:
         self.infos_data = None
         threading.Thread(target=self._gather_infos, daemon=True).start()
 
+    def enter_carte(self):
+        # Écran Commandement : l'arbre CHEFS + SESSIONS (pas les panes), navigable.
+        # Données via `carte --data` → modèle général → chef-machine → domaine → session.
+        self.mode = "carte"
+        self.carte_nodes = None
+        self.ci = 0
+        threading.Thread(target=self._carte_worker, daemon=True).start()
+
+    def _carte_worker(self):
+        try:
+            out = subprocess.run(["carte", "--data"], capture_output=True, text=True, timeout=8).stdout
+        except Exception:
+            out = ""
+        me = sommet = ""
+        rows = []
+        for ln in out.splitlines():
+            p = ln.split("\t")
+            if p and p[0] == "#meta":
+                me = p[1] if len(p) > 1 else ""
+                sommet = p[2] if len(p) > 2 else ""
+            elif len(p) >= 6:
+                rows.append({"machine": p[0], "domaine": p[1], "equipe": p[2],
+                             "live": p[3], "etat": p[4], "ago": p[5]})
+        # arbre : général (racine) → chef par machine → ◆ domaine (header) → session.
+        # Sélectionnables : général + chefs + sessions (JAMAIS les panes). Domaine = header.
+        is_sommet = bool(sommet) and me == sommet
+        machines = ([me] if any(r["machine"] == me for r in rows) else []) + \
+                   sorted(m for m in {r["machine"] for r in rows} if m != me)
+        # DISSOLUTION : le nœud « général » n'apparaît que s'il contient ≥2 chefs-machine
+        # (sur le sommet). Avec UNE seule machine, le chef-machine EST la racine — pas de
+        # général redondant au-dessus d'un unique enfant.
+        multi = len(machines) >= 2
+        nodes = []
+        if multi:
+            if is_sommet:   glabel = "⌘ général en chef — %s · tu es au sommet" % me
+            elif sommet:    glabel = "⌘ général en chef — sommet %s (vue de %s)" % (sommet, me)
+            else:           glabel = "⌘ %s (racine)" % me
+            nodes.append({"lvl": 0, "sel": True, "type": "general", "label": glabel,
+                          "me": me, "sommet": sommet, "rows": rows})
+        chef_lvl = 1 if multi else 0
+        for m in machines:
+            mrows = [r for r in rows if r["machine"] == m]
+            if multi:
+                clabel = ("⬡ chef local — %s" if m == me else "⬡ chef — %s") % m
+            else:
+                clabel = "⬡ chef — %s" % m
+                if is_sommet:  clabel += "  · tu es au sommet"
+                elif sommet:   clabel += "  · général sur %s" % sommet
+            nodes.append({"lvl": chef_lvl, "sel": True, "type": "chef", "machine": m,
+                          "rows": mrows, "me": me, "sommet": sommet, "label": clabel})
+            doms = {}
+            for r in mrows:
+                doms.setdefault(r["domaine"], []).append(r)
+            for d in sorted(doms):
+                drows = doms[d]
+                grouped = len(drows) >= 2          # header ◆ domaine SEULEMENT s'il groupe ≥2
+                if grouped:
+                    nodes.append({"lvl": chef_lvl + 1, "sel": False, "type": "domaine", "label": "◆ " + d})
+                for r in drows:
+                    dot = "◆" if r["live"] == "busy" else ("●" if r["live"] == "live" else "○")
+                    tag = "" if (grouped or d == r["equipe"]) else "  · " + d   # domaine déclaré → suffixe
+                    nodes.append({"lvl": (chef_lvl + 2) if grouped else (chef_lvl + 1), "sel": True,
+                                  "type": "session", "machine": m, "equipe": r["equipe"],
+                                  "live": r["live"], "etat": r["etat"], "ago": r["ago"],
+                                  "label": "%s %s%s" % (dot, r["equipe"], tag)})
+        with self.rc_lock:
+            self.carte_nodes = nodes
+
     def enter_propals(self):
         self.mode = "propals"
         self.pi = -1                  # bouton Retour sélectionné par défaut
@@ -758,7 +789,6 @@ class Picker:
                 break
             try:
                 self.live = live_sessions()
-                self.domaines = load_domaines()   # une carte fraîchement ouverte se regroupe
             except Exception:
                 pass
         self.local_refreshing = False
@@ -932,58 +962,21 @@ class Picker:
                         scored.append((s, w))
                 scored.sort(key=lambda x: -x[0])
                 return [w for _, w in scored]
-            # Une équipe = un dossier ; ouverte ● = session zellij vivante, sinon fermée.
-            # NIVEAU 2 — l'accueil montre la HIÉRARCHIE : équipes groupées par DOMAINE
-            # (carte de commandement ; à défaut le nom d'équipe fait office de domaine).
-            # Un domaine réel (déclaré ou partagé par plusieurs équipes) a un en-tête
-            # « ◆ domaine » ; une équipe seule non déclarée reste nue (pas de header
-            # « ◆ nom / nom » redondant). Live d'abord — dans le tri des domaines et
-            # dans chaque domaine.
-            live_list, rest_list = self.split_live()
-            live_list, rest_list = rank(live_list), rank(rest_list)
-            def dom_of(w):
-                return self.domaines.get(os.path.realpath(w["cwd"]), w["name"])
-            groups, order = {}, []
-            for w in live_list:
-                d = dom_of(w)
-                if d not in groups:
-                    groups[d] = []; order.append(d)
-                groups[d].append((w, True))
-            for w in rest_list:
-                d = dom_of(w)
-                if d not in groups:
-                    groups[d] = []; order.append(d)
-                groups[d].append((w, False))
-            # Domaine RÉEL = cluster de ≥2 équipes, OU domaine ≠ nom d'équipe (déclaré
-            # vers un autre nom). → en-tête « ◆ domaine ». Une équipe seule non déclarée
-            # reste dans la liste plate classique (ouvertes / récentes), inchangée : le
-            # niveau 2 n'ajoute la hiérarchie que là où elle existe.
-            real, plain_live, plain_rest = [], [], []
-            for d in order:
-                items = sorted(groups[d], key=lambda t: (not t[1], -t[0]["mtime"]))
-                if len(items) > 1 or d != items[0][0]["name"]:
-                    real.append((d, items))
-                elif items[0][1]:
-                    plain_live.append(items[0][0])
-                else:
-                    plain_rest.append(items[0][0])
-            real.sort(key=lambda t: (not any(l for _, l in t[1]),
-                                     -max(w["mtime"] for w, _ in t[1])))
-            for d, items in real:
-                rows.append({"kind": "header", "text": "◆ " + d})
-                for w, is_live in items:
-                    rows.append({"kind": "ws", "w": w, "live": is_live})
+            # Une équipe = un dossier. Ouverts ● = session zellij vivante (rejoint
+            # par attach) ; récents = fermés (même de force), relancés + repris.
+            live, rest = self.split_live()
+            live, rest = rank(live), rank(rest)
             lim = 10 ** 9 if (self.show_all or f) else self.CAP
-            if plain_live:
+            if live:
                 rows.append({"kind": "header", "text": "équipes ouvertes"})
-                for w in plain_live:
+                for w in live:
                     rows.append({"kind": "ws", "w": w, "live": True})
-            if plain_rest:
+            if rest:
                 rows.append({"kind": "header", "text": "équipes récentes"})
-                for w in plain_rest[:lim]:
+                for w in rest[:lim]:
                     rows.append({"kind": "ws", "w": w, "live": False})
-                if len(plain_rest) > lim:
-                    rows.append({"kind": "more", "n": len(plain_rest) - lim})
+                if len(rest) > lim:
+                    rows.append({"kind": "more", "n": len(rest) - lim})
             if not rows:
                 rows.append({"kind": "header", "text": "(aucune équipe thedev)"})
         else:
@@ -1079,6 +1072,7 @@ class Picker:
             npr = len(self.propals) if isinstance(self.propals, list) else None
             rows.append({"kind": "act", "id": "propals", "text": "✦ propositions",
                          "footer": True, "n": npr})
+            rows.append({"kind": "act", "id": "commandement", "text": "⌘ commandement", "footer": True})
             rows.append({"kind": "act", "id": "infos", "text": "ⓘ infos", "footer": True})
             return rows
         rows = [
@@ -1349,6 +1343,89 @@ class Picker:
                     except curses.error:
                         pass
                     x += len(t)
+
+    def draw_carte(self):
+        # Écran Commandement — DEUX panneaux : à gauche l'arbre CHEFS + SESSIONS
+        # (navigable, jamais les panes) ; à droite le CONTEXTE du nœud sélectionné.
+        self.scr.erase()
+        H, W = self.scr.getmaxyx()
+        DIM = curses.A_DIM
+        G, C = self.GREEN, self.CYAN
+        self.scr.addnstr(0, 2, "⌘ COMMANDEMENT", W - 4, C | curses.A_BOLD)
+        back = "[ ‹ Retour ]"
+        try:
+            self.scr.addnstr(0, max(8, W - 2 - len(back)), back, len(back), C | curses.A_REVERSE | curses.A_BOLD)
+            self.scr.addnstr(1, 2, "─" * (W - 4), W - 4, DIM)
+        except curses.error:
+            pass
+        with self.rc_lock:
+            nodes = self.carte_nodes
+        if nodes is None:
+            try: self.scr.addnstr(3, 2, "chargement de la carte…", W - 4, DIM)
+            except curses.error: pass
+            self.scr.refresh(); return
+        sel_idx = [i for i, n in enumerate(nodes) if n["sel"]]
+        if not sel_idx:
+            try: self.scr.addnstr(3, 2, "(aucune équipe connue — le namespace se peuple à l'ouverture / aux remontées)", W - 4, DIM)
+            except curses.error: pass
+            self.scr.refresh(); return
+        self.ci = max(0, min(self.ci, len(sel_idx) - 1))
+        cur = sel_idx[self.ci]
+        lw = (W * 55) // 100
+        # ── gauche : l'arbre ──
+        y = 3
+        for i, n in enumerate(nodes):
+            if y >= H - 1:
+                break
+            txt = "  " * n["lvl"] + n["label"]
+            if   n["type"] == "domaine": attr = DIM
+            elif n["type"] == "general": attr = C | curses.A_BOLD
+            elif n["type"] == "chef":    attr = C
+            else:                        attr = G if n["live"] in ("live", "busy") else 0
+            if i == cur:
+                attr = curses.A_REVERSE | curses.A_BOLD
+            try: self.scr.addnstr(y, 2, txt, lw - 3, attr)
+            except curses.error: pass
+            y += 1
+        for yy in range(2, H - 1):
+            try: self.scr.addnstr(yy, lw, "│", 1, DIM)
+            except curses.error: pass
+        # ── droite : contexte du nœud sélectionné ──
+        n = nodes[cur]; rx = lw + 2
+        def rl(row, text, attr=0):
+            if 2 <= row < H - 1 and W - rx - 1 > 0:
+                try: self.scr.addnstr(row, rx, text, W - rx - 1, attr)
+                except curses.error: pass
+        ry = 3
+        if n["type"] == "session":
+            rl(ry, "SESSION  %s" % n["equipe"], C | curses.A_BOLD); ry += 1
+            rl(ry, "machine : %s" % n["machine"], DIM); ry += 1
+            st = {"busy": "◆ répond", "live": "● vivante"}.get(n["live"], "○ pas de soldat")
+            rl(ry, "état    : %s%s" % (st, ("  · " + n["ago"]) if n["ago"] else ""), 0); ry += 2
+            rl(ry, "— " + (n["etat"] or "—"), 0)
+        elif n["type"] == "chef":
+            mrows = n["rows"]; ln = sum(1 for r in mrows if r["live"] in ("live", "busy"))
+            rl(ry, "CHEF  %s" % n["machine"], C | curses.A_BOLD); ry += 1
+            rl(ry, "contexte chargé : %d équipe(s) · %d vivante(s)" % (len(mrows), ln), DIM); ry += 2
+            for r in mrows:
+                if ry >= H - 1: break
+                dot = "◆" if r["live"] == "busy" else ("●" if r["live"] == "live" else "○")
+                rl(ry, "%s %-16s %s" % (dot, r["equipe"][:16], (r["etat"] or "—")), 0); ry += 1
+        else:  # general
+            rows = n["rows"]
+            rl(ry, "GÉNÉRAL EN CHEF", C | curses.A_BOLD); ry += 1
+            rl(ry, "contexte chargé : flotte %s" % (("(sommet %s)" % n["sommet"]) if n["sommet"] else "(local)"), DIM); ry += 2
+            for m in ([n["me"]] if any(r["machine"] == n["me"] for r in rows) else []) + \
+                     sorted(mm for mm in {r["machine"] for r in rows} if mm != n["me"]):
+                if ry >= H - 1: break
+                mr = [r for r in rows if r["machine"] == m]
+                lv = sum(1 for r in mr if r["live"] in ("live", "busy"))
+                rl(ry, "⬡ %-14s %d équipe(s) · %d vivante(s)" % (m, len(mr), lv), 0); ry += 1
+        try:
+            self.scr.addnstr(H - 1, 2, "↑↓ naviguer  ·  ↵/Esc retour  ·  chef/session sélectionné → contexte à droite", W - 4, DIM)
+        except curses.error:
+            pass
+        self.scr.refresh()
 
     def draw_infos(self):
         self.scr.erase()
@@ -1700,6 +1777,9 @@ class Picker:
         if self.mode == "propals":
             self.draw_propals()
             return
+        if self.mode == "carte":
+            self.draw_carte()
+            return
         if self.mode == "infos":
             self.draw_infos()
             return
@@ -1808,6 +1888,9 @@ class Picker:
             return
         if aid == "propals":         # écran des propositions de tâches (Esc pour revenir)
             self.enter_propals()
+            return
+        if aid == "commandement":    # écran commandement : l'arbre des équipes (Esc pour revenir)
+            self.enter_carte()
             return
         if aid == "infos":           # écran d'infos pratiques (Esc pour revenir)
             self.enter_infos()
@@ -1923,7 +2006,7 @@ class Picker:
             # getch non bloquant tant qu'il y a qqch à rafraîchir (liste RC live,
             # check git en fond, ou écran infos en cours de chargement) ; sinon bloque.
             self._refresh_busy()                      # busy local (throttle interne) → clignotement
-            poll = bool(self.rc_hosts) or self.git_checking or self.local_refreshing or (self.metrics is not None) or (self.mode == "infos" and self.infos_data is None) or (self.autos is None) or (self.mode == "propals" and self._propals_loading) or bool(self.busy_cwds) or bool(self.waiting_cwds)
+            poll = bool(self.rc_hosts) or self.git_checking or self.local_refreshing or (self.metrics is not None) or (self.mode == "infos" and self.infos_data is None) or (self.autos is None) or (self.mode == "propals" and self._propals_loading) or (self.mode == "carte" and self.carte_nodes is None) or bool(self.busy_cwds) or bool(self.waiting_cwds)
             self.scr.timeout(400 if poll else -1)
             try:
                 ch = self.scr.getch()
@@ -2035,6 +2118,15 @@ class Picker:
                 elif ch in (curses.KEY_ENTER, 10, 13) and 0 <= self.pi < n:
                     # exécution (ship le git + mission → rapport) pas encore branchée
                     self.msg = "lancement des agents proposés : à brancher (proposeur + exécution)"
+                continue
+            if self.mode == "carte":                # écran commandement : navigable (↑↓), Esc = retour
+                if ch == 27:
+                    self.mode = "sessions"; self.focus = "left"
+                    self.li = self.ri = 0; self.loff = 0
+                elif ch == curses.KEY_UP:
+                    self.ci = max(0, self.ci - 1)
+                elif ch == curses.KEY_DOWN:
+                    self.ci += 1
                 continue
             if self.mode == "infos":                # écran infos : bouton Retour (↵) ou Esc
                 if ch in (27, curses.KEY_ENTER, 10, 13):

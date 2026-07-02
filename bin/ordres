@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# @thedev commandement ordres — les ordres REÇUS du général (côté machine cible)
+# Le général dépose sur le sommet (`ordre`) ; ici, CETTE machine vient CHERCHER ses
+# ordres (modèle PULL : une feuille — un laptop — n'est pas joignable depuis le VPS,
+# elle tire ses ordres à son réveil). Axe descendant de la couche commandement.
+#
+#   ordres              liste les ordres en attente pour cette machine (tire du sommet)
+#   ordres pull         tire les ordres du sommet dans la file locale (ordres-in/)
+#   ordres apply <id>   ouvre l'équipe cible, soldat briefé sur l'ordre, puis archive
+#
+# File distante : <sommet>:~/.cache/thedev/command/ordres/<machine>/. File locale (tirée) :
+# ~/.cache/thedev/command/ordres-in/. Consommer un ordre = l'appliquer puis l'archiver.
+set -u
+me="$( { cat "$HOME/.config/dev-vps" 2>/dev/null || hostname -s; } )"
+sommet="$(grep -vE '^\s*#|^\s*$' "$HOME/.config/thedev-sommet" 2>/dev/null | head -n1 | tr -d '[:space:]')"
+IN="$HOME/.cache/thedev/command/ordres-in"; mkdir -p "$IN" 2>/dev/null
+SSH="ssh -o ConnectTimeout=10"
+
+_fld() { sed -n "s/^$2: //p" "$1" | head -n1; }   # $1=fichier $2=champ
+_body(){ awk 'b{print} /^$/{b=1}' "$1"; }         # corps après la 1re ligne vide
+
+cmd_pull() {
+  [ -n "$sommet" ] || { echo "ordres: aucun sommet déclaré (~/.config/thedev-sommet)"; return 1; }
+  if [ "$me" = "$sommet" ] || [ "$(hostname -s)" = "$sommet" ]; then
+    # on EST le sommet : la file locale est déjà là (rien à tirer par SSH)
+    local d="$HOME/.cache/thedev/command/ordres/$me"
+    [ -d "$d" ] && cp -f "$d"/*.ordre "$IN/" 2>/dev/null
+    return 0
+  fi
+  # rsync des ordres de CETTE machine depuis le sommet (sans --delete : on archive localement)
+  rsync -az -e "$SSH" "$sommet:.cache/thedev/command/ordres/$me/" "$IN/" 2>/dev/null \
+    || { echo "ordres: sommet '$sommet' injoignable — réessayer plus tard."; return 0; }
+}
+
+cmd_list() {
+  shopt -s nullglob
+  local f n=0
+  for f in "$IN"/*.ordre; do
+    printf '  ● %-10s  %s/%s  «%s»\n' "$(basename "$f" .ordre)" "$me" "$(_fld "$f" Target)" \
+      "$(_body "$f" | tr '\n' ' ' | cut -c1-60)"
+    n=$((n+1))
+  done
+  [ "$n" = 0 ] && echo "  (aucun ordre en attente pour $me)"
+}
+
+cmd_apply() {
+  local id="$1" f="$IN/$1.ordre"
+  [ -n "$id" ] && [ -f "$f" ] || { echo "ordres: ordre '$id' introuvable (as-tu fait 'ordres pull' ?)"; return 1; }
+  local equipe cwd card task
+  equipe="$(_fld "$f" Target)"; task="$(_body "$f")"
+  # résout le cwd de l'équipe via sa carte de commandement (equipe card y écrit cwd)
+  card="$HOME/.cache/thedev/command/equipes/$(printf '%s' "$me" | tr -c 'A-Za-z0-9._-' '_')__$(printf '%s' "$equipe" | tr -c 'A-Za-z0-9._-' '_').md"
+  cwd="$(_fld "$card" cwd)"
+  [ -n "$cwd" ] && [ -d "$cwd" ] || { echo "ordres: cwd de '$equipe' introuvable (équipe jamais ouverte ici ?) — ouvre-la une fois puis réessaie."; return 1; }
+  # ouvre l'équipe, soldat principal briefé sur l'ordre (réutilise le lanceur dev)
+  local launcher="$HOME/jlal_perso/config/bash/dev-launcher.sh"
+  [ -f "$launcher" ] || launcher="$HOME/config/bash/dev-launcher.sh"
+  # shellcheck disable=SC1090
+  . "$launcher" 2>/dev/null || { echo "ordres: dev-launcher introuvable — ouvre '$equipe' à la main avec le contexte ci-dessus."; return 1; }
+  local bf; bf=$(mktemp)
+  printf '[ORDRE du général] %s\n' "$task" > "$bf"
+  mkdir -p "$HOME/.cache/thedev/command/ordres-done"
+  mv "$f" "$HOME/.cache/thedev/command/ordres-done/" 2>/dev/null   # archive AVANT d'ouvrir (pas de double-apply)
+  echo "→ ouverture de $equipe, soldat briefé sur l'ordre…"
+  CLAUDE_PANE_INIT_FILE="$bf" _dev_launch "$cwd" ""
+}
+
+case "${1:-}" in
+  pull)  cmd_pull ;;
+  apply) shift; cmd_apply "${1:-}" ;;
+  ""|list) cmd_pull; cmd_list ;;
+  *) echo "usage: ordres [pull|list|apply <id>]" >&2; exit 1 ;;
+esac

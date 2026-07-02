@@ -32,6 +32,37 @@ srv() {
   esac
 }
 
+# chef — convoque le CHEF-RACINE (le général en chef) sur le sommet (thedev-sommet).
+# Le général = un `chef` (objet unique) à la racine, sur le VPS toujours allumé. Session
+# briefée : il voit la flotte (`carte`) et commande vers le bas (`ordre`). Convocable
+# (ouvre quand tu commandes, ferme après). Depuis le téléphone : via le sommet.
+chef() {
+  local sommet me d bf
+  sommet="$(grep -vE '^\s*#|^\s*$' "$HOME/.config/thedev-sommet" 2>/dev/null | head -n1 | tr -d '[:space:]')"
+  me="$( { cat "$HOME/.config/dev-vps" 2>/dev/null || hostname -s; } )"
+  [ -n "$sommet" ] || { echo "chef: aucun sommet déclaré (~/.config/thedev-sommet)."; return 1; }
+  if [ "$me" = "$sommet" ] || [ "$(hostname -s)" = "$sommet" ]; then
+    # on EST le sommet → ouvrir/rejoindre le général (chef-racine), briefé
+    d="$HOME/thedev-general"; mkdir -p "$d"
+    bf=$(mktemp)
+    cat > "$bf" <<'BRIEF'
+Tu es le GÉNÉRAL EN CHEF de thedev — le chef à la racine, sur le sommet. Ton rôle :
+voir la flotte et COMMANDER, pas coder toi-même.
+- `carte` → l'arbre complet (chefs-machine → domaines → équipes) + leur état.
+- `ordre <machine>/<equipe> "<intention>"` → commande une équipe (déposé dans la file,
+  consommé quand la machine se réveille). `ordre list` → la file en attente.
+- `mission <machine>/<equipe> "<txt>"` → délégation synchrone si l'équipe est joignable.
+Lis la carte, prends l'intention de l'utilisateur, dispatch les ordres aux bonnes
+équipes, rends compte. Tu répartis l'attention ; tu ne fais pas le travail des soldats.
+BRIEF
+    CLAUDE_PANE_INIT_FILE="$bf" _dev_launch "$d" ""
+  else
+    printf '\033[1;34m→ général en chef sur %s…\033[0m\n' "$sommet"
+    ssh -o ConnectTimeout=8 -t "$sommet" "bash -lic 'chef'" \
+      || { echo "✗ $sommet injoignable."; sleep 1; }
+  fi
+}
+
 # (Re)crée la session zellij `$1` dans $PWD et RESTAURE les Claude qui étaient
 # ouverts. Sur une reprise ($2 = id non vide), on relit le registre
 # (reg-soldat) du dossier : le Claude principal reprend sa conversation

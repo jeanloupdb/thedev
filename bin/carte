@@ -8,6 +8,7 @@
 #   carte                 rend l'arbre
 #   (ordre vers une feuille = `mission <machine>/<equipe> "<ordre>"`, transport existant)
 set -u
+DATA=0; [ "${1:-}" = "--data" ] && DATA=1   # --data : sortie machine-lisible (pour l'état-major)
 ROOT="$HOME/.cache/thedev/command"
 FLEET="$HOME/.cache/thedev/command-fleet"   # sous-arbres remontes par les autres machines
 
@@ -28,11 +29,11 @@ _ago() {   # $1 = timestamp ISO → "il y a X" (ou vide si illisible)
 me="$(machine_self)"
 sommet="$(grep -vE '^\s*#|^\s*$' "$HOME/.config/thedev-sommet" 2>/dev/null | head -n1 | tr -d '[:space:]')"
 if [ -n "$sommet" ] && { [ "$me" = "$sommet" ] || [ "$(hostname -s)" = "$sommet" ]; }; then
-  title="la carte — $me (sommet · général)"
+  title="⌘ général — $me  ·  tu es au sommet"
 elif [ -n "$sommet" ]; then
-  title="la carte — vue locale de $me · sommet: $sommet"
+  title="⌘ général — sommet: $sommet   ·   vue locale de $me (le sommet tient la flotte complète)"
 else
-  title="la carte — $me (local, pas de sommet)"
+  title="⌘ $me   (local, pas de sommet)"
 fi
 roots=("$ROOT")
 if [ -d "$FLEET" ]; then
@@ -69,6 +70,7 @@ _live() {
 have=0
 for r in "${roots[@]}"; do ls -1 "$r"/equipes/*.md >/dev/null 2>&1 && { have=1; break; }; done
 if [ "$have" = 0 ]; then
+  [ "$DATA" = 1 ] && { printf '#meta\t%s\t%s\n' "$me" "$sommet"; exit 0; }
   echo "$title"
   echo "  (aucune equipe connue — le namespace se peuple a l'ouverture des equipes / aux remontees)"
   exit 0
@@ -90,6 +92,7 @@ for r in "${roots[@]}"; do
     [ -n "$eq" ]  || eq="$key"
     [ -n "$dom" ] || dom="(sans domaine)"
     [ -n "$st" ]  || st="actif"
+    [ -n "$mc" ]  || mc="$me"
     etat="—"; ago=""; live=0
     if { [ -z "$mc" ] || [ "$mc" = "$me" ]; } && [ -n "$cwd" ] && grep -qxF "$cwd" <<<"$live_cwds"; then
       # équipe LOCALE avec un claude vivant → état LIVE (registre), pas débrief
@@ -105,31 +108,51 @@ for r in "${roots[@]}"; do
     fi
     # live en 1er : le seul champ possiblement VIDE (ago) reste en DERNIER, où le
     # collapse de champ vide par `read` (tab = whitespace) est sans conséquence.
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$live" "$dom" "$eq" "$st" "$etat" "$ago" >> "$tmp"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$live" "$mc" "$dom" "$eq" "$st" "$etat" "$ago" >> "$tmp"
   done
 done
 
+# --data : sortie machine-lisible pour l'état-major (page Commandement navigable).
+# #meta<TAB>me<TAB>sommet, puis 1 ligne/équipe : machine<TAB>domaine<TAB>equipe<TAB>live<TAB>etat<TAB>ago
+if [ "$DATA" = 1 ]; then
+  printf '#meta\t%s\t%s\n' "$me" "$sommet"
+  while IFS=$'\t' read -r live machine dom eq st etat ago; do
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$machine" "$dom" "${eq#*/}" "$live" "$etat" "$ago"
+  done < "$tmp"
+  rm -f "$tmp"; exit 0
+fi
+
+# ── apex (général) → chef par machine → ◆ domaine → équipe ────────────────────
 echo "$title"
-doms=$(cut -f2 "$tmp" | sort -u)
-nd=$(printf '%s\n' "$doms" | grep -c .)
-i=0
-printf '%s\n' "$doms" | while IFS= read -r d; do
-  [ -n "$d" ] || continue
-  i=$((i+1)); dbr="├─"; [ "$i" = "$nd" ] && dbr="└─"
-  printf '%s ◆ %s\n' "$dbr" "$d"
-  cont="│ "; [ "$i" = "$nd" ] && cont="  "
-  rows=$(awk -F'\t' -v d="$d" '$2==d{print}' "$tmp")
-  ne=$(printf '%s\n' "$rows" | grep -c .)
-  j=0
-  printf '%s\n' "$rows" | while IFS=$'\t' read -r live dom eq st etat ago; do
-    j=$((j+1)); lb="├─"; [ "$j" = "$ne" ] && lb="└─"
-    # Présence-d'abord : le dot dit s'il y a un soldat vivant, pas le statut déclaré.
-    case "$live" in
-      busy) dot="◆" ;;   # soldat en train de répondre
-      live) dot="●" ;;   # équipe ouverte, soldat au repos
-      *)    dot="○" ;;   # aucun soldat vivant — le débrief dit ce qu'elle faisait
-    esac
-    printf '%s  %s %s %-28s %s %s\n' "$cont" "$lb" "$dot" "$eq" "$etat" "${ago:+· $ago}"
+# machines : self d'abord (ton chef local), puis les autres (alpha). 1 machine = 1 chef.
+machines=$( { awk -F'\t' -v m="$me" '$2==m{print m; exit}' "$tmp"; cut -f2 "$tmp" | sort -u | grep -vxF "$me"; } )
+nm=$(printf '%s\n' "$machines" | grep -c .)
+mi=0
+printf '%s\n' "$machines" | while IFS= read -r m; do
+  [ -n "$m" ] || continue
+  mi=$((mi+1)); mbr="├─"; mcont="│  "; [ "$mi" = "$nm" ] && { mbr="└─"; mcont="   "; }
+  if [ "$m" = "$me" ]; then printf '%s ⬡ chef local — %s\n' "$mbr" "$m"
+  else                      printf '%s ⬡ chef — %s\n'       "$mbr" "$m"; fi
+  mdoms=$(awk -F'\t' -v m="$m" '$2==m{print $3}' "$tmp" | sort -u)
+  ndm=$(printf '%s\n' "$mdoms" | grep -c .)
+  di=0
+  printf '%s\n' "$mdoms" | while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    di=$((di+1)); dbr="├─"; dcont="│  "; [ "$di" = "$ndm" ] && { dbr="└─"; dcont="   "; }
+    printf '%s%s ◆ %s\n' "$mcont" "$dbr" "$d"
+    rows=$(awk -F'\t' -v m="$m" -v d="$d" '$2==m && $3==d{print}' "$tmp")
+    ne=$(printf '%s\n' "$rows" | grep -c .)
+    ei=0
+    printf '%s\n' "$rows" | while IFS=$'\t' read -r live machine dom eq st etat ago; do
+      ei=$((ei+1)); eb="├─"; [ "$ei" = "$ne" ] && eb="└─"
+      case "$live" in
+        busy) dot="◆" ;;   # soldat en train de répondre
+        live) dot="●" ;;   # équipe ouverte, soldat au repos
+        *)    dot="○" ;;   # aucun soldat vivant — le débrief dit ce qu'elle faisait
+      esac
+      eqname="${eq#*/}"    # équipe sans le préfixe machine (déjà porté par le chef)
+      printf '%s%s%s %s %-24s %s %s\n' "$mcont" "$dcont" "$eb" "$dot" "$eqname" "$etat" "${ago:+· $ago}"
+    done
   done
 done
 rm -f "$tmp"
