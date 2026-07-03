@@ -11,10 +11,21 @@ set -u
 DATA=0; [ "${1:-}" = "--data" ] && DATA=1   # --data : sortie machine-lisible (pour l'état-major)
 ROOT="$HOME/.cache/thedev/command"
 FLEET="$HOME/.cache/thedev/command-fleet"   # sous-arbres remontes par les autres machines
+N_SPAN="${THEDEV_SPAN:-7}"                   # span de controle (meme valeur que `reorg`)
 
 _fm()      { awk -v k="$2" 'NR==1&&$0=="---"{fm=1;next} fm&&$0=="---"{exit} fm&&$0~"^"k":[ \t]*"{sub("^"k":[ \t]*","");print;exit}' "$1"; }
 _section() { awk -v t="$2" '$0=="## "t{f=1;next} f&&/^## /{exit} f&&NF{print;exit}' "$1"; }
 machine_self() { local m; m="$(head -n1 "$HOME/.config/dev-vps" 2>/dev/null)"; [ -n "$m" ] || m="$(hostname -s)"; printf '%s' "$m"; }
+# régime d'étage d'une machine (brique 3, écrit par `reorg`) : "split" = l'étage des
+# sous-chefs de domaine est matérialisé, "flat" sinon. Local sous ROOT, distant sous
+# le miroir de flotte. Lecture pure : carte ne DÉCIDE jamais (cf. reorg = écrivain).
+_regime_of() {
+  local m="$1" f
+  for f in "$ROOT/etages/$m" "$FLEET/$m/command/etages/$m"; do
+    [ -f "$f" ] && [ "$(cat "$f" 2>/dev/null)" = split ] && { printf 'split'; return; }
+  done
+  printf 'flat'
+}
 
 _ago() {   # $1 = timestamp ISO → "il y a X" (ou vide si illisible)
   local t now d; [ -n "$1" ] || return 0
@@ -121,6 +132,11 @@ done
 # #meta<TAB>me<TAB>sommet, puis 1 ligne/équipe : machine<TAB>domaine<TAB>equipe<TAB>live<TAB>etat<TAB>ago
 if [ "$DATA" = 1 ]; then
   printf '#meta\t%s\t%s\n' "$me" "$sommet"
+  # régime d'étage par machine (brique 3) : l'état-major matérialise les sous-chefs
+  # quand "split". Une ligne par machine présente dans la collecte.
+  for m in $(cut -f2 "$tmp" | sort -u); do
+    [ -n "$m" ] && printf '#etage\t%s\t%s\n' "$m" "$(_regime_of "$m")"
+  done
   while IFS=$'\t' read -r live machine dom eq st etat ago; do
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$machine" "$dom" "${eq#*/}" "$live" "$etat" "$ago"
   done < "$tmp"
@@ -136,28 +152,41 @@ mi=0
 printf '%s\n' "$machines" | while IFS= read -r m; do
   [ -n "$m" ] || continue
   mi=$((mi+1)); mbr="├─"; mcont="│  "; [ "$mi" = "$nm" ] && { mbr="└─"; mcont="   "; }
-  if [ "$m" = "$me" ]; then printf '%s ⬡ chef local — %s\n' "$mbr" "$m"
-  else                      printf '%s ⬡ chef — %s\n'       "$mbr" "$m"; fi
+  # régime d'étage (brique 3). SCINDÉ : un domaine qui GROUPE (≥2 équipes) devient un
+  # vrai sous-chef `⬡` (étage de commandement) ; à plat, ce n'est qu'un label `◆`. Les
+  # singletons restent des feuilles DIRECTES sous le chef (pas d'étage pour 1 équipe).
+  reg=$(_regime_of "$m")
   mdoms=$(awk -F'\t' -v m="$m" '$2==m{print $3}' "$tmp" | sort -u)
   ndm=$(printf '%s\n' "$mdoms" | grep -c .)
+  # ⚠ : scindé mais toujours > N enfants directs → les domaines ne partitionnent pas
+  # assez, le général doit répartir (sous-chefs sémantiques = chef-agent, à venir).
+  warn=""; [ "$reg" = split ] && [ "$ndm" -gt "$N_SPAN" ] && warn="  ⚠ réorg (le général doit répartir)"
+  if [ "$m" = "$me" ]; then printf '%s ⬡ chef local — %s%s\n' "$mbr" "$m" "$warn"
+  else                      printf '%s ⬡ chef — %s%s\n'       "$mbr" "$m" "$warn"; fi
   di=0
   printf '%s\n' "$mdoms" | while IFS= read -r d; do
     [ -n "$d" ] || continue
     di=$((di+1)); dbr="├─"; dcont="│  "; [ "$di" = "$ndm" ] && { dbr="└─"; dcont="   "; }
-    printf '%s%s ◆ %s\n' "$mcont" "$dbr" "$d"
     rows=$(awk -F'\t' -v m="$m" -v d="$d" '$2==m && $3==d{print}' "$tmp")
     ne=$(printf '%s\n' "$rows" | grep -c .)
-    ei=0
-    printf '%s\n' "$rows" | while IFS=$'\t' read -r live machine dom eq st etat ago; do
-      ei=$((ei+1)); eb="├─"; [ "$ei" = "$ne" ] && eb="└─"
-      case "$live" in
-        busy) dot="◆" ;;   # soldat en train de répondre
-        live) dot="●" ;;   # équipe ouverte, soldat au repos
-        *)    dot="○" ;;   # aucun soldat vivant — le débrief dit ce qu'elle faisait
-      esac
-      eqname="${eq#*/}"    # équipe sans le préfixe machine (déjà porté par le chef)
-      printf '%s%s%s %s %-24s %s %s\n' "$mcont" "$dcont" "$eb" "$dot" "$eqname" "$etat" "${ago:+· $ago}"
-    done
+    if [ "$ne" -ge 2 ]; then
+      # domaine qui groupe → étage : sous-chef `⬡` si scindé, label `◆` sinon
+      if [ "$reg" = split ]; then printf '%s%s ⬡ %s\n' "$mcont" "$dbr" "$d"
+      else                        printf '%s%s ◆ %s\n' "$mcont" "$dbr" "$d"; fi
+      ei=0
+      printf '%s\n' "$rows" | while IFS=$'\t' read -r live machine dom eq st etat ago; do
+        ei=$((ei+1)); eb="├─"; [ "$ei" = "$ne" ] && eb="└─"
+        case "$live" in busy) dot="◆" ;; live) dot="●" ;; *) dot="○" ;; esac
+        printf '%s%s%s %s %-24s %s %s\n' "$mcont" "$dcont" "$eb" "$dot" "${eq#*/}" "$etat" "${ago:+· $ago}"
+      done
+    else
+      # singleton → feuille directe sous le chef ; suffixe `· domaine` si déclaré (≠ nom d'équipe)
+      printf '%s\n' "$rows" | while IFS=$'\t' read -r live machine dom eq st etat ago; do
+        case "$live" in busy) dot="◆" ;; live) dot="●" ;; *) dot="○" ;; esac
+        eqn="${eq#*/}"; suf=""; { [ "$d" != "$eqn" ] && [ "$d" != "$eq" ]; } && suf="  · $d"
+        printf '%s%s %s %-24s%s %s %s\n' "$mcont" "$dbr" "$dot" "$eqn" "$suf" "$etat" "${ago:+· $ago}"
+      done
+    fi
   done
 done
 rm -f "$tmp"

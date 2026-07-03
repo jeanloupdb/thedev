@@ -646,11 +646,15 @@ class Picker:
             out = ""
         me = sommet = ""
         rows = []
+        etage = {}                       # machine → "split"|"flat" (brique 3, décidé par `reorg`)
         for ln in out.splitlines():
             p = ln.split("\t")
             if p and p[0] == "#meta":
                 me = p[1] if len(p) > 1 else ""
                 sommet = p[2] if len(p) > 2 else ""
+            elif p and p[0] == "#etage":
+                if len(p) > 2:
+                    etage[p[1]] = p[2]
             elif len(p) >= 6:
                 rows.append({"machine": p[0], "domaine": p[1], "equipe": p[2],
                              "live": p[3], "etat": p[4], "ago": p[5]})
@@ -671,8 +675,17 @@ class Picker:
             nodes.append({"lvl": 0, "sel": True, "type": "general", "label": glabel,
                           "me": me, "sommet": sommet, "rows": rows})
         chef_lvl = 1 if multi else 0
+        N_SPAN = 7                        # span de contrôle (même valeur que reorg/carte)
         for m in machines:
             mrows = [r for r in rows if r["machine"] == m]
+            doms = {}
+            for r in mrows:
+                doms.setdefault(r["domaine"], []).append(r)
+            # brique 3 : le chef-machine a SCINDÉ (reorg) → l'étage des sous-chefs de
+            # domaine est matérialisé. ⚠ si toujours > N enfants directs après groupage
+            # (les domaines ne partitionnent pas assez → le général doit répartir).
+            split = etage.get(m) == "split"
+            warn = "   ⚠ réorg" if (split and len(doms) > N_SPAN) else ""
             if multi:
                 clabel = ("⬡ chef local — %s" if m == me else "⬡ chef — %s") % m
             else:
@@ -680,21 +693,28 @@ class Picker:
                 if is_sommet:  clabel += "  · tu es au sommet"
                 elif sommet:   clabel += "  · général sur %s" % sommet
             nodes.append({"lvl": chef_lvl, "sel": True, "type": "chef", "machine": m,
-                          "rows": mrows, "me": me, "sommet": sommet, "label": clabel})
-            doms = {}
-            for r in mrows:
-                doms.setdefault(r["domaine"], []).append(r)
+                          "rows": mrows, "me": me, "sommet": sommet, "label": clabel + warn})
             for d in sorted(doms):
                 drows = doms[d]
-                grouped = len(drows) >= 2          # header ◆ domaine SEULEMENT s'il groupe ≥2
-                if grouped:
+                grouped = len(drows) >= 2          # un domaine ne fait « étage » que s'il groupe ≥2
+                if grouped and split:
+                    # SCINDÉ : vrai sous-chef de domaine — nœud de commandement, sélectionnable.
+                    nodes.append({"lvl": chef_lvl + 1, "sel": True, "type": "souschef",
+                                  "machine": m, "domaine": d, "rows": drows,
+                                  "me": me, "sommet": sommet, "label": "⬡ " + d})
+                    leaf_lvl = chef_lvl + 2
+                elif grouped:
+                    # à plat : simple label ◆ (cosmétique, non sélectionnable)
                     nodes.append({"lvl": chef_lvl + 1, "sel": False, "type": "domaine", "label": "◆ " + d})
+                    leaf_lvl = chef_lvl + 2
+                else:
+                    leaf_lvl = chef_lvl + 1        # singleton → feuille directe sous le chef
                 for r in drows:
                     dot = "◆" if r["live"] == "busy" else ("●" if r["live"] == "live" else "○")
                     tag = "" if (grouped or d == r["equipe"]) else "  · " + d   # domaine déclaré → suffixe
-                    # feuilles NON sélectionnables : on navigue le COMMANDEMENT (chefs), pas les
-                    # sessions. Elles restent visibles (atténuées) sous leur chef, jamais ciblées.
-                    nodes.append({"lvl": (chef_lvl + 2) if grouped else (chef_lvl + 1), "sel": False,
+                    # feuilles NON sélectionnables : on navigue le COMMANDEMENT (chefs / sous-chefs),
+                    # pas les sessions. Elles restent visibles (atténuées) sous leur chef.
+                    nodes.append({"lvl": leaf_lvl, "sel": False,
                                   "type": "session", "machine": m, "equipe": r["equipe"],
                                   "live": r["live"], "etat": r["etat"], "ago": r["ago"],
                                   "label": "%s %s%s" % (dot, r["equipe"], tag)})
@@ -1382,10 +1402,11 @@ class Picker:
             txt = "  " * n["lvl"] + n["label"]
             # COMMANDEMENT mis en avant (général/chef en cyan gras), feuilles ATTÉNUÉES
             # (grisées) : le regard va aux chefs, les sessions sont un simple contexte.
-            if   n["type"] == "domaine": attr = DIM
-            elif n["type"] == "general": attr = C | curses.A_BOLD
-            elif n["type"] == "chef":    attr = C | curses.A_BOLD
-            else:                        attr = DIM
+            if   n["type"] == "domaine":  attr = DIM
+            elif n["type"] == "general":  attr = C | curses.A_BOLD
+            elif n["type"] == "chef":     attr = C | curses.A_BOLD
+            elif n["type"] == "souschef": attr = C            # sous-chef : cyan (un cran sous le chef)
+            else:                         attr = DIM
             if i == cur:
                 attr = curses.A_REVERSE | curses.A_BOLD
             try: self.scr.addnstr(y, 2, txt, lw - 3, attr)
@@ -1412,6 +1433,15 @@ class Picker:
             rl(ry, "CHEF  %s" % n["machine"], C | curses.A_BOLD); ry += 1
             rl(ry, "contexte chargé : %d équipe(s) · %d vivante(s)" % (len(mrows), ln), DIM); ry += 2
             for r in mrows:
+                if ry >= H - 1: break
+                dot = "◆" if r["live"] == "busy" else ("●" if r["live"] == "live" else "○")
+                rl(ry, "%s %-16s %s" % (dot, r["equipe"][:16], (r["etat"] or "—")), 0); ry += 1
+        elif n["type"] == "souschef":
+            drows = n["rows"]; ln = sum(1 for r in drows if r["live"] in ("live", "busy"))
+            rl(ry, "SOUS-CHEF  %s" % n["domaine"], C | curses.A_BOLD); ry += 1
+            rl(ry, "machine : %s  ·  domaine issu de la scission (brique 3)" % n["machine"], DIM); ry += 1
+            rl(ry, "contexte chargé : %d équipe(s) · %d vivante(s)" % (len(drows), ln), DIM); ry += 2
+            for r in drows:
                 if ry >= H - 1: break
                 dot = "◆" if r["live"] == "busy" else ("●" if r["live"] == "live" else "○")
                 rl(ry, "%s %-16s %s" % (dot, r["equipe"][:16], (r["etat"] or "—")), 0); ry += 1

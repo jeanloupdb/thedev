@@ -86,6 +86,11 @@ case "$ev" in
           && printf '%s\t%s\t%s\n' "$ZELLIJ_PANE_ID" "$sid" "$tp" \
              > "$md/$(printf '%s' "$ZELLIJ_SESSION_NAME" | tr -c 'A-Za-z0-9._-' '_')" 2>/dev/null || true
       fi
+      # Respiration (brique 3 commandement) : une équipe qui NAÎT peut faire déborder le
+      # chef-machine (> N équipes) → matérialiser l'étage des sous-chefs de domaine. La
+      # surcharge est « remarquée pendant une session quelconque » (doctrine, event-driven,
+      # pas de moniteur debout). `reorg` = écrivain unique du régime ; borné, jamais bloquant.
+      timeout 5 reorg >/dev/null 2>&1 || true
     fi
     ;;
   UserPromptSubmit)

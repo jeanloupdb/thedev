@@ -383,9 +383,49 @@ l'arbre complet automatiquement quand la donnée arrivera). Le **chef comme agen
 convocable** qui digère *sa* branche et répond sans réveiller ses feuilles (saveur
 « chef » du verbe) — n'a de sens qu'avec de la profondeur d'arbre → brique 3.
 
+## Brique 3 — la respiration *(structurelle : faite)*
+
+La **naissance/dissolution d'étages** avec hystérésis, rendue réelle. Verbe : la
+commande **`reorg`**.
+
+- **`reorg`** décide, par machine, si le sous-arbre du chef-machine **matérialise
+  l'étage des sous-chefs de domaine** (`split`) ou reste à plat (`flat`), et le
+  persiste dans `~/.cache/thedev/command/etages/<machine>`. **Écrivain unique** de
+  cet état ; `carte` (et la page Commandement) ne font que le **lire** et rendre
+  l'arbre en conséquence — carte reste read-only.
+- **Hystérésis** (invariant 2) : scinde à `L > N` (`N=7`, `THEDEV_SPAN`), fusionne
+  à `L ≤ N/2` (`3`, `THEDEV_SPAN_LOW`) ; la bande `3 < L ≤ 7` est **collante** (on
+  garde le régime courant) — l'arbre n'oscille pas à chaque ouverture/fermeture.
+- **Event-driven** (invariant 4) : `reorg` est invoqué depuis le hook de session
+  (`SessionStart`, best-effort, borné) — la surcharge est « remarquée pendant une
+  session quelconque », **aucun moniteur debout**.
+- **Rendu** : quand `split`, un domaine qui **groupe ≥2 équipes** devient un vrai
+  **sous-chef `⬡`** (nœud de commandement, sélectionnable dans la page
+  Commandement) ; les **singletons** restent des feuilles directes sous le chef
+  (pas d'étage pour 1 équipe). À plat, un domaine ≥2 n'est qu'un **label `◆`**
+  cosmétique. Marqueur **`⚠ réorg`** sur le chef si, après groupage, il reste
+  `> N` enfants directs.
+
+**Deux limites assumées (ce qui reste DEHORS) :**
+
+1. **Fusion latente.** `L` compte les **cartes d'équipe** (`equipes/*.md`), qui
+   persistent après fermeture (une équipe fermée reste un nœud `○`). La fusion ne
+   se déclenchera donc que quand une équipe est **retirée** (carte supprimée) —
+   il manque le verbe `equipe forget`. Aujourd'hui la respiration ne souffle que
+   dans le sens **scission**.
+2. **Partition sémantique.** Quand le chef déborde de **singletons** (domaines non
+   déclarés), le groupage mécanique ne réduit pas le span → `⚠ réorg`. Répartir
+   *sémantiquement* (inventer des domaines plus grossiers) est le travail du
+   **général** — ça demande le **chef-agent convocable** (une session Claude qui
+   digère la branche et redessine la carte), encore DEHORS. Pour un split
+   *visible* dès maintenant : déclarer des `domaine:` communs dans
+   `.thedev/equipe.md` (≥2 équipes même domaine → sous-chef `⬡`).
+
 ## Suite
 
-- **Brique 3 — la respiration.** La règle récursive (placement, scission/fusion,
-  seuils `n` + hystérésis), le re-partitionnement par le général, la naissance/
-  dissolution d'étages, le chef-agent convocable. Ne paie son coût qu'à l'échelle
-  (~8+ équipes).
+- **Le chef-agent convocable** — une vraie session Claude briefée qui tient le
+  contexte agrégé de *sa* branche, répond sans réveiller ses feuilles, et
+  re-partitionne sémantiquement (résout le ⚠). Même moule que le `chef`/général
+  déjà bâti (`dev-launcher.sh`), pointé sur un sous-arbre.
+- **`equipe forget`** — retirer une équipe (supprimer sa carte) pour que la
+  **fusion** puisse souffler.

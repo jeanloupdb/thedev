@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# @thedev commandement reorg — la respiration : scission/fusion d'etages (brique 3)
+# reorg — decide, PAR MACHINE, si le sous-arbre du chef-machine materialise l'ETAGE
+# des sous-chefs de domaine (SCISSION) ou reste a plat (FUSION). Decision a
+# HYSTERESIS : scinde a > N equipes, fusionne a <= HALF (~N/2) ; la bande
+# HALF < L <= N est COLLANTE (on garde le regime courant) — sinon l'arbre oscille
+# a chaque ouverture/fermeture. Persiste dans etages/<machine>. C'est l'ECRIVAIN
+# UNIQUE de cet etat ; `carte` ne fait que le LIRE et rendre l'arbre en consequence.
+# Invoque OPPORTUNISTE (hook de session : SessionStart/End), jamais debout — la
+# surcharge est « remarquee pendant une session quelconque » (doctrine invariant 4).
+# Voir plans/commandement.md §Brique 3 (invariants 2 & 3).
+#
+#   reorg            applique la respiration pour la machine locale (imprime les transitions)
+#   reorg status     montre le regime courant + le compte d'equipes
+set -u
+ROOT="$HOME/.cache/thedev/command"
+N="${THEDEV_SPAN:-7}"          # span de controle (scinde au-dela)
+HALF="${THEDEV_SPAN_LOW:-3}"   # plancher de fusion (~N/2) ; bande HALF<L<=N = collante
+
+machine_self() { local m; m="$(head -n1 "$HOME/.config/dev-vps" 2>/dev/null)"; [ -n "$m" ] || m="$(hostname -s)"; printf '%s' "$m"; }
+me="$(machine_self)"
+
+# Compte les equipes de `me` — via `carte --data`, source UNIQUE de la collecte
+# (meme dedup local/flotte). On ignore les lignes #meta / #etage.
+_count() { carte --data 2>/dev/null | awk -F'\t' -v m="$me" '$1!~/^#/ && $1==m {c++} END{print c+0}'; }
+_regime() { local r; r="$(cat "$ROOT/etages/$me" 2>/dev/null)"; [ "$r" = split ] && printf 'split' || printf 'flat'; }
+
+cmd_status() {
+  local L reg; L="$(_count)"; reg="$(_regime)"
+  printf '%s : %s equipe(s) · regime %s  (scinde a >%s, fusionne a <=%s)\n' "$me" "$L" "$reg" "$N" "$HALF"
+}
+
+cmd_apply() {
+  mkdir -p "$ROOT/etages" 2>/dev/null || return 0
+  local L cur next f="$ROOT/etages/$me"
+  L="$(_count)"; cur="$(_regime)"; next="$cur"
+  if   [ "$L" -gt "$N" ];    then next="split"   # debordement → l'etage apparait
+  elif [ "$L" -le "$HALF" ]; then next="flat"    # sous le plancher → l'etage se replie
+  fi                                             # bande intermediaire : on garde `cur` (hysteresis)
+  [ "$next" = "$cur" ] && return 0
+  if [ "$next" = split ]; then
+    printf 'split\n' > "$f"
+    echo "⬡ $me : SCISSION — l'etage des sous-chefs de domaine apparait ($L > $N equipes)."
+  else
+    rm -f "$f"
+    echo "⬡ $me : FUSION — l'etage des sous-chefs se replie ($L <= $HALF equipes)."
+  fi
+}
+
+case "${1:-}" in
+  status)    cmd_status ;;
+  ""|apply)  cmd_apply ;;
+  *) echo "usage: reorg [apply|status]" >&2; exit 1 ;;
+esac
