@@ -692,7 +692,9 @@ class Picker:
                 for r in drows:
                     dot = "◆" if r["live"] == "busy" else ("●" if r["live"] == "live" else "○")
                     tag = "" if (grouped or d == r["equipe"]) else "  · " + d   # domaine déclaré → suffixe
-                    nodes.append({"lvl": (chef_lvl + 2) if grouped else (chef_lvl + 1), "sel": True,
+                    # feuilles NON sélectionnables : on navigue le COMMANDEMENT (chefs), pas les
+                    # sessions. Elles restent visibles (atténuées) sous leur chef, jamais ciblées.
+                    nodes.append({"lvl": (chef_lvl + 2) if grouped else (chef_lvl + 1), "sel": False,
                                   "type": "session", "machine": m, "equipe": r["equipe"],
                                   "live": r["live"], "etat": r["etat"], "ago": r["ago"],
                                   "label": "%s %s%s" % (dot, r["equipe"], tag)})
@@ -1378,10 +1380,12 @@ class Picker:
             if y >= H - 1:
                 break
             txt = "  " * n["lvl"] + n["label"]
+            # COMMANDEMENT mis en avant (général/chef en cyan gras), feuilles ATTÉNUÉES
+            # (grisées) : le regard va aux chefs, les sessions sont un simple contexte.
             if   n["type"] == "domaine": attr = DIM
             elif n["type"] == "general": attr = C | curses.A_BOLD
-            elif n["type"] == "chef":    attr = C
-            else:                        attr = G if n["live"] in ("live", "busy") else 0
+            elif n["type"] == "chef":    attr = C | curses.A_BOLD
+            else:                        attr = DIM
             if i == cur:
                 attr = curses.A_REVERSE | curses.A_BOLD
             try: self.scr.addnstr(y, 2, txt, lw - 3, attr)
@@ -1422,7 +1426,7 @@ class Picker:
                 lv = sum(1 for r in mr if r["live"] in ("live", "busy"))
                 rl(ry, "⬡ %-14s %d équipe(s) · %d vivante(s)" % (m, len(mr), lv), 0); ry += 1
         try:
-            self.scr.addnstr(H - 1, 2, "↑↓ naviguer  ·  ↵/Esc retour  ·  chef/session sélectionné → contexte à droite", W - 4, DIM)
+            self.scr.addnstr(H - 1, 2, "↑↓ naviguer les chefs  ·  ↵/Esc retour  ·  chef sélectionné → ses équipes à droite", W - 4, DIM)
         except curses.error:
             pass
         self.scr.refresh()
