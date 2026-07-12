@@ -18,11 +18,19 @@
 # pane → on le désactive (le nom du pane est géré par rename-pane/pane-name).
 export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
 
+# Repo thedev résolu depuis l'emplacement RÉEL de ce script (relocatable : marche
+# quel que soit l'endroit où thedev est cloné). $0 peut être un nom nu (exec
+# soldat-pane) → on le résout via PATH avant readlink. Résolu AVANT le loader :
+# thedev-landing est lancé par ce chemin (pas via PATH — les scripts sont exposés
+# par symlinks individuels dans ~/.local/bin, un nouveau script n'en a pas forcément).
+_self="$0"; case "$_self" in */*) ;; *) _self="$(command -v -- "$_self")" ;; esac
+THEDEV_ROOT="$(cd "$(dirname "$(readlink -f -- "$_self")")/.." && pwd)"
+
 # Écran de chargement : le pane reste NOIR le temps du sleep anti-storm + du
-# chargement de la conversation par claude. On y met un spinner minimal centré
-# (palette muted thedev) tant que claude n'a pas pris l'écran. Tué juste avant le
-# lancement de claude (qui bascule en plein écran). Pane interactif seulement (pas
-# les asides « once », ouverts à la demande sans attente).
+# chargement de la conversation par claude. On y met la landing animée (scène
+# nature) tant que claude n'a pas pris l'écran. Tuée juste avant le lancement de
+# claude (qui bascule en plein écran). Pane interactif seulement (pas les asides
+# « once », ouverts à la demande sans attente).
 _loader_pid=""
 _loader_stop() {
   [ -n "$_loader_pid" ] || return 0
@@ -30,20 +38,26 @@ _loader_stop() {
   printf '\033[?25h\033[2J\033[H' >/dev/tty 2>/dev/null   # curseur visible + écran net
 }
 if [ -z "${CLAUDE_PANE_ONCE:-}" ] && [ -t 1 ]; then
-  (
-    label='chargement…'; frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'; i=0
-    printf '\033[?25l\033[2J'                              # cache le curseur, efface une fois
-    while :; do
-      cols=$(tput cols 2>/dev/null); lines=$(tput lines 2>/dev/null)
-      [ -n "$cols" ]  || cols=80; [ -n "$lines" ] || lines=24
-      ch=${frames:i:1}; i=$(( (i + 1) % ${#frames} ))
-      text="$ch  $label"
-      row=$(( lines / 2 )); col=$(( (cols - ${#text}) / 2 )); [ "$col" -lt 1 ] && col=1
-      printf '\033[%d;%dH\033[38;5;108m%s\033[0m' "$row" "$col" "$text"
-      sleep 0.12
-    done
-  ) >/dev/tty 2>/dev/null &
-  _loader_pid=$!
+  # Landing thedev (scène nature animée + logo) — externalisée dans thedev-landing,
+  # lancée par son chemin réel. Repli spinner minimal si le script manque.
+  if [ -x "$THEDEV_ROOT/bin/thedev-landing" ]; then
+    "$THEDEV_ROOT/bin/thedev-landing" >/dev/tty 2>/dev/null &
+    _loader_pid=$!
+  else
+    (
+      frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'; i=0
+      printf '\033[?25l\033[2J'
+      while :; do
+        dims=$(stty size </dev/tty 2>/dev/null); l=${dims%% *}; c=${dims##* }
+        { [ "$c" -ge 4 ] && [ "$l" -ge 2 ]; } 2>/dev/null || { c=80; l=24; }
+        ch=${frames:i:1}; i=$(( (i + 1) % ${#frames} )); text="$ch  thedev"
+        col=$(( (c - ${#text}) / 2 )); [ "$col" -lt 1 ] && col=1
+        printf '\033[%d;%dH\033[38;5;108m%s\033[0m' "$(( l / 2 ))" "$col" "$text"
+        sleep 0.12
+      done
+    ) >/dev/tty 2>/dev/null &
+    _loader_pid=$!
+  fi
   trap _loader_stop EXIT
 fi
 
@@ -52,14 +66,10 @@ fi
 # ouverture directe.
 [ -z "${CLAUDE_PANE_ONCE:-}" ] && sleep 2
 
-# Repo thedev résolu depuis l'emplacement RÉEL de ce script (relocatable : marche
-# quel que soit l'endroit où thedev est cloné). $0 peut être un nom nu (exec
-# soldat-pane) → on le résout via PATH avant readlink.
-_self="$0"; case "$_self" in */*) ;; *) _self="$(command -v -- "$_self")" ;; esac
-THEDEV_ROOT="$(cd "$(dirname "$(readlink -f -- "$_self")")/.." && pwd)"
-ZELLIJ_PROMPT_FILE="$THEDEV_ROOT/claude/zellij-pane-prompt.md"
+# (THEDEV_ROOT résolu en tête de script, avant le loader.)
+THEDEV_PROMPT_FILE="$THEDEV_ROOT/claude/thedev-prompt.md"
 append=""
-[ -s "$ZELLIJ_PROMPT_FILE" ] && append="$(cat "$ZELLIJ_PROMPT_FILE")"
+[ -s "$THEDEV_PROMPT_FILE" ] && append="$(cat "$THEDEV_PROMPT_FILE")"
 
 # NB : l'identité de la machine (qui/où, serveur partagé, périmètre, pièges) n'est
 # PAS injectée ici en surcouche — elle vit nativement dans ~/.claude/CLAUDE.md du
@@ -186,6 +196,11 @@ model_args=()
 [ -n "${CLAUDE_PANE_MODEL:-}" ] && model_args=(--model "$CLAUDE_PANE_MODEL")
 
 _loader_stop   # claude prend l'écran → on retire le spinner de chargement
+
+# Signal « claude va prendre l'écran » : un appelant (ex. le driver du cockpit
+# commandement, qui affiche l'animation thedev PENDANT sa propre préparation)
+# attend ce marqueur pour couper son animation pile au bon moment.
+[ -n "${CLAUDE_PANE_READY_MARKER:-}" ] && : > "$CLAUDE_PANE_READY_MARKER" 2>/dev/null
 
 CLAUDE_CODE_NO_FLICKER=1 claude \
   --dangerously-skip-permissions \
