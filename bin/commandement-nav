@@ -5,7 +5,7 @@
 # clavier. ↵ sur un nœud écrit la sélection dans le NODEFILE et tue le chef courant :
 # le pane DROITE (commandement-driver) (re)lance alors le Claude briefé de ce périmètre.
 # Données : `arbre --data` (même source que l'accueil et `chef`). Aucune donnée en dur.
-import curses, os, subprocess, re, time, signal
+import curses, os, subprocess, re, time, signal, threading
 
 SESS = os.environ.get("ZELLIJ_SESSION_NAME", "commandement")
 STATE = os.path.expanduser("~/.cache/thedev/commandement")
@@ -116,41 +116,99 @@ def main(scr):
     RED = curses.color_pair(1) | curses.A_BOLD
     DIM = curses.A_DIM
 
-    nodes, me, sommet = load_nodes()
+    # Chargement de l'arbre en TÂCHE DE FOND : `arbre --data` peut prendre plusieurs
+    # secondes (SSH vers le sommet). On ne bloque JAMAIS le rendu → la page est
+    # immédiatement « accessible » avec un état de chargement, au lieu d'un pane figé.
+    st = {"nodes": None, "me": "", "sommet": "", "busy": False}
+    lock = threading.Lock()
+
+    def kick():
+        with lock:
+            if st["busy"]:
+                return
+            st["busy"] = True
+        def run():
+            nds, me, som = load_nodes()
+            with lock:
+                st["nodes"] = nds; st["me"] = me; st["sommet"] = som; st["busy"] = False
+        threading.Thread(target=run, daemon=True).start()
+
+    kick()                       # premier chargement (asynchrone)
     sel = 0
     tick = 0
-    curses.halfdelay(10)     # getch rend la main après 1 s → refresh périodique
+    spin = 0
+    SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+    curses.halfdelay(2)          # tick ~0,2 s : spinner fluide, entrées réactives
+
+    def selectable(nodes):
+        # index des lignes RÉELLEMENT sélectionnables (une ligne « en chargement » ou
+        # non prête a sel=False → elle est sautée à la navigation et non ouvrable).
+        return [i for i, nd in enumerate(nodes) if nd.get("sel", True)]
 
     while True:
+        with lock:
+            nodes = st["nodes"]
+            busy = st["busy"]
+            me = st["me"]; sommet = st["sommet"]
+        loading = nodes is None
+        nodes = nodes or []
+        sels = selectable(nodes)
+        # garde la sélection sur une ligne sélectionnable
+        if sels:
+            if sel not in sels:
+                sel = min(sels, key=lambda i: abs(i - sel))
+        else:
+            sel = 0
+
         H, W = scr.getmaxyx()
         cur_gen, cur_node = read_current()
         scr.erase()
-        # en-tête
         title = "⌘ COMMANDEMENT"
         scr.addnstr(0, 1, title, W - 2, MAG)
-        if sommet and me == sommet:   loc = "toute la flotte (sommet %s)" % sommet
-        elif sommet:                  loc = "flotte · sommet %s" % sommet
-        else:                         loc = "machine %s" % me
+        if loading:                   loc = "%s chargement…" % SPIN[spin % len(SPIN)]
+        elif sommet and me == sommet: loc = "toute la flotte (sommet %s)%s" % (sommet, "  ⟳" if busy else "")
+        elif sommet:                  loc = "flotte · sommet %s%s" % (sommet, "  ⟳" if busy else "")
+        else:                         loc = "machine %s%s" % (me, "  ⟳" if busy else "")
         scr.addnstr(1, 1, loc, W - 2, DIM)
-        y = 3
-        for i, nd in enumerate(nodes):
-            if y >= H - 2:
-                break
-            marker = "► " if (cur_node is not None and nd["arg"] == cur_node) else "  "
-            col = {"general": MAG, "chef": CYA, "souschef": YEL}[nd["type"]]
-            line = "%s%s%s" % (marker, nd["prefix"], nd["label"])
-            attr = col | (curses.A_REVERSE if i == sel else 0)
-            scr.addnstr(y, 1, line[:W - 2], W - 2, attr)
-            x = 1 + len(line)
-            meta = "  %d éq · %d ●" % (nd["n"], nd["live"])
-            if x < W - 2:
-                scr.addnstr(y, min(x, W - 2), meta, W - 2 - min(x, W - 2), DIM)
-                x += len(meta)
-            if nd["bloc"] and x < W - 2:
-                scr.addnstr(y, min(x, W - 2), "  ⚠%d" % nd["bloc"], W - 2 - min(x, W - 2), RED)
-            y += 1
-        # pied
-        foot = "↑↓ choisir · ↵ ouvrir à droite · q quitter"
+
+        if loading:
+            # état de chargement plein panneau : AUCUNE ligne sélectionnable
+            msg = "%s  chargement de l'arbre de commandement…" % SPIN[spin % len(SPIN)]
+            try:
+                scr.addnstr(max(3, H // 2), max(1, (W - len(msg)) // 2), msg, W - 2,
+                            CYA | curses.A_BOLD)
+                hint = "(le sommet peut mettre quelques secondes)"
+                scr.addnstr(max(4, H // 2 + 1), max(1, (W - len(hint)) // 2), hint, W - 2, DIM)
+            except curses.error:
+                pass
+        else:
+            y = 3
+            for i, nd in enumerate(nodes):
+                if y >= H - 2:
+                    break
+                sel_ok = nd.get("sel", True)
+                marker = "► " if (cur_node is not None and nd["arg"] == cur_node) else "  "
+                col = {"general": MAG, "chef": CYA, "souschef": YEL}.get(nd["type"], 0)
+                if not sel_ok:
+                    col = DIM
+                line = "%s%s%s" % (marker, nd["prefix"], nd["label"])
+                attr = col | (curses.A_REVERSE if (i == sel and sel_ok) else 0)
+                scr.addnstr(y, 1, line[:W - 2], W - 2, attr)
+                x = 1 + len(line)
+                if not sel_ok:
+                    tag = "  ⏳ chargement…"
+                    if x < W - 2:
+                        scr.addnstr(y, min(x, W - 2), tag, W - 2 - min(x, W - 2), DIM)
+                else:
+                    meta = "  %d éq · %d ●" % (nd["n"], nd["live"])
+                    if x < W - 2:
+                        scr.addnstr(y, min(x, W - 2), meta, W - 2 - min(x, W - 2), DIM)
+                        x += len(meta)
+                    if nd["bloc"] and x < W - 2:
+                        scr.addnstr(y, min(x, W - 2), "  ⚠%d" % nd["bloc"], W - 2 - min(x, W - 2), RED)
+                y += 1
+
+        foot = "↑↓ choisir · ↵ ouvrir à droite · q quitter" if not loading else "chargement… · q quitter"
         try:
             scr.addnstr(H - 1, 1, foot[:W - 2], W - 2, DIM)
         except curses.error:
@@ -163,24 +221,27 @@ def main(scr):
             break
         if ch == -1:
             tick += 1
-            if tick % 3 == 0:            # ~3 s : recharge l'arbre (l'état évolue)
-                nodes, me, sommet = load_nodes()
-                sel = max(0, min(sel, len(nodes) - 1))
+            spin += 1
+            if tick % 25 == 0:        # ~5 s : rafraîchit l'arbre en fond (non bloquant)
+                kick()
             continue
         if ch in (ord("q"), 27):
-            subprocess.run(["zellij", "action", "detach"],
-                           capture_output=True)
+            subprocess.run(["zellij", "action", "detach"], capture_output=True)
             break
         elif ch in (curses.KEY_UP, ord("k")):
-            sel = max(0, sel - 1)
+            prev = [i for i in sels if i < sel]
+            if prev:
+                sel = prev[-1]
         elif ch in (curses.KEY_DOWN, ord("j")):
-            sel = min(len(nodes) - 1, sel + 1)
+            nxt = [i for i in sels if i > sel]
+            if nxt:
+                sel = nxt[0]
         elif ch in (curses.KEY_ENTER, 10, 13):
-            if 0 <= sel < len(nodes):
+            # ouverture IMPOSSIBLE tant que ça charge ou si la ligne n'est pas prête
+            if not loading and sel in sels:
                 select(nodes[sel]["arg"])
         elif ch in (ord("r"), ord("R")):
-            nodes, me, sommet = load_nodes()
-            sel = max(0, min(sel, len(nodes) - 1))
+            kick()
 
 
 if __name__ == "__main__":
