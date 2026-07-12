@@ -44,14 +44,13 @@ EOF
 # Le brief vient de `chef --brief` (résumés agrégés). On le passe comme 1er message (init-file)
 # — même mécanique que le général de l'accueil — pour que le chef se présente d'emblée.
 launch_chef() {
-  local node="$1" dir bf safe marker lpid cpid n
+  local node="$1" dir bf safe lpid
   safe="$(printf '%s' "${node:-general}" | tr -c 'A-Za-z0-9._-' '_')"
   dir="$STATE/chef/$safe"; mkdir -p "$dir"
 
-  # Animation de chargement thedev PENDANT toute la préparation (chef --brief, lent :
-  # arbre --data) ET le boot du chef → le pane n'est jamais vide/figé en attendant.
-  # On coupe l'animation quand soldat-pane pose le marqueur « claude prend l'écran ».
-  marker="$STATE/$SESS.ready"; rm -f "$marker"
+  # 1) Animation de chargement thedev (la MÊME que pour un pane d'équipe : thedev-landing)
+  #    PENDANT la préparation du brief (chef --brief, lent : arbre --data) → jamais de
+  #    pane vide/figé. thedev-landing ne lit pas l'entrée : aucune contention clavier.
   thedev-landing >/dev/tty 2>/dev/null & lpid=$!
 
   bf="$(mktemp)"
@@ -59,27 +58,22 @@ launch_chef() {
     chef --brief "$node" 2>/dev/null
     printf '\n\nPrésente-toi comme ce chef et donne l’état de ton périmètre en 2-4 lignes.\n'
   } > "$bf"
-  # Sous-shell : engine launch fait un `exec` → il remplace CE sous-shell (pas la boucle
-  # driver). CLAUDE_PANE_ONCE=1 : convocation ponctuelle (pas de remote-control/restore,
-  # pas de sleep anti-storm). CLAUDE_PANE_READY_MARKER : soldat-pane le touche juste
-  # avant claude → signal pour couper l'animation. Modèle par défaut = abonnement.
-  ( CLAUDE_PANE_ONCE=1 CLAUDE_PANE_READY_MARKER="$marker" \
-      exec engine launch --cwd "$dir" --init-file "$bf" ) &
-  cpid=$!
-  printf '%s\n' "$cpid" > "$PIDFILE"
 
-  # Coupe l'animation dès que claude va dessiner (marqueur), sinon garde-fou 20 s ou
-  # mort du chef. Puis nettoie l'écran pour laisser claude prendre le pane.
-  n=0
-  while [ ! -e "$marker" ]; do
-    kill -0 "$cpid" 2>/dev/null || break
-    sleep 0.1; n=$((n + 1)); [ "$n" -ge 200 ] && break
-  done
+  # 2) Coupe l'animation de prépa + nettoie l'écran, PUIS lance claude en PREMIER PLAN
+  #    (enfant bloquant : le driver attend ici). C'est capital : claude devient le process
+  #    de premier plan du pane et possède seul le tty → fini la contention « une touche
+  #    sur deux » (avant, claude était en arrière-plan et se battait avec le driver).
+  #    CLAUDE_PANE_LANDING=1 : soldat-pane ré-affiche la landing pendant le boot de claude
+  #    (comme une équipe) et la coupe pile avant que claude dessine.
+  #    CLAUDE_PANE_PIDFILE : soldat-pane y écrit le PID de claude → la nav peut basculer.
+  #    CLAUDE_PANE_ONCE=1 : convocation ponctuelle (pas de remote-control/restore/sleep).
   kill "$lpid" 2>/dev/null; wait "$lpid" 2>/dev/null
   printf '\033[?25h\033[2J\033[H' > /dev/tty 2>/dev/null
-  rm -f "$marker"
+  rm -f "$PIDFILE"
 
-  wait "$cpid" 2>/dev/null
+  CLAUDE_PANE_ONCE=1 CLAUDE_PANE_LANDING=1 CLAUDE_PANE_PIDFILE="$PIDFILE" \
+    engine launch --cwd "$dir" --init-file "$bf"
+
   rm -f "$PIDFILE"
 }
 

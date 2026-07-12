@@ -37,9 +37,11 @@ _loader_stop() {
   kill "$_loader_pid" 2>/dev/null; wait "$_loader_pid" 2>/dev/null; _loader_pid=""
   printf '\033[?25h\033[2J\033[H' >/dev/tty 2>/dev/null   # curseur visible + écran net
 }
-if [ -z "${CLAUDE_PANE_ONCE:-}" ] && [ -t 1 ]; then
+if { [ -z "${CLAUDE_PANE_ONCE:-}" ] || [ -n "${CLAUDE_PANE_LANDING:-}" ]; } && [ -t 1 ]; then
   # Landing thedev (scène nature animée + logo) — externalisée dans thedev-landing,
   # lancée par son chemin réel. Repli spinner minimal si le script manque.
+  # CLAUDE_PANE_LANDING=1 force la landing même en mode « once » (ex. chef du cockpit
+  # commandement, ouvert ponctuellement mais qui mérite l'animation de chargement).
   if [ -x "$THEDEV_ROOT/bin/thedev-landing" ]; then
     "$THEDEV_ROOT/bin/thedev-landing" >/dev/tty 2>/dev/null &
     _loader_pid=$!
@@ -197,10 +199,10 @@ model_args=()
 
 _loader_stop   # claude prend l'écran → on retire le spinner de chargement
 
-# Signal « claude va prendre l'écran » : un appelant (ex. le driver du cockpit
-# commandement, qui affiche l'animation thedev PENDANT sa propre préparation)
-# attend ce marqueur pour couper son animation pile au bon moment.
-[ -n "${CLAUDE_PANE_READY_MARKER:-}" ] && : > "$CLAUDE_PANE_READY_MARKER" 2>/dev/null
+# Un appelant (ex. le driver du cockpit commandement) peut demander le PID du soldat
+# pour pouvoir le cibler ensuite (bascule de chef) : $$ survit à l'exec ci-dessous →
+# c'est le PID de claude lui-même.
+[ -n "${CLAUDE_PANE_PIDFILE:-}" ] && printf '%s\n' "$$" > "$CLAUDE_PANE_PIDFILE" 2>/dev/null
 
 CLAUDE_CODE_NO_FLICKER=1 claude \
   --dangerously-skip-permissions \
