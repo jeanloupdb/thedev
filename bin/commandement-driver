@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# @thedev commandement pane de droite du cockpit commandement (lance le Claude chef briefé)
+# commandement-driver — panneau DROITE du cockpit `commandement`. Boucle : attend qu'un
+# chef soit sélectionné à gauche (commandement-nav écrit le NODEFILE), puis lance le
+# Claude INTERACTIF briefé de ce périmètre via `engine launch` (mêmes paramètres qu'un
+# vrai soldat : hooks, losange, modèle par défaut = abonnement). Bascule immédiate : la
+# nav incrémente la génération et tue le chef courant → la boucle repart sur le nouveau.
+# Un chef quitté par l'utilisateur (/exit) ne rouvre PAS le même (génération inchangée).
+set -u
+
+SESS="${ZELLIJ_SESSION_NAME:-commandement}"
+STATE="$HOME/.cache/thedev/commandement"; mkdir -p "$STATE"
+NODEFILE="$STATE/$SESS.node"       # "gen\tnode"
+PIDFILE="$STATE/$SESS.chefpid"
+last_gen=-1
+
+read_gen()  { [ -f "$NODEFILE" ] && cut -f1 "$NODEFILE" 2>/dev/null || echo -1; }
+read_node() { [ -f "$NODEFILE" ] && cut -f2- "$NODEFILE" 2>/dev/null || echo ""; }
+
+placeholder() {
+  clear
+  cat <<'EOF'
+
+    ╭──────────────────────────────────────────────────────╮
+    │                                                      │
+    │   Cockpit de commandement                            │
+    │                                                      │
+    │   ← Choisis un chef dans l'arbre à gauche            │
+    │     (↑↓ puis ↵) : son Claude s'ouvre ICI, briefé     │
+    │     sur l'état de son périmètre.                     │
+    │                                                      │
+    │     ⌘ général    → toute la flotte                   │
+    │     ⬡ chef       → une machine                       │
+    │     ◇ sous-chef  → un domaine                        │
+    │                                                      │
+    │   Sélectionner un autre chef bascule ici.            │
+    │                                                      │
+    ╰──────────────────────────────────────────────────────╯
+
+EOF
+}
+
+# Lance le Claude chef briefé pour le périmètre $1 ("" = général | machine | machine/domaine).
+# Le brief vient de `chef --brief` (résumés agrégés). On le passe comme 1er message (init-file)
+# — même mécanique que le général de l'accueil — pour que le chef se présente d'emblée.
+launch_chef() {
+  local node="$1" dir bf safe
+  safe="$(printf '%s' "${node:-general}" | tr -c 'A-Za-z0-9._-' '_')"
+  dir="$STATE/chef/$safe"; mkdir -p "$dir"
+  bf="$(mktemp)"
+  {
+    chef --brief "$node" 2>/dev/null
+    printf '\n\nPrésente-toi comme ce chef et donne l’état de ton périmètre en 2-4 lignes.\n'
+  } > "$bf"
+  # Sous-shell : engine launch fait un `exec` → il remplace CE sous-shell (pas la boucle
+  # driver). CLAUDE_PANE_ONCE=1 : convocation ponctuelle (pas de remote-control/restore,
+  # pas de sleep anti-storm). Modèle par défaut = abonnement (interactif).
+  ( CLAUDE_PANE_ONCE=1 exec engine launch --cwd "$dir" --init-file "$bf" ) &
+  local cpid=$!
+  printf '%s\n' "$cpid" > "$PIDFILE"
+  wait "$cpid" 2>/dev/null
+  rm -f "$PIDFILE"
+}
+
+while :; do
+  gen="$(read_gen)"; case "$gen" in ''|*[!0-9-]*) gen=-1 ;; esac
+  if [ "$gen" -gt "$last_gen" ]; then
+    last_gen="$gen"
+    launch_chef "$(read_node)"
+  else
+    placeholder
+    # attend qu'une nouvelle sélection (génération plus haute) arrive
+    while :; do
+      sleep 0.4
+      g2="$(read_gen)"; case "$g2" in ''|*[!0-9-]*) g2=-1 ;; esac
+      [ "$g2" -gt "$last_gen" ] && break
+    done
+  fi
+done

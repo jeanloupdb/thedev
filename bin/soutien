@@ -261,19 +261,24 @@ cmd_run() {
 echo \$\$ > '$pidfile'
 exec \"\$@\""
 
+  # Dans « le camp », on EMPILE le soutien (--stacked) au-dessus de la garnison au
+  # lieu de la fermer : la garnison reste l'ANCRE permanente de l'onglet → il ne se
+  # vide (et ne disparaît) JAMAIS quand un soutien se termine ou qu'on le quitte. Un
+  # seul soutien s'affiche quand même « plein écran » (garnison repliée en tête de
+  # stack). Hors du camp (--tab X) ou en flottant : pas d'empilement.
+  local stacked=""
+  [ -z "$floating" ] && [ "$tab" = "$DEFAULT_TAB" ] && stacked="--stacked"
+
   local run_out pane_id
   if [ -n "$floating" ]; then
     run_out=$(zellij run --name "claude-$name" --floating $closeonexit -- bash -c "$wrapper" -- "${cmd_args[@]}" 2>&1)
   else
-    run_out=$(zellij run --name "claude-$name" $closeonexit -- bash -c "$wrapper" -- "${cmd_args[@]}" 2>&1)
+    run_out=$(zellij run --name "claude-$name" $stacked $closeonexit -- bash -c "$wrapper" -- "${cmd_args[@]}" 2>&1)
   fi
   pane_id=$(printf '%s\n' "$run_out" | grep -oE 'terminal_[0-9]+' | head -1)
   [ -z "$pane_id" ] && pane_id="unknown"
 
   reg_add "$name" "$tab" "$pane_id" "${cmd_args[*]}"
-
-  # Masque le pane de garnison : la sandbox a maintenant un vrai soutien.
-  [ "$tab" = "$DEFAULT_TAB" ] && hide_welcome
 
   if [ "$attached" != 0 ]; then
     zellij action go-to-tab-name "$origin" 2>/dev/null || true

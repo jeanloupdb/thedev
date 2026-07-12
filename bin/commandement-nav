@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+# @thedev commandement navigateur de gauche du cockpit commandement (arbre → ouvre le chef à droite)
+# commandement-nav — panneau GAUCHE du cockpit `commandement`. Affiche l'arbre de
+# commandement (général → chef par machine → sous-chef par domaine), navigable au
+# clavier. ↵ sur un nœud écrit la sélection dans le NODEFILE et tue le chef courant :
+# le pane DROITE (commandement-driver) (re)lance alors le Claude briefé de ce périmètre.
+# Données : `arbre --data` (même source que l'accueil et `chef`). Aucune donnée en dur.
+import curses, os, subprocess, re, time, signal
+
+SESS = os.environ.get("ZELLIJ_SESSION_NAME", "commandement")
+STATE = os.path.expanduser("~/.cache/thedev/commandement")
+NODEFILE = os.path.join(STATE, SESS + ".node")     # "gen\tnode"
+PIDFILE  = os.path.join(STATE, SESS + ".chefpid")  # PID du Claude chef en cours
+
+
+def load_nodes():
+    """Reproduit l'arbre de l'accueil : général (si ≥2 machines) → chef/machine →
+    sous-chef/domaine (domaine « scindé » avec ≥2 équipes). Chaque nœud porte son
+    `arg` de convocation : "" (général) | "machine" | "machine/domaine"."""
+    try:
+        out = subprocess.run(["arbre", "--data"], capture_output=True,
+                             text=True, timeout=8).stdout
+    except Exception:
+        out = ""
+    me = sommet = ""
+    etage = {}
+    rows = []
+    for ln in out.splitlines():
+        p = ln.split("\t")
+        if p and p[0] == "#meta":
+            me = p[1] if len(p) > 1 else ""
+            sommet = p[2] if len(p) > 2 else ""
+        elif p and p[0] == "#etage":
+            if len(p) > 2:
+                etage[p[1]] = p[2]
+        elif len(p) >= 6:
+            mb = re.match(r'⚠(\d+)', p[4] or "")
+            rows.append({"machine": p[0], "domaine": p[1], "equipe": p[2],
+                         "live": p[3], "etat": p[4], "ago": p[5],
+                         "bloc": int(mb.group(1)) if mb else 0})
+    machines = ([me] if any(r["machine"] == me for r in rows) else []) + \
+               sorted(m for m in {r["machine"] for r in rows} if m != me)
+    multi = len(machines) >= 2
+    nodes = []
+    if multi:
+        nlive = sum(1 for r in rows if r["live"] in ("live", "busy"))
+        nodes.append({"type": "general", "arg": "", "lvl": 0,
+                      "label": "⌘ général en chef", "sub": "toute la flotte",
+                      "n": len(rows), "live": nlive,
+                      "bloc": sum(r["bloc"] for r in rows), "prefix": ""})
+    for mi, m in enumerate(machines):
+        last = (mi == len(machines) - 1)
+        cpref = (("└─ " if last else "├─ ") if multi else "")
+        guide = (("   " if last else "│  ") if multi else "")
+        mrows = [r for r in rows if r["machine"] == m]
+        doms = {}
+        for r in mrows:
+            doms.setdefault(r["domaine"], []).append(r)
+        split = etage.get(m) == "split"
+        nlive = sum(1 for r in mrows if r["live"] in ("live", "busy"))
+        nodes.append({"type": "chef", "arg": m, "lvl": 1 if multi else 0,
+                      "label": "⬡ %s" % m, "sub": "chef",
+                      "n": len(mrows), "live": nlive,
+                      "bloc": sum(r["bloc"] for r in mrows), "prefix": cpref})
+        scs = [(d, doms[d]) for d in sorted(doms) if split and len(doms[d]) >= 2]
+        for si, (d, drows) in enumerate(scs):
+            spref = guide + ("└─ " if si == len(scs) - 1 else "├─ ")
+            nodes.append({"type": "souschef", "arg": "%s/%s" % (m, d),
+                          "lvl": 2 if multi else 1,
+                          "label": "◇ %s" % d, "sub": "sous-chef",
+                          "n": len(drows),
+                          "live": sum(1 for r in drows if r["live"] in ("live", "busy")),
+                          "bloc": sum(r["bloc"] for r in drows), "prefix": spref})
+    return nodes, me, sommet
+
+
+def read_current():
+    try:
+        with open(NODEFILE) as f:
+            gen, _, node = f.read().rstrip("\n").partition("\t")
+            return int(gen), node
+    except Exception:
+        return -1, None
+
+
+def select(node_arg):
+    """Écrit la sélection (génération incrémentée) et coupe le chef en cours pour
+    forcer une bascule immédiate côté driver."""
+    os.makedirs(STATE, exist_ok=True)
+    gen, _ = read_current()
+    gen = (gen if gen >= 0 else -1) + 1
+    tmp = NODEFILE + ".tmp"
+    with open(tmp, "w") as f:
+        f.write("%d\t%s\n" % (gen, node_arg))
+    os.replace(tmp, NODEFILE)
+    try:
+        with open(PIDFILE) as f:
+            pid = int(f.read().strip())
+        os.kill(pid, signal.SIGTERM)     # kill ciblé (PID exact), jamais un motif large
+    except Exception:
+        pass
+
+
+def main(scr):
+    curses.curs_set(0)
+    curses.use_default_colors()
+    for i in range(1, 8):
+        try:
+            curses.init_pair(i, i, -1)
+        except curses.error:
+            pass
+    MAG = curses.color_pair(5) | curses.A_BOLD   # général
+    CYA = curses.color_pair(6)                   # chef
+    YEL = curses.color_pair(3)                   # sous-chef
+    GRN = curses.color_pair(2)
+    RED = curses.color_pair(1) | curses.A_BOLD
+    DIM = curses.A_DIM
+
+    nodes, me, sommet = load_nodes()
+    sel = 0
+    tick = 0
+    curses.halfdelay(10)     # getch rend la main après 1 s → refresh périodique
+
+    while True:
+        H, W = scr.getmaxyx()
+        cur_gen, cur_node = read_current()
+        scr.erase()
+        # en-tête
+        title = "⌘ COMMANDEMENT"
+        scr.addnstr(0, 1, title, W - 2, MAG)
+        if sommet and me == sommet:   loc = "toute la flotte (sommet %s)" % sommet
+        elif sommet:                  loc = "flotte · sommet %s" % sommet
+        else:                         loc = "machine %s" % me
+        scr.addnstr(1, 1, loc, W - 2, DIM)
+        y = 3
+        for i, nd in enumerate(nodes):
+            if y >= H - 2:
+                break
+            marker = "► " if (cur_node is not None and nd["arg"] == cur_node) else "  "
+            col = {"general": MAG, "chef": CYA, "souschef": YEL}[nd["type"]]
+            line = "%s%s%s" % (marker, nd["prefix"], nd["label"])
+            attr = col | (curses.A_REVERSE if i == sel else 0)
+            scr.addnstr(y, 1, line[:W - 2], W - 2, attr)
+            x = 1 + len(line)
+            meta = "  %d éq · %d ●" % (nd["n"], nd["live"])
+            if x < W - 2:
+                scr.addnstr(y, min(x, W - 2), meta, W - 2 - min(x, W - 2), DIM)
+                x += len(meta)
+            if nd["bloc"] and x < W - 2:
+                scr.addnstr(y, min(x, W - 2), "  ⚠%d" % nd["bloc"], W - 2 - min(x, W - 2), RED)
+            y += 1
+        # pied
+        foot = "↑↓ choisir · ↵ ouvrir à droite · q quitter"
+        try:
+            scr.addnstr(H - 1, 1, foot[:W - 2], W - 2, DIM)
+        except curses.error:
+            pass
+        scr.refresh()
+
+        try:
+            ch = scr.getch()
+        except KeyboardInterrupt:
+            break
+        if ch == -1:
+            tick += 1
+            if tick % 3 == 0:            # ~3 s : recharge l'arbre (l'état évolue)
+                nodes, me, sommet = load_nodes()
+                sel = max(0, min(sel, len(nodes) - 1))
+            continue
+        if ch in (ord("q"), 27):
+            subprocess.run(["zellij", "action", "detach"],
+                           capture_output=True)
+            break
+        elif ch in (curses.KEY_UP, ord("k")):
+            sel = max(0, sel - 1)
+        elif ch in (curses.KEY_DOWN, ord("j")):
+            sel = min(len(nodes) - 1, sel + 1)
+        elif ch in (curses.KEY_ENTER, 10, 13):
+            if 0 <= sel < len(nodes):
+                select(nodes[sel]["arg"])
+        elif ch in (ord("r"), ord("R")):
+            nodes, me, sommet = load_nodes()
+            sel = max(0, min(sel, len(nodes) - 1))
+
+
+if __name__ == "__main__":
+    try:
+        curses.wrapper(main)
+    except KeyboardInterrupt:
+        pass

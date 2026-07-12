@@ -233,21 +233,6 @@ def _read_json(path):
         return {}
 
 
-def load_propals():
-    """Propositions de tâches pour les agents autonomes. Lues du fichier produit en amont
-    par le « proposeur » : ~/.cache/thedev/proposals.json. Renvoie une liste de dicts
-    {titre, pourquoi, machine, priorite, action, cree_le} (toujours une liste, jamais None
-    en cas d'absence/erreur — l'écran distingue « pas encore réfléchi » via le None initial)."""
-    path = os.path.expanduser("~/.cache/thedev/proposals.json")
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        return []
-    items = data.get("propositions", data) if isinstance(data, dict) else data
-    return [p for p in items if isinstance(p, dict) and p.get("titre")] if isinstance(items, list) else []
-
-
 def gather_infos(vps, update_available, head):
     """Données du dashboard Infos. Renvoie une LISTE de sections [(titre, [items])],
     items = str (ligne dim) ou ('gauge', label, pct, détail) ou ('kv', clé, valeur)."""
@@ -542,14 +527,6 @@ class Picker:
         self._autos_flat = []         # gardes sélectionnables (rempli par draw_autos)
         self.confirm_del = None       # auto en attente de confirmation de suppression
         threading.Thread(target=self._autos_worker, daemon=True).start()
-        # Propositions de tâches : le proposeur (thedev-propose) scanne des signaux du
-        # parc (todos non cochés, commits non poussés, autos en échec) → JSON local, zéro
-        # IA. On montre le dernier instantané tout de suite, puis on régénère en fond.
-        self.propals = load_propals()  # dernier instantané (lecture immédiate)
-        self.pi = -1                  # sélection écran propositions (-1 = bouton Retour)
-        self._propals_flat = []
-        self._propals_loading = True  # worker en vol → l'écran poll pour se rafraîchir
-        threading.Thread(target=self._propals_worker, daemon=True).start()
         # Mise à jour de la config : la machine est-elle en retard sur le git d'où
         # vient sa config dev ? Si oui → bouton « mettre à jour » en tête des actions.
         self.update_available = False
@@ -593,6 +570,23 @@ class Picker:
             pass
         # palette stable par projet (tags [projet] colorés différemment)
         self.PALETTE = [self.CYAN, self.MAG, self.YEL, self.BLUE, self.RED, self.GREEN]
+        # verts pâles de la landing (ambiance nature dans les zones vides) ;
+        # repli sur vert standard atténué sans 256 couleurs
+        self.PALE1 = self.PALE2 = self.PALE3 = self.GREEN | curses.A_DIM
+        self.BROWN = self.YEL | curses.A_DIM
+        self.STARC = self.PALE1 | curses.A_BOLD    # tête de l'étoile filante (repli)
+        try:
+            if curses.COLORS >= 256:
+                for pid, cc in ((9, 151), (10, 108), (11, 65), (12, 94), (13, 231)):
+                    curses.init_pair(pid, cc, -1)
+                self.PALE1, self.PALE2, self.PALE3 = (curses.color_pair(p) for p in (9, 10, 11))
+                self.BROWN = curses.color_pair(12)
+                self.STARC = curses.color_pair(13) | curses.A_BOLD   # blanc vif
+        except curses.error:
+            pass
+        self.amb = {}                 # état de l'ambiance par panneau (graine, étoiles, oiseau, île)
+        self.amb_last = 0             # dernier tick (temps monotone / 0,4 s)
+        self.star_anim = False        # une étoile filante est en cours → refresh accéléré
 
     def pcolor(self, name):
         return self.PALETTE[sum(name.encode("utf-8")) % len(self.PALETTE)]
@@ -633,7 +627,7 @@ class Picker:
 
     def enter_carte(self):
         # Écran Commandement : l'arbre CHEFS + SESSIONS (pas les panes), navigable.
-        # Données via `carte --data` → modèle général → chef-machine → domaine → session.
+        # Données via `arbre --data` → modèle général → chef-machine → domaine → session.
         self.mode = "carte"
         self.carte_nodes = None
         self.ci = 0
@@ -641,7 +635,7 @@ class Picker:
 
     def _carte_worker(self):
         try:
-            out = subprocess.run(["carte", "--data"], capture_output=True, text=True, timeout=8).stdout
+            out = subprocess.run(["arbre", "--data"], capture_output=True, text=True, timeout=8).stdout
         except Exception:
             out = ""
         me = sommet = ""
@@ -656,91 +650,103 @@ class Picker:
                 if len(p) > 2:
                     etage[p[1]] = p[2]
             elif len(p) >= 6:
+                mb = re.match(r'⚠(\d+)', p[4] or "")     # blocages ouverts encodés en tête d'état
                 rows.append({"machine": p[0], "domaine": p[1], "equipe": p[2],
-                             "live": p[3], "etat": p[4], "ago": p[5]})
+                             "live": p[3], "etat": p[4], "ago": p[5],
+                             "bloc": int(mb.group(1)) if mb else 0})
         # arbre : général (racine) → chef par machine → ◆ domaine (header) → session.
         # Sélectionnables : général + chefs + sessions (JAMAIS les panes). Domaine = header.
         is_sommet = bool(sommet) and me == sommet
+        self.carte_me = me; self.carte_sommet = sommet     # pour l'en-tête de la page
         machines = ([me] if any(r["machine"] == me for r in rows) else []) + \
                    sorted(m for m in {r["machine"] for r in rows} if m != me)
         # DISSOLUTION : le nœud « général » n'apparaît que s'il contient ≥2 chefs-machine
         # (sur le sommet). Avec UNE seule machine, le chef-machine EST la racine — pas de
         # général redondant au-dessus d'un unique enfant.
         multi = len(machines) >= 2
+        N_SPAN = 7                        # span de contrôle (même valeur que reorg)
         nodes = []
+        nodes.append({"lvl": 0, "sel": True, "type": "retour", "label": "‹ Retour", "prefix": ""})
+        if is_sommet:   glabel = "⌘ général en chef · toute la flotte"
+        elif sommet:    glabel = "⌘ général en chef · toute la flotte (sommet %s)" % sommet
+        else:           glabel = "⌘ général en chef · %s" % me
+        # ARBRE indenté avec CONNECTEURS (├ └ │) : le général (apex, la flotte) → un chef par
+        # MACHINE (son nom = son label) → ses sous-chefs. La hiérarchie entre les chefs de
+        # machines différentes (tous enfants du général) est ainsi EXPLICITE.
         if multi:
-            if is_sommet:   glabel = "⌘ général en chef — %s · tu es au sommet" % me
-            elif sommet:    glabel = "⌘ général en chef — sommet %s (vue de %s)" % (sommet, me)
-            else:           glabel = "⌘ %s (racine)" % me
-            nodes.append({"lvl": 0, "sel": True, "type": "general", "label": glabel,
-                          "me": me, "sommet": sommet, "rows": rows})
-        chef_lvl = 1 if multi else 0
-        N_SPAN = 7                        # span de contrôle (même valeur que reorg/carte)
-        for m in machines:
+            nodes.append({"lvl": 0, "sel": True, "type": "general",
+                          "glyph": "⌘", "name": "général en chef",
+                          "suffix": " · toute la flotte" if (is_sommet or sommet) else " · %s" % me,
+                          "label": glabel,
+                          "me": me, "sommet": sommet, "rows": rows,
+                          "bloc": sum(r["bloc"] for r in rows), "prefix": ""})
+        for mi, m in enumerate(machines):
+            chef_last = (mi == len(machines) - 1)
+            cpref  = ("└─ " if chef_last else "├─ ") if multi else ""
+            guide  = ("   " if chef_last else "│  ") if multi else ""
             mrows = [r for r in rows if r["machine"] == m]
             doms = {}
             for r in mrows:
                 doms.setdefault(r["domaine"], []).append(r)
-            # brique 3 : le chef-machine a SCINDÉ (reorg) → l'étage des sous-chefs de
-            # domaine est matérialisé. ⚠ si toujours > N enfants directs après groupage
-            # (les domaines ne partitionnent pas assez → le général doit répartir).
             split = etage.get(m) == "split"
-            warn = "   ⚠ réorg" if (split and len(doms) > N_SPAN) else ""
-            if multi:
-                clabel = ("⬡ chef local — %s" if m == me else "⬡ chef — %s") % m
-            else:
-                clabel = "⬡ chef — %s" % m
-                if is_sommet:  clabel += "  · tu es au sommet"
-                elif sommet:   clabel += "  · général sur %s" % sommet
-            nodes.append({"lvl": chef_lvl, "sel": True, "type": "chef", "machine": m,
-                          "rows": mrows, "me": me, "sommet": sommet, "label": clabel + warn})
+            warn = (split and len(doms) > N_SPAN)
+            role = "chef"      # tous les chefs sont pairs : aucune distinction (couleur/forme/label)
+            nlive = sum(1 for r in mrows if r["live"] in ("live", "busy"))
+            chef_children = []          # enfants DIRECTS : sous-chefs (si scindé) OU sessions
+            nodes.append({"lvl": 1 if multi else 0, "sel": True, "type": "chef", "machine": m,
+                          "glyph": "⬡", "name": m, "suffix": "  · " + role,
+                          "warn": warn, "nlive": nlive,
+                          "rows": mrows, "me": me, "sommet": sommet,
+                          "label": "⬡ %s · %s" % (m, role),
+                          "bloc": sum(r["bloc"] for r in mrows), "children": chef_children,
+                          "prefix": cpref})
+            scnodes = []                 # sous-chefs matérialisés (split, ≥2), pour connecteurs
             for d in sorted(doms):
                 drows = doms[d]
-                grouped = len(drows) >= 2          # un domaine ne fait « étage » que s'il groupe ≥2
-                if grouped and split:
-                    # SCINDÉ : vrai sous-chef de domaine — nœud de commandement, sélectionnable.
-                    nodes.append({"lvl": chef_lvl + 1, "sel": True, "type": "souschef",
-                                  "machine": m, "domaine": d, "rows": drows,
-                                  "me": me, "sommet": sommet, "label": "⬡ " + d})
-                    leaf_lvl = chef_lvl + 2
-                elif grouped:
-                    # à plat : simple label ◆ (cosmétique, non sélectionnable)
-                    nodes.append({"lvl": chef_lvl + 1, "sel": False, "type": "domaine", "label": "◆ " + d})
-                    leaf_lvl = chef_lvl + 2
+                sc_live = sum(1 for r in drows if r["live"] in ("live", "busy"))
+                sc_bloc = sum(r["bloc"] for r in drows)
+                if split and len(drows) >= 2:
+                    scnodes.append((d, drows, sc_bloc, sc_live))
+                    chef_children.append({"kind": "souschef", "domaine": d, "n": len(drows),
+                                          "live": sc_live, "bloc": sc_bloc})
                 else:
-                    leaf_lvl = chef_lvl + 1        # singleton → feuille directe sous le chef
-                for r in drows:
-                    dot = "◆" if r["live"] == "busy" else ("●" if r["live"] == "live" else "○")
-                    tag = "" if (grouped or d == r["equipe"]) else "  · " + d   # domaine déclaré → suffixe
-                    # feuilles NON sélectionnables : on navigue le COMMANDEMENT (chefs / sous-chefs),
-                    # pas les sessions. Elles restent visibles (atténuées) sous leur chef.
-                    nodes.append({"lvl": leaf_lvl, "sel": False,
-                                  "type": "session", "machine": m, "equipe": r["equipe"],
-                                  "live": r["live"], "etat": r["etat"], "ago": r["ago"],
-                                  "label": "%s %s%s" % (dot, r["equipe"], tag)})
+                    for r in drows:                       # sessions DIRECTES du chef (droite only)
+                        chef_children.append(dict(r, kind="session"))
+            for si, (d, drows, sc_bloc, sc_live) in enumerate(scnodes):
+                spref = guide + ("└─ " if si == len(scnodes) - 1 else "├─ ")
+                nodes.append({"lvl": 2 if multi else 1, "sel": True, "type": "souschef",
+                              "machine": m, "domaine": d, "rows": drows,
+                              "glyph": "◇", "name": d, "suffix": "", "nlive": sc_live,
+                              "me": me, "sommet": sommet, "label": "◇ " + d, "bloc": sc_bloc,
+                              "children": [dict(r, kind="session") for r in drows], "prefix": spref})
         with self.rc_lock:
             self.carte_nodes = nodes
 
-    def enter_propals(self):
-        self.mode = "propals"
-        self.pi = -1                  # bouton Retour sélectionné par défaut
-        self._propals_flat = []
-        self.propals = load_propals()  # instantané immédiat
-        self._propals_loading = True
-        threading.Thread(target=self._propals_worker, daemon=True).start()  # régénère en fond
-
-    def _propals_worker(self):
-        """Régénère les propositions : lance `thedev-propose` (scan de signaux du parc,
-        zéro IA, zéro coût) qui réécrit le JSON, puis recharge la liste. Une passe, en
-        fond — silencieux si le proposeur est absent ou échoue."""
-        try:
-            subprocess.run(["thedev-propose"], capture_output=True, text=True, timeout=20)
-        except Exception:
-            pass
-        res = load_propals()
-        with self.rc_lock:
-            self.propals = res
-        self._propals_loading = False
+    def _open_chef(self):
+        """Ouvre le chef sélectionné dans un Claude INTERACTIF (pane flottant, abonnement).
+        Un chef est structurel → le convoquer = lancer `chef <node>` qui briefe un Claude
+        avec les résumés agrégés du périmètre. général = toute la flotte ; chef = 1 machine ;
+        souschef = 1 domaine."""
+        nodes = self.carte_nodes or []
+        sel = [n for n in nodes if n.get("sel")]
+        if not sel or not (0 <= self.ci < len(sel)):
+            return
+        node = sel[self.ci]
+        t = node.get("type")
+        if t == "retour":                       # 1re ligne : retour à l'accueil
+            self.mode = "sessions"; self.focus = "left"; self.li = self.ri = 0; self.loff = 0
+            return
+        if t == "chef":
+            arg = node.get("machine", "")
+        elif t == "souschef":
+            arg = "%s/%s" % (node.get("machine", ""), node.get("domaine", ""))
+        else:                                   # general → toute la flotte
+            arg = ""
+        # On ne lance PAS `chef` ici (le TUI tourne dans le pane de l'accueil, souvent hors
+        # d'une session d'équipe → `zellij run` viserait une session au hasard). On émet une
+        # DÉCISION, comme pour ouvrir une session : dev() lance `chef <arg>` dans CE pane.
+        self.decision = ("CHEF", arg)
+        return "quit"
 
     def _blink_on(self):
         # clignotement ~1 s (même rythme que pane-pulse ◆↔◇), dérivé de l'horloge.
@@ -835,6 +841,10 @@ class Picker:
                         m.append(("DISK", p[1], int(p[2])))
                     elif p[0] == "LOAD" and len(p) >= 3:
                         m.append(("LOAD", float(p[1]), int(p[2])))
+                    elif p[0] == "BAT" and len(p) >= 2:
+                        st = p[2] if len(p) >= 3 else ""
+                        tm = p[3] if len(p) >= 4 else ""
+                        m.append(("BAT", int(p[1]), st, tm))
                 self.metrics = m
             except Exception:
                 pass
@@ -1089,11 +1099,6 @@ class Picker:
             if nop is None or (nop + ninact) > 0:
                 rows.append({"kind": "act", "id": "autos", "footer": True,
                              "text": "↻ la garde", "nop": nop, "ninact": ninact})
-            # juste sous les gardes : porte d'entrée des agents autonomes
-            # (propositions de tâches). Compteur si des propositions attendent.
-            npr = len(self.propals) if isinstance(self.propals, list) else None
-            rows.append({"kind": "act", "id": "propals", "text": "✦ propositions",
-                         "footer": True, "n": npr})
             rows.append({"kind": "act", "id": "commandement", "text": "⌘ commandement", "footer": True})
             rows.append({"kind": "act", "id": "infos", "text": "ⓘ infos", "footer": True})
             return rows
@@ -1176,6 +1181,248 @@ class Picker:
         win.noutrefresh()
         return off
 
+    # --- ambiance (zones vides) : étoiles + oiseau occasionnel + mini-île ------
+    # Règles UX : uniquement l'espace MORT d'un panneau (sous les lignes, au-dessus
+    # des footers), recalculé à chaque draw → si le contenu grandit, l'ambiance
+    # recule d'elle-même. Rythme temps réel (tick 0,4 s, indépendant des redraws
+    # clavier), figé pendant une saisie inline. Palette : verts pâles de la landing.
+    def _amb_free(self, rows, h):
+        """(y0, y1) de la zone vide d'un panneau tel que peint par draw_panel."""
+        nfoot = 0
+        while nfoot < len(rows) and rows[len(rows) - 1 - nfoot].get("footer"):
+            nfoot += 1
+        inner = (h - 4 - 1) - nfoot
+        used = min(len(rows) - nfoot, inner)
+        return 4 + used + 2, h - 3 - nfoot
+
+    AMB_L1 = '▀█▀ █ █ █▀▀ █▀▄ █▀▀ █ █'
+    AMB_L2 = ' █  █▀█ █▀▀ █ █ █▀▀ ▀▄▀'
+    AMB_L3 = ' ▀  ▀ ▀ ▀▀▀ ▀▀  ▀▀▀  ▀ '
+
+    def draw_ambiance(self, key, win, rows):
+        """Ambiance simple : quelques étoiles qui scintillent + un oiseau qui
+        traverse de temps en temps la zone VIDE du panneau (recalculée à chaque
+        draw — si le contenu grandit, l'ambiance recule). Figée pendant une
+        saisie inline ; horloge temps réel par panneau (tick 0,4 s)."""
+        import random
+        h, w = win.getmaxyx()
+        y0, y1 = self._amb_free(rows, h)
+        if y1 - y0 < 3 or w < 24:
+            self.amb.pop(key, None)
+            return
+        tick = int(time.monotonic() / 0.4)
+        st = self.amb.get(key)
+        if not st or st["wh"] != (w, h, y0, y1):
+            rng = random.Random()
+            nstars = max(4, min(12, ((y1 - y0 + 1) * w) // 150))
+            stars = [(rng.randrange(y0, y1 + 1), rng.randrange(2, w - 2), rng.randrange(9))
+                     for _ in range(nstars)]
+            birds = [{"on": False, "wait": 8 + rng.randrange(20), "x": 2, "y": y0}]
+            st = {"wh": (w, h, y0, y1), "stars": stars, "last": tick, "birds": birds}
+            if key == "L":
+                # « la colline » : le sol s'élève d'un niveau en plateau doux, un
+                # arbre unique en silhouette au sommet, herbes sur les pentes.
+                # Même langage que la landing : ▄ clair (108) sur corps sombre (65).
+                hc = (w * 55) // 100 + rng.randrange(max(1, (w * 30) // 100))
+                hw = max(9, w // 7) + rng.randrange(max(1, w // 9))
+                hc = min(hc, w - hw - 4)                          # colline à droite, entière
+                gh = [1 if abs(x - hc) <= hw else 0 for x in range(w)]
+                gcol = [rng.randrange(3) == 0 for _ in range(w)]
+                grass = []
+                for _ in range(max(4, w // 18)):
+                    gx = 3 + rng.randrange(max(1, w - 6))
+                    if abs(gx - hc) < 4 or hw - 2 <= abs(gx - hc) <= hw + 2:
+                        continue                    # ni collée au tronc, ni sur les pentes
+                    grass.append((gx, rng.randrange(3) == 0))
+                st["ground"] = {"tree": hc, "grass": grass, "gh": gh,
+                                "gcol": gcol, "seed": rng.randrange(10000)}
+            self.amb[key] = st
+        dt = 0 if self.creating else max(0, min(4, tick - st["last"]))
+        st["last"] = tick
+        # — étoiles : scintillement très lent (une sur neuf brille à la fois)
+        for sy, sx, ph in st["stars"]:
+            a = self.PALE1 if (tick // 5 + ph) % 9 == 0 else curses.A_DIM
+            try:
+                win.addstr(sy, sx, "·", a)
+            except curses.error:
+                pass
+        # — oiseaux : chacun traverse la zone à son rythme
+        for j, b in enumerate(st["birds"]):
+            if not b["on"]:
+                b["wait"] -= dt
+                if b["wait"] <= 0:
+                    b.update(on=True, x=2, y=random.randrange(y0, y1 + 1))
+            else:
+                b["x"] += dt
+                if b["x"] >= w - 3:
+                    b.update(on=False, wait=25 + random.randrange(50))
+            if b["on"]:
+                try:
+                    win.addstr(b["y"], b["x"], "^" if (tick + j) % 2 else "v", curses.A_DIM)
+                except curses.error:
+                    pass
+        # — « la colline » (panneau gauche) : sol à deux niveaux (plateau ▄ clair
+        # sur corps █ sombre), arbre au sommet (tronc brun, canopée 3-5-3 en verts
+        # mélangés, cime qui penche), herbes dont la vague de vent descend la pente.
+        g = st.get("ground")
+        if g:
+            gy = y1 + 1
+            gh = g["gh"]
+            for x in range(1, w - 1):
+                # blocs PLEINS (█) pour que l'herbe posée dessus touche le sol ;
+                # les demi-blocs ▄ ne servent qu'aux pentes de la colline.
+                try:
+                    if gh[x]:
+                        win.addstr(gy, x, "█", self.PALE3 | curses.A_DIM)
+                        edge = not (0 <= x - 1 < w and gh[x - 1]) or not (0 <= x + 1 < w and gh[x + 1])
+                        win.addstr(gy - 1, x, "▄" if edge else "█", self.PALE2 | curses.A_DIM)
+                    else:
+                        a = self.PALE2 if g["gcol"][x] else self.PALE3
+                        win.addstr(gy, x, "█", a | curses.A_DIM)
+                except curses.error:
+                    pass
+            # — ÉTOILE FILANTE : timing en secondes (mouvement fluide même à faible
+            # taux de rafraîchissement). D1 dérive lente · D2 accélération · D3 sortie.
+            D1, D2, D3 = 3.6, 1.7, 1.2
+            wd = st.get("wind")
+            if wd is None:
+                # première étoile filante DÈS l'ouverture, puis à intervalles variés
+                wd = {"on": False, "t": tick, "n": 0}
+                st["wind"] = wd
+            if not wd["on"] and tick >= wd["t"]:
+                # une ÉTOILE FILANTE en 4 actes : un point naît et dérive à peine,
+                # sa lumière monte et il grossit, puis la vitesse explose (easing
+                # quadratique) et il DEVIENT une traînée qui file au-dessus de
+                # l'arbre. Chemin figé (Bresenham) + timeline de positions (hp).
+                dh = min(30, (w * 2) // 5)                    # course longue, horizontale
+                sy0 = sy1 = gy - 7                            # y CONSTANT, au-dessus de l'arbre
+                sx1 = min(w - 3, g["tree"] + 6)
+                sx0 = max(2, sx1 - dh)
+                path = []
+                xx, yy = sx0, sy0
+                ex, ey = sx1, sy1
+                dxp, dyp = abs(ex - xx), abs(ey - yy)
+                stx = 1 if ex >= xx else -1
+                sty = 1 if ey >= yy else -1
+                if dxp >= dyp:
+                    err = dxp // 2
+                    for _ in range(dxp + 1):
+                        path.append((xx, yy)); err -= dyp
+                        if err < 0: yy += sty; err += dxp
+                        xx += stx
+                else:
+                    err = dyp // 2
+                    for _ in range(dyp + 1):
+                        path.append((xx, yy)); err -= dxp
+                        if err < 0: xx += stx; err += dyp
+                        yy += sty
+                # position pilotée par le TEMPS continu (voir pos() au rendu) ; on ne
+                # fige ici que le chemin, le point de rupture P1 et l'instant eW où la
+                # tête franchit l'arbre (→ coup de vent).
+                M = len(path)
+                P1 = max(2, M // 5)
+                ti = max(0, min(M - 1, g["tree"] - sx0))
+                if ti <= P1:
+                    eW = D1 * (ti / max(1, P1))
+                else:
+                    eW = D1 + D2 * (((ti - P1) / max(1, M - 1 - P1)) ** (1 / 2.4))
+                wd.update(on=True, t0=tick, ts=time.monotonic(), path=path,
+                          P1=P1, M=M, eW=eW, n=wd["n"] + 1,
+                          end=tick + int((D1 + D2 + D3) / 0.4) + 2)
+            elif wd["on"] and tick >= wd["end"]:
+                wd.update(on=False, t=tick + 7 + random.randrange(12))
+            flyby = wd["on"] and not self.creating
+            # coup de vent sur l'arbre juste APRÈS le passage de l'étoile au-dessus
+            wake = False
+            if flyby and "ts" in wd:
+                wake = 0 <= (time.monotonic() - wd["ts"]) - wd["eW"] <= 1.6
+            for gx, tall in g["grass"]:
+                sy = gy - 1 - gh[gx]
+                ph = (tick // 2 + gx // 4) % 2 if wake else 0   # vague au passage de l'avion
+                try:
+                    if tall:                      # herbe haute : pointe qui se couche
+                        win.addstr(sy - 1, gx, "/" if ph else "|", self.PALE2 | curses.A_DIM)
+                        win.addstr(sy, gx, "|", self.PALE3 | curses.A_DIM)
+                    else:
+                        win.addstr(sy, gx, "'" if ph else ",", self.PALE2 | curses.A_DIM)
+                except curses.error:
+                    pass
+            if y1 - y0 >= 4:                      # place pour l'arbre complet
+                import random as _rr
+                tx = g["tree"]
+                wind = 1 if wake else 0           # la cime ploie brièvement dans le sillage
+                rnd = _rr.Random(g["seed"] + wd["n"])     # remélange une fois par passage
+                shim = _rr.Random(g["seed"] * 31 + tick // 2)  # bruissement continu :
+                pal = (self.PALE1, self.PALE2, self.PALE3)     # ~1 feuille sur 4 change
+                try:                                           # de vert toutes les 0,8 s
+                    win.addstr(gy - 1, tx, "█", self.BROWN | curses.A_DIM)   # tronc dans le plateau
+                    win.addstr(gy - 2, tx, "█", self.BROWN | curses.A_DIM)
+                    # sillage → le haut de la canopée penche d'une case à DROITE :
+                    # le pixel le plus à gauche des feuilles s'efface un instant.
+                    for row, cw, off in ((gy - 3, 1, 0), (gy - 4, 2, wind), (gy - 5, 1, wind)):
+                        for cx in range(tx - cw + off, tx + cw + off + 1):
+                            c = rnd.choice(pal)
+                            if shim.random() < 0.25:
+                                c = shim.choice(pal)
+                            win.addstr(row, cx, "█", c)
+                except curses.error:
+                    pass
+                # — l'ÉTOILE FILANTE, en 4 actes le long du chemin :
+                #   1 naissance : un point faible dérive imperceptiblement ;
+                #   2 incandescence : la lumière monte par paliers, le point grossit
+                #     (flancs lumineux) tout en accélérant doucement ;
+                #   3 rupture : la vitesse explose, le point DEVIENT une traînée en
+                #     dégradé qui file au-dessus de l'arbre ;
+                #   4 évanouissement : la traînée glisse hors du chemin et s'éteint.
+                if flyby and wd.get("path"):
+                    self.star_anim = True                   # → run() rafraîchit plus vite
+                    path, M, P1 = wd["path"], wd["M"], wd["P1"]
+                    e = time.monotonic() - wd["ts"]
+                    vexit = 2.4 * (M - 1 - P1) / D2          # vitesse à la rupture (cases/s)
+
+                    def pos(t):                             # index continu de la tête
+                        if t < D1:
+                            return P1 * (t / D1)             # dérive lente, linéaire
+                        if t < D1 + D2:
+                            u = (t - D1) / D2
+                            return P1 + (M - 1 - P1) * (u ** 2.4)   # accélération
+                        return (M - 1) + (t - D1 - D2) * vexit      # sortie à vitesse max
+                    hf = pos(e)
+                    head = int(hf)
+                    v = hf - pos(max(0.0, e - 0.33))        # vitesse instantanée (cases/0,33 s)
+
+                    def put(idx, gl, at):
+                        if 0 <= idx < M:
+                            x, y = path[idx]
+                            if 2 <= x <= w - 2 and y0 <= y <= y1:
+                                try:
+                                    win.addstr(y, x, gl, at)
+                                except curses.error:
+                                    pass
+                    # tête : la lumière monte pendant la dérive lente, puis éclat
+                    grow = ((".", self.PALE3 | curses.A_DIM), ("·", self.PALE3),
+                            ("·", self.PALE2), ("•", self.PALE2),
+                            ("•", self.PALE1), ("✦", self.PALE1 | curses.A_BOLD),
+                            ("✦", self.STARC))
+                    if e < D1:
+                        gl, at = grow[min(len(grow) - 1, int(len(grow) * e / D1))]
+                    else:
+                        gl, at = "✦", self.STARC
+                    if head < M:
+                        put(head, gl, at)
+                    # traînée : n'existe qu'avec la VITESSE ; longueur ∝ vitesse, dégradé
+                    # vif → éteint. Comme elle suit la vitesse, elle POUSSE case par case
+                    # (elle ne surgit pas d'un coup) et comble l'écart entre deux frames.
+                    if v >= 2.2:
+                        L = max(2, min(12, int(v * 1.4)))
+                        grad = (("✧", self.PALE1 | curses.A_BOLD), ("✦", self.PALE1),
+                                ("•", self.PALE2), ("·", self.PALE2 | curses.A_DIM),
+                                ("·", self.PALE3 | curses.A_DIM), ("·", curses.A_DIM))
+                        for i in range(1, L + 1):
+                            gi = min(len(grad) - 1, (i * len(grad)) // (L + 1))
+                            put(head - i, *grad[gi])
+        win.noutrefresh()
+
     def _auto_count(self, machine, cwd):
         """(total, arrêtées) des gardes rattachées à (machine, cwd) — pour le badge.
         Matching par CWD (le dossier de l'équipe) et non par nom : robuste même si le nom
@@ -1254,12 +1501,6 @@ class Picker:
                     if ninact:                # pas de puce inactive si 0
                         segs.append(("  ○ %d" % ninact, self.RED | curses.A_BOLD))
                 return segs
-            if r.get("id") == "propals":      # propositions de tâches : jaune (idée), compteur si en attente
-                segs = [(p + r["text"], self.YEL | curses.A_BOLD)]
-                n = r.get("n")
-                if n:
-                    segs.append(("  %d" % n, self.YEL | curses.A_BOLD))
-                return segs
             if r.get("id") in ("quit", "quit_vps"):
                 return [(p + r["text"], curses.A_DIM)]
             if r.get("id") in ("new_here", "browse"):   # cibles déroulées : gris, pas vert
@@ -1305,7 +1546,7 @@ class Picker:
                 return base + " · ^Q fermer" if live else base
             if li and li.get("kind") == "rcsess":
                 return "↵ ouvrir · ^Q fermer"
-            return "⚔️ thedev · ↑↓ naviguer · ↵ valider · Esc quitter"
+            return "thedev · ↑↓ naviguer · ↵ valider · Esc quitter"
         nf = count_files(self.bdir)
         nd = len(list_dirs(self.bdir))
         return "%s · %d dossiers · %d fichiers" % (self.bdir, nd, nf)
@@ -1351,6 +1592,15 @@ class Picker:
                     v, n = it[1], it[2]
                     c = self.GREEN if v < n * 0.7 else (self.YEL if v < n else self.RED)
                     s = [("load ", curses.A_DIM), ("%s" % v, c)]
+                elif it[0] == "BAT":
+                    # jauge INVERSE (bas = danger) ; ↑ = en charge (temps → plein),
+                    # ↓ = décharge (temps → extinction)
+                    p, st, tm = it[1], it[2], it[3]
+                    c = self.GREEN if (p >= 40 or st == "chg") else (self.YEL if p >= 15 else self.RED)
+                    arrow = {"chg": "↑", "dis": "↓"}.get(st, "")
+                    s = [("bat%s " % arrow, curses.A_DIM), ("%d%%" % p, c)]
+                    if tm:
+                        s.append((" %s" % tm, curses.A_DIM))
                 if s is None:
                     continue
                 if segs:
@@ -1372,20 +1622,33 @@ class Picker:
         self.scr.erase()
         H, W = self.scr.getmaxyx()
         DIM = curses.A_DIM
-        G, C = self.GREEN, self.CYAN
-        self.scr.addnstr(0, 2, "⌘ COMMANDEMENT", W - 4, C | curses.A_BOLD)
-        back = "[ ‹ Retour ]"
-        try:
-            self.scr.addnstr(0, max(8, W - 2 - len(back)), back, len(back), C | curses.A_REVERSE | curses.A_BOLD)
-            self.scr.addnstr(1, 2, "─" * (W - 4), W - 4, DIM)
-        except curses.error:
-            pass
+        G, C, R = self.GREEN, self.CYAN, self.RED
+        _me = getattr(self, "carte_me", ""); _som = getattr(self, "carte_sommet", "")
+        hdr = "⌘ COMMANDEMENT"
+        if _me: hdr += "  —  vue de %s" % _me
+        self.scr.addnstr(0, 2, hdr, W - 4, C | curses.A_BOLD)
         with self.rc_lock:
             nodes = self.carte_nodes
         if nodes is None:
-            try: self.scr.addnstr(3, 2, "chargement de la carte…", W - 4, DIM)
+            try:
+                self.scr.addnstr(1, 2, "─" * (W - 4), W - 4, DIM)
+                self.scr.addnstr(3, 2, "chargement de l'arbre de commandement…", W - 4, DIM)
             except curses.error: pass
             self.scr.refresh(); return
+        # ── sous-en-tête : les appareils que COUVRE l'arbre + qui POSSÈDE le général ──
+        machines = [n["machine"] for n in nodes if n.get("type") == "chef"]
+        owner = _som or _me                        # la machine qui tient le général en chef
+        mlist = " · ".join(machines) or "—"
+        try:
+            x = 2
+            self.scr.addnstr(1, x, "appareils : ", W - 4, DIM); x += len("appareils : ")
+            self.scr.addnstr(1, x, mlist, max(0, W - 1 - x), C | curses.A_BOLD); x += len(mlist)
+            if owner:
+                tail = "   —   général en chef chez %s" % owner
+                self.scr.addnstr(1, x, tail, max(0, W - 1 - x), DIM)
+            self.scr.addnstr(2, 2, "─" * (W - 4), W - 4, DIM)
+        except curses.error:
+            pass
         sel_idx = [i for i, n in enumerate(nodes) if n["sel"]]
         if not sel_idx:
             try: self.scr.addnstr(3, 2, "(aucune équipe connue — le namespace se peuple à l'ouverture / aux remontées)", W - 4, DIM)
@@ -1394,25 +1657,42 @@ class Picker:
         self.ci = max(0, min(self.ci, len(sel_idx) - 1))
         cur = sel_idx[self.ci]
         lw = (W * 55) // 100
-        # ── gauche : l'arbre ──
+        # ── gauche : l'arbre, hiérarchie PAR LA COULEUR (un rôle = une couleur) ──
+        #   ⌘ général = magenta · ⬡ chef = cyan + nom machine en clair · ◇ domaine = jaune
+        #   connecteurs grisés · ● N actives en vert · ⚠ blocages en rouge
+        def lput(row, x0, segs):                   # segments colorés, bornés au panneau gauche
+            x = x0
+            for s, a in segs:
+                if x >= lw - 1: break
+                try: self.scr.addnstr(row, x, s, lw - 1 - x, a)
+                except curses.error: pass
+                x += len(s)
         y = 3
         for i, n in enumerate(nodes):
             if y >= H - 1:
                 break
-            txt = "  " * n["lvl"] + n["label"]
-            # COMMANDEMENT mis en avant (général/chef en cyan gras), feuilles ATTÉNUÉES
-            # (grisées) : le regard va aux chefs, les sessions sont un simple contexte.
-            if   n["type"] == "domaine":  attr = DIM
-            elif n["type"] == "general":  attr = C | curses.A_BOLD
-            elif n["type"] == "chef":     attr = C | curses.A_BOLD
-            elif n["type"] == "souschef": attr = C            # sous-chef : cyan (un cran sous le chef)
-            else:                         attr = DIM
-            if i == cur:
-                attr = curses.A_REVERSE | curses.A_BOLD
-            try: self.scr.addnstr(y, 2, txt, lw - 3, attr)
-            except curses.error: pass
+            t = n["type"]; prefix = n.get("prefix", "")
+            if t == "retour":
+                try: self.scr.addnstr(y, 2, n["label"], lw - 3, self.SEL if i == cur else DIM)
+                except curses.error: pass
+                y += 2; continue                    # respiration après Retour
+            if i == cur:                            # sélection : barre douce sur toute la ligne
+                segs = [(prefix + n["glyph"] + " " + n["name"] + n.get("suffix", ""), self.SEL)]
+            else:
+                if   t == "general": ga, na = self.MAG | curses.A_BOLD, self.MAG | curses.A_BOLD
+                elif t == "chef":    ga, na = C | curses.A_BOLD, curses.A_BOLD
+                else:                ga, na = self.YEL, self.YEL
+                segs = [(prefix, DIM), (n["glyph"] + " ", ga), (n["name"], na)]
+                if n.get("suffix"): segs.append((n["suffix"], DIM))
+                if n.get("nlive"):  segs.append(("  ● %d" % n["nlive"], G | curses.A_BOLD))
+                if n.get("warn"):   segs.append(("  ⚠ réorg", R | curses.A_BOLD))
+            lput(y, 2, segs)
+            nb = n.get("bloc", 0)
+            if nb:
+                try: self.scr.addnstr(y, lw - 5, "⚠%d" % nb, 4, R | curses.A_BOLD)
+                except curses.error: pass
             y += 1
-        for yy in range(2, H - 1):
+        for yy in range(3, H - 1):                 # ligne verticale : arbre │ contexte droit (sous le séparateur)
             try: self.scr.addnstr(yy, lw, "│", 1, DIM)
             except curses.error: pass
         # ── droite : contexte du nœud sélectionné ──
@@ -1421,42 +1701,65 @@ class Picker:
             if 2 <= row < H - 1 and W - rx - 1 > 0:
                 try: self.scr.addnstr(row, rx, text, W - rx - 1, attr)
                 except curses.error: pass
+        def puts(row, segs):                       # segments colorés sur une ligne
+            if not (2 <= row < H - 1): return
+            x = rx; xmax = W - 1
+            for s, a in segs:
+                if x >= xmax: break
+                try: self.scr.addnstr(row, x, s, xmax - x, a)
+                except curses.error: pass
+                x += len(s)
+        def eq_segs(r):                            # point coloré · nom · état (⚠ rouge) · fraîcheur
+            dot, da = {"busy": ("◆", self.ORANGE | curses.A_BOLD),
+                       "live": ("●", G | curses.A_BOLD)}.get(r["live"], ("○", DIM))
+            segs = [(dot + " ", da), ("%-16s " % r["equipe"][:16], 0)]
+            et = r["etat"] or "—"; mb = re.match(r'(⚠\d+)(?: · )?(.*)', et)
+            if mb: segs += [(mb.group(1) + " ", R | curses.A_BOLD), (mb.group(2), 0)]
+            else:  segs.append((et, 0))
+            if r.get("ago"): segs.append(("  · " + r["ago"], DIM))
+            return segs
         ry = 3
-        if n["type"] == "session":
-            rl(ry, "SESSION  %s" % n["equipe"], C | curses.A_BOLD); ry += 1
-            rl(ry, "machine : %s" % n["machine"], DIM); ry += 1
-            st = {"busy": "◆ répond", "live": "● vivante"}.get(n["live"], "○ pas de soldat")
-            rl(ry, "état    : %s%s" % (st, ("  · " + n["ago"]) if n["ago"] else ""), 0); ry += 2
-            rl(ry, "— " + (n["etat"] or "—"), 0)
-        elif n["type"] == "chef":
-            mrows = n["rows"]; ln = sum(1 for r in mrows if r["live"] in ("live", "busy"))
-            rl(ry, "CHEF  %s" % n["machine"], C | curses.A_BOLD); ry += 1
-            rl(ry, "contexte chargé : %d équipe(s) · %d vivante(s)" % (len(mrows), ln), DIM); ry += 2
-            for r in mrows:
+        if n["type"] == "retour":
+            rl(ry, "‹ Retour", C | curses.A_BOLD); ry += 2
+            rl(ry, "↵  revenir à l'accueil   (Esc aussi)", DIM)
+        elif n["type"] in ("chef", "souschef"):
+            # DROITE = enfants DIRECTS : sous-chefs (si scindé) OU sessions directes.
+            kids = n.get("children", []); nb = n.get("bloc", 0)
+            ntot = len(n["rows"]); nlive = sum(1 for r in n["rows"] if r["live"] in ("live", "busy"))
+            if n["type"] == "chef":
+                rl(ry, "⬡ CHEF  %s" % n["machine"], C | curses.A_BOLD)
+            else:
+                rl(ry, "◇ SOUS-CHEF  %s" % n["domaine"], self.YEL | curses.A_BOLD)
+            ry += 1
+            kind_lbl = "sous-chef(s)" if any(k["kind"] == "souschef" for k in kids) else "session(s) directe(s)"
+            meta = [("%d équipes · %d active(s)  ·  %d %s" % (ntot, nlive, len(kids), kind_lbl), DIM)]
+            if nb: meta.append(("   ⚠%d" % nb, R | curses.A_BOLD))
+            puts(ry, meta); ry += 2
+            for k in kids:
                 if ry >= H - 1: break
-                dot = "◆" if r["live"] == "busy" else ("●" if r["live"] == "live" else "○")
-                rl(ry, "%s %-16s %s" % (dot, r["equipe"][:16], (r["etat"] or "—")), 0); ry += 1
-        elif n["type"] == "souschef":
-            drows = n["rows"]; ln = sum(1 for r in drows if r["live"] in ("live", "busy"))
-            rl(ry, "SOUS-CHEF  %s" % n["domaine"], C | curses.A_BOLD); ry += 1
-            rl(ry, "machine : %s  ·  domaine issu de la scission (brique 3)" % n["machine"], DIM); ry += 1
-            rl(ry, "contexte chargé : %d équipe(s) · %d vivante(s)" % (len(drows), ln), DIM); ry += 2
-            for r in drows:
-                if ry >= H - 1: break
-                dot = "◆" if r["live"] == "busy" else ("●" if r["live"] == "live" else "○")
-                rl(ry, "%s %-16s %s" % (dot, r["equipe"][:16], (r["etat"] or "—")), 0); ry += 1
+                if k["kind"] == "souschef":
+                    segs = [("⬡ %-14s " % k["domaine"], C), ("%d éq · %d active(s)" % (k["n"], k["live"]), DIM)]
+                    if k["bloc"]: segs.append(("  ⚠%d" % k["bloc"], R | curses.A_BOLD))
+                    puts(ry, segs)
+                else:
+                    puts(ry, eq_segs(k))
+                ry += 1
         else:  # general
-            rows = n["rows"]
-            rl(ry, "GÉNÉRAL EN CHEF", C | curses.A_BOLD); ry += 1
-            rl(ry, "contexte chargé : flotte %s" % (("(sommet %s)" % n["sommet"]) if n["sommet"] else "(local)"), DIM); ry += 2
+            rows = n["rows"]; nb = n.get("bloc", 0)
+            rl(ry, "⌘ GÉNÉRAL EN CHEF", self.MAG | curses.A_BOLD); ry += 1
+            meta = [("flotte %s" % (("· sommet %s" % n["sommet"]) if n["sommet"] else "(local)"), DIM)]
+            if nb: meta.append(("   ⚠%d" % nb, R | curses.A_BOLD))
+            puts(ry, meta); ry += 2
             for m in ([n["me"]] if any(r["machine"] == n["me"] for r in rows) else []) + \
                      sorted(mm for mm in {r["machine"] for r in rows} if mm != n["me"]):
                 if ry >= H - 1: break
                 mr = [r for r in rows if r["machine"] == m]
-                lv = sum(1 for r in mr if r["live"] in ("live", "busy"))
-                rl(ry, "⬡ %-14s %d équipe(s) · %d vivante(s)" % (m, len(mr), lv), 0); ry += 1
+                lv = sum(1 for r in mr if r["live"] in ("live", "busy")); mb2 = sum(r["bloc"] for r in mr)
+                segs = [("⬡ %-14s " % m, 0), ("%d éq · %d active(s)" % (len(mr), lv), DIM)]
+                if mb2: segs.append(("  ⚠%d" % mb2, R | curses.A_BOLD))
+                puts(ry, segs); ry += 1
         try:
-            self.scr.addnstr(H - 1, 2, "↑↓ naviguer les chefs  ·  ↵/Esc retour  ·  chef sélectionné → ses équipes à droite", W - 4, DIM)
+            self.scr.addnstr(H - 1, 2, "↑↓ naviguer  ·  ↵ chef → discuter · Retour → accueil  ·  Esc accueil", W - 4, DIM)
         except curses.error:
             pass
         self.scr.refresh()
@@ -1553,8 +1856,14 @@ class Picker:
                 return [[(" aucune garde", DIM)]]
             out = []
             for a in autos[:8]:
-                act = a.get("state") in ("active", "running")
-                icon, c = ("● ", G) if act else ("○ ", DIM)
+                # même logique BINAIRE que la page « la garde » : opérationnelle ssi
+                # timer actif ET Claude présent dans l'équipe (a["open"]) ; sinon arrêtée.
+                actif = a.get("state") in ("active", "running")
+                op = actif and bool(a.get("open"))
+                if op:
+                    icon, c = ("► " if a.get("state") == "running" else "● "), G
+                else:
+                    icon, c = "○ ", R
                 out.append([(" ", 0), (icon, c), ("%-16s " % (a.get("name", "?")[:16]), 0),
                             (("→ " + a.get("next", "")) if a.get("next") else "", DIM)])
             return out
@@ -1577,7 +1886,7 @@ class Picker:
         top0, boty = 3, H - 2
         avail = boty - top0
 
-        left = [("⚔️ thedev", items_to_rows(sec.get("thedev", []), contentw))]
+        left = [("thedev", items_to_rows(sec.get("thedev", []), contentw))]
         if self.rc_hosts:
             left.append(("parc", parc_rows()))
         left.append(("la garde", autos_rows()))
@@ -1648,7 +1957,7 @@ class Picker:
         seg_line([("  " + ("▸ " if bsel else "  "), 0), ("‹ Retour", self.CYAN | curses.A_BOLD)])
         if bsel:
             try:
-                self.scr.chgat(y[0] - 1, 2, W - 4, curses.A_REVERSE)
+                self.scr.chgat(y[0] - 1, 2, W - 4, self.SEL)
             except curses.error:
                 pass
         line("", 0)
@@ -1692,7 +2001,7 @@ class Picker:
                 seg_line(segs)
                 if sel:
                     try:
-                        self.scr.chgat(y[0] - 1, 2, W - 4, curses.A_REVERSE)
+                        self.scr.chgat(y[0] - 1, 2, W - 4, self.SEL)
                     except curses.error:
                         pass
                     if op:
@@ -1713,103 +2022,10 @@ class Picker:
         self.scr.noutrefresh()
         curses.doupdate()
 
-    def draw_propals(self):
-        self.scr.erase()
-        H, W = self.scr.getmaxyx()
-        self.scr.addnstr(0, 2, "✦ PROPOSITIONS DE TÂCHES", W - 4, self.YEL | curses.A_BOLD)   # jaune = couleur du bouton etat-major
-        try:
-            self.scr.addnstr(1, 2, "─" * (W - 4), W - 4, curses.A_DIM)
-        except curses.error:
-            pass
-        try:
-            self.scr.addnstr(2, 2, "une action par projet actif · ↑↓ naviguer · Esc revenir",
-                             W - 4, curses.A_DIM)
-        except curses.error:
-            pass
-        propals = self.propals if isinstance(self.propals, list) else []
-        y = [4]
-        def line(text, attr=0, col=2):
-            if 0 <= y[0] < H - 1 and W - col - 1 > 0:
-                try:
-                    self.scr.addnstr(y[0], col, text, W - col - 1, attr)
-                except curses.error:
-                    pass
-            y[0] += 1
-        def seg_line(segs):
-            if 0 <= y[0] < H - 1:
-                x = 2
-                for text, attr in segs:
-                    if W - x - 1 <= 0:
-                        break
-                    try:
-                        self.scr.addnstr(y[0], x, text, W - x - 1, attr)
-                    except curses.error:
-                        pass
-                    x += len(text)
-            y[0] += 1
-        # bouton Retour — 1er élément navigable, sélectionné par défaut
-        bsel = (self.pi == -1)
-        seg_line([("  " + ("▸ " if bsel else "  "), 0), ("‹ Retour", self.CYAN | curses.A_BOLD)])
-        if bsel:
-            try:
-                self.scr.chgat(y[0] - 1, 2, W - 4, curses.A_REVERSE)
-            except curses.error:
-                pass
-        line("", 0)
-        flat = []
-        if not propals:
-            self.pi = -1
-            line("(aucune proposition pour l'instant)", curses.A_DIM)
-            line("", 0)
-            line("Le proposeur scanne ton parc (todos non cochés, commits non poussés,", curses.A_DIM)
-            line("gardes en échec) et suggère ici des tâches concrètes — sans IA.", curses.A_DIM)
-            line("", 0)
-            line("Rien à signaler pour l'instant : parc propre.", curses.A_DIM)
-        else:
-            if self.pi >= len(propals):
-                self.pi = len(propals) - 1
-            if self.pi < -1:
-                self.pi = -1
-            # colonne « projet » alignée (largeur = plus long contexte, bornée à 22)
-            projw = min(22, max((len(pr.get("contexte") or "") for pr in propals), default=0))
-            for pr in propals:
-                if y[0] >= H - 2:
-                    break
-                idx = len(flat); flat.append(pr)
-                sel = (idx == self.pi)
-                prio = (pr.get("priorite") or "").lower()
-                pcol = self.RED if prio in ("haute", "high") else \
-                       (self.YEL if prio in ("moyenne", "medium") else self.GREEN)
-                ctx = pr.get("contexte") or ""
-                ctx_disp = (ctx[:projw - 1] + "…") if projw and len(ctx) > projw else ctx.ljust(projw)
-                segs = [("  " + ("▸ " if sel else "  "), 0),
-                        ("● ", pcol),                                   # ● = priorité
-                        (ctx_disp + "  ", self.pcolor(ctx) | curses.A_BOLD),  # projet, couleur stable
-                        (pr.get("titre", ""), curses.A_BOLD if sel else 0)]
-                seg_line(segs)
-                if sel:
-                    try:
-                        self.scr.chgat(y[0] - 1, 2, W - 4, curses.A_REVERSE)
-                    except curses.error:
-                        pass
-                    why = pr.get("pourquoi")
-                    if why:
-                        line("       " + why, curses.A_DIM)
-                    mach = pr.get("machine") or "local"
-                    if mach != "local":
-                        line("       sur " + mach, curses.A_DIM)
-                    line("       ↵ bientôt : ouvrir ce projet", curses.A_DIM)
-        self._propals_flat = flat
-        self.draw_status(H, W)
-        self.scr.noutrefresh()
-        curses.doupdate()
-
     def draw(self):
+        self.star_anim = False         # remis à True par draw_ambiance si une étoile file
         if self.mode == "autos":
             self.draw_autos()
-            return
-        if self.mode == "propals":
-            self.draw_propals()
             return
         if self.mode == "carte":
             self.draw_carte()
@@ -1823,18 +2039,63 @@ class Picker:
         self.draw_status(H, W)         # ligne du bas : hôte en cours (VPS / local) + msg
         self.scr.noutrefresh()
         top, bot = 1, H - 1
-        lw = (W * 6) // 10
+        # On RÉSERVE en bas une bande « paysage » (~40 % de la hauteur, min 12
+        # lignes) pour la colline + l'avion, quitte à caper la liste des équipes
+        # récentes avec un « voir plus ». Déplier (show_all) reprend cette bande →
+        # la liste descend jusqu'en bas et sacrifie l'avion.
+        _land = max(12, (2 * (H - 2)) // 5)
+        self.CAP = max(6, (H - 2) - 9 - _land)
+        # Le panneau ACTIONS prend ~1/3 de l'écran (jusqu'à 76 colonnes) ;
+        # le reste va aux ÉQUIPES.
+        lw = W - min(76, max(46, (W * 36) // 100))
         lrows, rrows = self.left_rows(), self.right_rows()
         lwin = curses.newwin(bot - top, lw - 1, top, 1)
         rwin = curses.newwin(bot - top, W - lw - 1, top, lw)
         ltitle = "  ÉQUIPES" if self.mode == "sessions" else "  DOSSIERS"
         self.loff = self.draw_panel(lwin, ltitle, lrows, self.li, self.focus == "left", self.loff)
         self.draw_panel(rwin, "  ACTIONS", rrows, self.ri, self.focus == "right", 0)
+        if self.mode == "sessions":
+            # logo pâle dans le HEADER du panneau ÉQUIPES (en bout de filet, à droite)
+            pw = lw - 1
+            if pw >= 78:
+                import random as _r
+                lx = pw - len(self.AMB_L1) - 3
+                try:
+                    lwin.addstr(2, lx - 2, " " * (len(self.AMB_L1) + 4))  # le filet s'arrête au logo
+                    for dy, (row, attr) in enumerate(((self.AMB_L1, self.PALE1),
+                                                      (self.AMB_L2, self.PALE2),
+                                                      (self.AMB_L3, self.PALE3))):
+                        lwin.addstr(1 + dy, lx, row, attr)
+                except curses.error:
+                    pass
+                # étoiles du header (pas d'oiseau ici — le ciel du header reste calme)
+                tick = int(time.monotonic() / 0.4)
+                hb = self.amb.get("H")
+                if not hb or hb["w"] != pw:
+                    stars = []
+                    ns = _r.choice((1, 2))           # 1-2 étoiles au header, hors du logo
+                    while len(stars) < ns:
+                        sx = _r.randrange(12, pw - 2)
+                        if lx - 2 <= sx <= lx + len(self.AMB_L1) + 1:
+                            continue
+                        stars.append((_r.choice((1, 3)), sx, _r.randrange(9)))  # pas sur le filet
+                    hb = {"w": pw, "stars": stars}
+                    self.amb["H"] = hb
+                for sy, sx, ph in hb["stars"]:       # scintillement lent
+                    a = self.PALE1 if (tick // 5 + ph) % 9 == 0 else curses.A_DIM
+                    try:
+                        lwin.addstr(sy, sx, "·", a)
+                    except curses.error:
+                        pass
+                lwin.noutrefresh()
+            # oiseaux + étoiles dans les espaces vides des deux panneaux
+            self.draw_ambiance("L", lwin, lrows)
+            self.draw_ambiance("R", rwin, rrows)
         curses.doupdate()
 
     # --- navigation ------------------------------------------------------
     def clamp(self):
-        if self.mode in ("infos", "autos", "propals"):
+        if self.mode in ("infos", "autos"):
             return
         ln = len(self.selectable_idx(self.left_rows()))
         rn = len(self.selectable_idx(self.right_rows()))
@@ -1920,12 +2181,9 @@ class Picker:
         if aid == "autos":           # écran des gardes (Esc pour revenir)
             self.enter_autos()
             return
-        if aid == "propals":         # écran des propositions de tâches (Esc pour revenir)
-            self.enter_propals()
-            return
-        if aid == "commandement":    # écran commandement : l'arbre des équipes (Esc pour revenir)
-            self.enter_carte()
-            return
+        if aid == "commandement":    # cockpit de commandement : session dédiée (arbre gauche · chef droite)
+            self.decision = ("COCKPIT",)
+            return "quit"
         if aid == "infos":           # écran d'infos pratiques (Esc pour revenir)
             self.enter_infos()
             return
@@ -2040,8 +2298,10 @@ class Picker:
             # getch non bloquant tant qu'il y a qqch à rafraîchir (liste RC live,
             # check git en fond, ou écran infos en cours de chargement) ; sinon bloque.
             self._refresh_busy()                      # busy local (throttle interne) → clignotement
-            poll = bool(self.rc_hosts) or self.git_checking or self.local_refreshing or (self.metrics is not None) or (self.mode == "infos" and self.infos_data is None) or (self.autos is None) or (self.mode == "propals" and self._propals_loading) or (self.mode == "carte" and self.carte_nodes is None) or bool(self.busy_cwds) or bool(self.waiting_cwds)
-            self.scr.timeout(400 if poll else -1)
+            poll = bool(self.rc_hosts) or self.git_checking or self.local_refreshing or (self.metrics is not None) or (self.mode == "infos" and self.infos_data is None) or (self.autos is None) or (self.mode == "carte" and self.carte_nodes is None) or bool(self.busy_cwds) or bool(self.waiting_cwds) or bool(self.amb)
+            # étoile filante en vol → rafraîchissement rapide (~7 fps) pour un
+            # mouvement fluide ; sinon cadence normale (ambiance/live) ou blocage.
+            self.scr.timeout(140 if self.star_anim else (400 if poll else -1))
             try:
                 ch = self.scr.getch()
             except KeyboardInterrupt:
@@ -2133,27 +2393,7 @@ class Picker:
                     self.confirm_del = a
                     self.msg = "supprimer « %s » à tout jamais ? y = oui, autre = non" % a["name"]
                 continue
-            if self.mode == "propals":              # écran propositions : navigable comme autos
-                n = len(self._propals_flat)
-                if n == 0:
-                    self.pi = -1
-                if ch == 27:
-                    self.mode = "sessions"; self.focus = "left"
-                    self.li = self.ri = 0; self.loff = 0
-                elif ch == curses.KEY_UP:
-                    self.pi = self.pi - 1
-                    if self.pi < -1: self.pi = n - 1
-                elif ch == curses.KEY_DOWN:
-                    self.pi = self.pi + 1
-                    if self.pi > n - 1: self.pi = -1
-                elif ch in (curses.KEY_ENTER, 10, 13) and self.pi == -1:
-                    self.mode = "sessions"; self.focus = "left"   # bouton Retour
-                    self.li = self.ri = 0; self.loff = 0
-                elif ch in (curses.KEY_ENTER, 10, 13) and 0 <= self.pi < n:
-                    # exécution (ship le git + mission → rapport) pas encore branchée
-                    self.msg = "lancement des agents proposés : à brancher (proposeur + exécution)"
-                continue
-            if self.mode == "carte":                # écran commandement : navigable (↑↓), Esc = retour
+            if self.mode == "carte":                # écran commandement : ↑↓ navigue · ↵ ouvre le chef · Esc retour
                 if ch == 27:
                     self.mode = "sessions"; self.focus = "left"
                     self.li = self.ri = 0; self.loff = 0
@@ -2161,6 +2401,9 @@ class Picker:
                     self.ci = max(0, self.ci - 1)
                 elif ch == curses.KEY_DOWN:
                     self.ci += 1
+                elif ch in (curses.KEY_ENTER, 10, 13):
+                    if self._open_chef() == "quit":   # convoque un chef → décision CHEF, dev() lance
+                        return
                 continue
             if self.mode == "infos":                # écran infos : bouton Retour (↵) ou Esc
                 if ch in (27, curses.KEY_ENTER, 10, 13):

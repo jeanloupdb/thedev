@@ -29,6 +29,7 @@ log "zellij (config + thème + layout dev)…"
 link "$REPO/zellij/config.kdl"       "$HOME/.config/zellij/config.kdl"
 link "$REPO/zellij/themes/muted.kdl" "$HOME/.config/zellij/themes/muted.kdl"
 link "$REPO/zellij/layouts/dev.kdl"  "$HOME/.config/zellij/layouts/dev.kdl"
+link "$REPO/zellij/layouts/commandement.kdl" "$HOME/.config/zellij/layouts/commandement.kdl"
 
 log "helpers ~/.local/bin (dérivés du manifest — tags @thedev, jamais une liste figée)…"
 for b in $("$REPO/bin/thedev-manifest" --scripts); do

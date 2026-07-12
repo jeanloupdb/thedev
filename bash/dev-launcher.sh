@@ -37,6 +37,11 @@ srv() {
 # briefée : il voit la flotte (`carte`) et commande vers le bas (`ordre`). Convocable
 # (ouvre quand tu commandes, ferme après). Depuis le téléphone : via le sommet.
 chef() {
+  # Un chef de MACHINE ou de DOMAINE (arg donné) = brief LOCAL via le script bin/chef
+  # (résumés agrégés de ce périmètre, lus depuis le miroir). `command` contourne CETTE
+  # fonction. Sans arg = le GÉNÉRAL (racine), qui vit sur le SOMMET (persistant, joignable
+  # depuis le tél) — c'est le « commandement le plus haut sur le serveur ».
+  [ -n "$1" ] && { command chef "$@"; return; }
   local sommet me d bf
   sommet="$(grep -vE '^\s*#|^\s*$' "$HOME/.config/thedev-sommet" 2>/dev/null | head -n1 | tr -d '[:space:]')"
   me="$( { cat "$HOME/.config/dev-vps" 2>/dev/null || hostname -s; } )"
@@ -48,12 +53,14 @@ chef() {
     cat > "$bf" <<'BRIEF'
 Tu es le GÉNÉRAL EN CHEF de thedev — le chef à la racine, sur le sommet. Ton rôle :
 voir la flotte et COMMANDER, pas coder toi-même.
-- `carte` → l'arbre complet (chefs-machine → domaines → équipes) + leur état.
-- `ordre <machine>/<equipe> "<intention>"` → commande une équipe (déposé dans la file,
-  consommé quand la machine se réveille). `ordre list` → la file en attente.
-- `mission <machine>/<equipe> "<txt>"` → délégation synchrone si l'équipe est joignable.
-Lis la carte, prends l'intention de l'utilisateur, dispatch les ordres aux bonnes
-équipes, rends compte. Tu répartis l'attention ; tu ne fais pas le travail des soldats.
+- `arbre` → l'arbre complet (chefs-machine → domaines → équipes) + leur état. Il lit le
+  MIROIR de flotte : il montre AUSSI les machines hors-ligne (dont les laptops derrière NAT)
+  via leurs dernières remontées — ne te fie pas à `thedev-status` pour « qui existe ».
+- `note ls --all` / `jalon` / `blocage` (sur le dossier d'une équipe) → descendre dans le détail.
+- `ordre <machine>/<equipe> "<intention>"` → commande une équipe (file, consommée au réveil).
+  `ordre list` → la file. `mission <machine>/<equipe> "<txt>"` → délégation synchrone si joignable.
+Lis `arbre`, prends l'intention de l'utilisateur, dispatch les ordres, rends compte.
+Tu répartis l'attention ; tu ne fais pas le travail des soldats.
 BRIEF
     CLAUDE_PANE_INIT_FILE="$bf" _dev_launch "$d" ""
   else
@@ -100,6 +107,19 @@ _dev_launch() {
   fi
 
   _dev_spawn "$session" "$resume"
+}
+
+# Ouvre le COCKPIT de commandement : une session zellij dédiée `commandement`
+# (layout à 2 panes — arbre à gauche, Claude chef à droite). Session vivante →
+# on s'y rattache (le cockpit reprend où il en était) ; sinon on la crée.
+_dev_cockpit() {
+  local session="commandement"
+  if zellij list-sessions --no-formatting 2>/dev/null \
+       | grep -v 'EXITED' | awk '{print $1}' | grep -qxF "$session"; then
+    zellij attach "$session"
+    return
+  fi
+  zellij -n ~/.config/zellij/layouts/commandement.kdl -s "$session"
 }
 
 # Force la fermeture d'une session vivante puis la relance (choix "fermer &
@@ -176,6 +196,8 @@ dev() {
       SERVER*)   SRV_HOST="$cwd" srv "$id" ;;    # dev distant : $cwd=hôte ; $id=cwd distant (vide → etat-major serveur ; sinon attache la session)
       ADJUST*)   _dev_adjust_auto "$cwd" "$(printf '%s' "$out" | cut -f3)" "$(printf '%s' "$out" | cut -f4)" ;;  # $cwd=machine, f3=cwd equipe, f4=nom auto
       UPDATE*)   _dev_update ;;                  # met à jour la config dev (git pull) puis ré-affiche l'etat-major
+      COCKPIT*)  _dev_cockpit ;;                 # cockpit de commandement : session dédiée (arbre gauche · chef droite)
+      CHEF*)     chef "$cwd" ;;                   # discuter avec un chef : Claude briefé dans CE pane ($cwd = machine[/domaine], vide = général)
     esac
   done
 }

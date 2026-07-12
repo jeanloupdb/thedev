@@ -45,8 +45,13 @@ layout {
     }
 
     // Page 2 — le camp (territoire de Claude, peuplé via `soutien`)
+    // La garnison est la BASE d'une stack : les soutiens s'empilent dessus
+    // (`soutien` → `zellij run --stacked`). La garnison ne se ferme jamais → l'onglet
+    // « le camp » ne se vide (ni ne disparaît) pas quand un soutien se termine.
     tab name="le camp" {
-        pane name="garnison" command="/home/jlal/.local/bin/garnison"
+        pane stacked=true {
+            pane name="garnison" command="/home/jlal/.local/bin/garnison"
+        }
     }
 
     // Page 3 — la tente : shell + git (terminaux perso, côte à côte)
