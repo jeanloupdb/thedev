@@ -2338,14 +2338,14 @@ class Picker:
                 return
             if ch == -1:                            # timeout : simple redraw
                 continue
-            # Alt+R = l'écran INFOS (même geste qu'Alt+R dans zellij). Le terminal
-            # envoie ESC puis 'r' ; comme ESC seul = retour/quitter ici, on lève
-            # l'ambiguïté en regardant la touche suivante. Si ce n'est pas 'r',
+            # Alt+I = l'écran INFOS (même geste qu'Alt+I dans zellij). Le terminal
+            # envoie ESC puis 'i' ; comme ESC seul = retour/quitter ici, on lève
+            # l'ambiguïté en regardant la touche suivante. Si ce n'est pas 'i',
             # on la remet dans la file et l'ESC reprend son sens normal.
             if ch == 27:
                 self.scr.timeout(60)
                 nxt = self.scr.getch()
-                if nxt in (ord("r"), ord("R")):
+                if nxt in (ord("i"), ord("I")):
                     self.enter_infos()
                     continue
                 if nxt != -1:

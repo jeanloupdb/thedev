@@ -314,7 +314,7 @@ class Sidebar:
         ("⌂", "files",           "files",    ""),
         ("⚑", "soldats",         "soldats",  ""),
         ("⧉", "sessions",        "sessions", ""),
-        ("ⓘ", "infos",           "infos",    "alt r"),
+        ("ⓘ", "infos",           "infos",    "alt i"),
         ("⟳", "automatisations", "autos",    ""),
         ("＋", "soldat",          "aside",    ""),
     ]

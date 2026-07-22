@@ -156,20 +156,20 @@ keybinds clear-defaults=true {
         bind "Alt Shift f" { ToggleFloatingPanes; }
         bind "Ctrl g" { SwitchToMode "locked"; }
         bind "Alt h" { MoveFocusOrTab "left"; }
-        bind "Alt i" { MoveTab "left"; }
         bind "Alt j" { MoveFocus "down"; }
         bind "Alt k" { MoveFocus "up"; }
         bind "Alt l" { MoveFocusOrTab "right"; }
         bind "Alt n" { NewPane; }
         bind "Alt c" { Run "renfort" { close_on_exit true; }; }
-        bind "Alt o" { MoveTab "right"; }
         bind "Alt p" { TogglePaneInGroup; }
         bind "Alt Shift p" { ToggleGroupMarking; }
-        // Alt+R : l'écran INFOS en plein écran (RAM, disque, charge, fenêtre
+        // MoveTab : « vers la gauche » était sur Alt+I, libéré pour INFOS.
+        bind "Alt o" { MoveTab "right"; }
+        // Alt+I : l'écran INFOS en plein écran (RAM, disque, charge, fenêtre
         // Claude, parc, usage). Il remplace l'ancien mini-modal « top 10 RAM » :
         // une seule page de ressources, la même que celle de l'accueil et celle
         // de la colonne de gauche. Retour/Échap referme le pane.
-        bind "Alt r" {
+        bind "Alt i" {
             Run "etat-major" {
                 args "--page" "infos"
                 floating true
