@@ -21,9 +21,10 @@ et la première entrée devient « ← retour ». Une colonne étroite ne suppor
 deux niveaux à l'écran en même temps. Même raison pour les choix : ouvrir une
 equipe passe par une MODALE (lignes sélectionnables + annuler), pas un dépliage.
 
-La liste des soldats sépare ceux qui occupent VRAIMENT un pane à droite de ceux
-« à réveiller » — conversations terminées, affichées en atténué, qu'un Entrée
-rouvre en `--resume`.
+La liste des soldats sépare ceux qui occupent VRAIMENT un pane à droite (leur
+nom apparaît dans le layout courant) de ceux « à réveiller » — conversations
+sans pane, en atténué, qu'un Entrée rouvre en `--resume`. Elle se rafraîchit
+toute seule : la colonne vit des heures, un état figé au démarrage ment vite.
 
 Le bandeau de ressources (fenêtre Claude, RAM, disque, charge, batterie) est en
 bas, TOUJOURS visible, quelle que soit la vue. Source unique : `thedev-metrics`.
@@ -46,6 +47,7 @@ Souris  : clic = activer.
 import curses
 import json
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -140,25 +142,47 @@ def fresh_sids(path, max_age=1800):
     return out
 
 
+def live_pane_names():
+    """Noms des panes RÉELLEMENT ouverts dans la session (via le layout courant).
+
+    C'est la seule vérité terrain sur « qui occupe un pane ». Le champ `ended`
+    du registre ment dans les deux sens : un soldat tué net garde `ended == 0`,
+    et un SessionEnd parasite (compactage, relance) marque terminé un soldat
+    bien vivant. On lit donc le layout. Le « ◆ » du pulse est retiré : c'est un
+    habillage d'activité, pas une partie du nom.
+    Renvoie None si le layout est illisible — l'appelant retombe alors sur
+    `ended`, imparfait mais toujours mieux que rien."""
+    out = sh(["zellij", "action", "dump-layout"], 8)
+    if not out:
+        return None
+    names = []
+    for m in re.finditer(r'name="((?:[^"\\]|\\.)*)"', out):
+        n = m.group(1)
+        names.append(n[2:] if n.startswith("◆ ") else n)
+    return names
+
+
 def load_soldats(cwd, sess="", dormant_max=12):
     """Soldats de cette équipe, en deux groupes → (actifs, inactifs).
 
     Registre = ~/.cache/soldats (TSV : id cwd role nom session started ended rc).
 
-    ACTIF   = `ended == 0` ET rattaché à CETTE session zellij : il occupe
-              vraiment un pane à droite. L'état vient des marqueurs des hooks —
-              waiting (il t'attend sur un QCM) prime sur busy (il répond).
-    INACTIF = conversation terminée (ou d'une autre session) : plus de pane,
-              mais elle existe toujours et peut être RÉVEILLÉE (--resume).
-              Les plus récentes d'abord, bornées : l'historique d'un vieux
-              projet ferait sinon une liste sans fin."""
+    ACTIF   = son nom de pane est présent dans le layout courant — donc il
+              occupe vraiment un pane à droite. L'état vient des marqueurs des
+              hooks : waiting (il t'attend sur un QCM) prime sur busy.
+    INACTIF = conversation sans pane : elle existe toujours et peut être
+              RÉVEILLÉE (--resume). Les plus récentes d'abord, bornées :
+              l'historique d'un vieux projet ferait sinon une liste sans fin.
+
+    Le rapprochement se fait avec MULTIPLICITÉ (un pane consommé une fois) :
+    deux conversations peuvent s'appeler « claude », une seule est ouverte."""
     busy, wait = fresh_sids("~/.cache/soldat-busy"), fresh_sids("~/.cache/soldat-waiting")
-    actifs, dormants = [], []
+    rows = []
     try:
         with open(os.path.expanduser("~/.cache/soldats")) as f:
             lines = f.read().splitlines()
     except OSError:
-        return actifs, dormants
+        return [], []
     for line in lines:
         p = line.split("\t")
         if len(p) < 7:
@@ -168,16 +192,33 @@ def load_soldats(cwd, sess="", dormant_max=12):
                 continue
         except OSError:
             continue
-        name = p[3] or "claude"
-        if p[6] == "0" and (not sess or p[4] == sess):
-            state = "waiting" if p[0] in wait else ("busy" if p[0] in busy else "idle")
-            actifs.append((name, p[2], state, p[0]))
+        try:
+            started, ended = int(p[5]), int(p[6])
+        except ValueError:
+            started, ended = 0, 0
+        rows.append({"sid": p[0], "role": p[2], "name": p[3] or "claude",
+                     "sess": p[4], "started": started, "ended": ended})
+    # Le plus récemment démarré d'abord : c'est lui qui doit récupérer le pane
+    # quand plusieurs conversations portent le même nom.
+    rows.sort(key=lambda r: -r["started"])
+    panes = live_pane_names()
+    pool = {}
+    for n in (panes or []):
+        pool[n] = pool.get(n, 0) + 1
+    actifs, dormants = [], []
+    for r in rows:
+        if panes is None:                      # layout illisible → repli sur `ended`
+            live = r["ended"] == 0 and (not sess or r["sess"] == sess)
         else:
-            try:
-                ended = int(p[6]) or int(p[5])
-            except ValueError:
-                ended = 0
-            dormants.append((name, p[2], ended, p[0]))
+            live = pool.get(r["name"], 0) > 0
+            if live:
+                pool[r["name"]] -= 1
+        if live:
+            state = ("waiting" if r["sid"] in wait else
+                     ("busy" if r["sid"] in busy else "idle"))
+            actifs.append((r["name"], r["role"], state, r["sid"]))
+        else:
+            dormants.append((r["name"], r["role"], r["ended"] or r["started"], r["sid"]))
     dormants.sort(key=lambda d: -d[2])
     return actifs, dormants[:dormant_max]
 
@@ -394,13 +435,21 @@ class Sidebar:
     # ---------- données de fond ----------
 
     def _metrics_worker(self):
-        # Bandeau du bas, toujours visible → rafraîchi en continu. `thedev-metrics`
-        # est la source unique (lectures /proc + usage Claude déjà mis en cache
-        # par la commande elle-même), donc quasi gratuit à appeler.
+        # Bandeau du bas + liste des soldats, rafraîchis en continu. La colonne
+        # vit des heures dans le front : lus une seule fois au démarrage, ces
+        # deux états divergeaient de la réalité sans qu'on s'en aperçoive (un
+        # soldat ouvert depuis affiché « à réveiller », un soldat fermé toujours
+        # listé présent). `thedev-metrics` lit /proc et un cache, `dump-layout`
+        # fait ~30 ko en 0,1 s : les deux sont assez légers pour ce rythme.
         while not self.stop.is_set():
             m = parse_metrics(sh(["thedev-metrics", "--raw"], 5))
             if m:
                 self.metrics = m
+            try:
+                self.soldats, self.dormants = load_soldats(self.cwd, self.equipe)
+                self.live_names = live_sessions()
+            except Exception:
+                pass
             if self.stop.wait(3):
                 break
 
