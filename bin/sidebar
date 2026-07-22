@@ -8,18 +8,22 @@ fichier s'ouvre en plein écran (pane flottant) plutôt que dans la colonne.
 
 Écran d'accueil — sept entrées, chacune à la fois bouton et état lisible :
 
-    1 ←  accueil            ouvre le modal Ctrl+Q (détacher / fermer)
-    2 ⌂  files              arbre du dossier courant
-    3 ⚑  soldats      2 ⚠1  les soldats de l'équipe
-    4 ⧉  sessions           les équipes récentes
-    5 ⓘ  infos              page « infos » de l'accueil, en plein écran
-    6 ⟳  automatisations    page « la garde », en plein écran
-    7 ＋ soldat             ajoute un soldat aside
+    ←  accueil            ouvre le modal Ctrl+Q (détacher / fermer)
+    ⌂  files              arbre du dossier courant
+    ⚑  soldats      2 ⚠1  les soldats de l'équipe
+    ⧉  sessions           les équipes récentes
+    ⓘ  infos              page « infos » de l'accueil, en plein écran
+    ⟳  automatisations    page « la garde », en plein écran
+    ＋ soldat             ajoute un soldat aside
 
 Les listes ne se déplient PAS sous le menu : elles REMPLACENT la colonne, seules,
-et l'entrée 1 devient « ← retour ». Une colonne étroite ne supporte pas deux
-niveaux à l'écran en même temps. Même raison pour les choix : ouvrir une equipe
-passe par une MODALE (lignes sélectionnables + annuler), pas par un dépliage.
+et la première entrée devient « ← retour ». Une colonne étroite ne supporte pas
+deux niveaux à l'écran en même temps. Même raison pour les choix : ouvrir une
+equipe passe par une MODALE (lignes sélectionnables + annuler), pas un dépliage.
+
+La liste des soldats sépare ceux qui occupent VRAIMENT un pane à droite de ceux
+« à réveiller » — conversations terminées, affichées en atténué, qu'un Entrée
+rouvre en `--resume`.
 
 Le bandeau de ressources (fenêtre Claude, RAM, disque, charge, batterie) est en
 bas, TOUJOURS visible, quelle que soit la vue. Source unique : `thedev-metrics`.
@@ -30,7 +34,7 @@ session). Les actions qui frapperaient la session — détacher, tuer, attacher 
 sont seulement AFFICHÉES : la sidebar tourne dans « le camp », un vrai `detach`
 détacherait l'utilisateur. `--live` exécute tout (une fois posée dans le front).
 
-Clavier : ↑/↓ naviguer · Entrée activer · 1 retour · Échap revenir · q quitter
+Clavier : ↑/↓ naviguer · Entrée activer · Échap revenir · q quitter
           → sort de la colonne (vers les soldats) — il n'active RIEN
 Souris  : clic = activer.
 """
@@ -95,31 +99,46 @@ def fresh_sids(path, max_age=1800):
     return out
 
 
-def load_soldats(cwd):
-    """Soldats VIVANTS de cette équipe → [(nom, role, état)].
+def load_soldats(cwd, sess="", dormant_max=12):
+    """Soldats de cette équipe, en deux groupes → (actifs, inactifs).
 
     Registre = ~/.cache/soldats (TSV : id cwd role nom session started ended rc).
-    ended == 0 → toujours ouvert. L'état vient des marqueurs posés par les hooks :
-    waiting (il t'attend, QCM bloquant) prime sur busy (il répond)."""
+
+    ACTIF   = `ended == 0` ET rattaché à CETTE session zellij : il occupe
+              vraiment un pane à droite. L'état vient des marqueurs des hooks —
+              waiting (il t'attend sur un QCM) prime sur busy (il répond).
+    INACTIF = conversation terminée (ou d'une autre session) : plus de pane,
+              mais elle existe toujours et peut être RÉVEILLÉE (--resume).
+              Les plus récentes d'abord, bornées : l'historique d'un vieux
+              projet ferait sinon une liste sans fin."""
     busy, wait = fresh_sids("~/.cache/soldat-busy"), fresh_sids("~/.cache/soldat-waiting")
-    out = []
+    actifs, dormants = [], []
     try:
         with open(os.path.expanduser("~/.cache/soldats")) as f:
             lines = f.read().splitlines()
     except OSError:
-        return out
+        return actifs, dormants
     for line in lines:
         p = line.split("\t")
-        if len(p) < 7 or p[6] != "0":
+        if len(p) < 7:
             continue
         try:
             if os.path.realpath(p[1]) != cwd:
                 continue
         except OSError:
             continue
-        state = "waiting" if p[0] in wait else ("busy" if p[0] in busy else "idle")
-        out.append((p[3] or "claude", p[2], state, p[0]))
-    return out
+        name = p[3] or "claude"
+        if p[6] == "0" and (not sess or p[4] == sess):
+            state = "waiting" if p[0] in wait else ("busy" if p[0] in busy else "idle")
+            actifs.append((name, p[2], state, p[0]))
+        else:
+            try:
+                ended = int(p[6]) or int(p[5])
+            except ValueError:
+                ended = 0
+            dormants.append((name, p[2], ended, p[0]))
+    dormants.sort(key=lambda d: -d[2])
+    return actifs, dormants[:dormant_max]
 
 
 def soldat_pane(sid):
@@ -246,14 +265,17 @@ def parse_metrics(out):
 
 class Sidebar:
     # (touche, icône, libellé, id d'action)
+    # (icône, libellé, id d'action). Pas de numéro : sept entrées se pointent
+    # à la souris ou se parcourent aux flèches, un chiffre devant n'aide pas et
+    # alourdit la colonne.
     ENTRIES = [
-        ("1", "←", "accueil",         "accueil"),
-        ("2", "⌂", "files",           "files"),
-        ("3", "⚑", "soldats",         "soldats"),
-        ("4", "⧉", "sessions",        "sessions"),
-        ("5", "ⓘ", "infos",           "infos"),
-        ("6", "⟳", "automatisations", "autos"),
-        ("7", "＋", "soldat",          "aside"),
+        ("←", "accueil",         "accueil"),
+        ("⌂", "files",           "files"),
+        ("⚑", "soldats",         "soldats"),
+        ("⧉", "sessions",        "sessions"),
+        ("ⓘ", "infos",           "infos"),
+        ("⟳", "automatisations", "autos"),
+        ("＋", "soldat",          "aside"),
     ]
     VIEWS = {"files": "⌂ files", "soldats": "⚑ soldats", "sessions": "⧉ sessions"}
 
@@ -269,7 +291,7 @@ class Sidebar:
         self.expanded = set()   # dossiers dépliés dans l'arbre files
         self.modal = None       # modale de choix ouverte (dict title/opts/sess) ou None
         self.sessions = None    # None = pas encore chargé (thread)
-        self.soldats = load_soldats(self.cwd)
+        self.soldats, self.dormants = load_soldats(self.cwd, self.equipe)
         self.live_names = live_sessions()
         self.metrics = None
         self.stop = threading.Event()
@@ -355,15 +377,14 @@ class Sidebar:
         elif self.view is None:
             R.append(([("  ", 0), (self.equipe, curses.A_BOLD)], None))
             R.append(([("", 0)], None))
-            for key, icon, label, act in self.ENTRIES:
-                segs = [("  %s " % key, self.DIM), ("%s " % icon, self.CYAN),
-                        (label, 0)]
+            for icon, label, act in self.ENTRIES:
+                segs = [("  ", 0), ("%s " % icon, self.CYAN), (label, 0)]
                 segs.extend(self.badge(act))
                 R.append((segs, ("entry", act)))
         else:
-            # Vue liste : la colonne est prise entièrement par la liste, et
-            # l'entrée 1 devient le retour. Le titre rappelle où on est.
-            R.append(([("  1 ", self.DIM), ("← retour", 0),
+            # Vue liste : la colonne est prise entièrement par la liste, et la
+            # première entrée devient le retour. Le titre rappelle où on est.
+            R.append(([("  ", 0), ("← retour", 0),
                        ("   " + self.VIEWS[self.view], self.DIM)], ("back", None)))
             R.append(([("", 0)], None))
             R.extend(getattr(self, "rows_" + self.view)())
@@ -388,8 +409,6 @@ class Sidebar:
         return []
 
     def rows_soldats(self):
-        if not self.soldats:
-            return [([("  aucun soldat", self.DIM)], None)]
         R = []
         for name, role, state, sid in self.soldats:
             dot, col = {"waiting": ("◆", self.CYAN | curses.A_BOLD),
@@ -398,6 +417,20 @@ class Sidebar:
             R.append(([("  %s " % dot, col), (name[:BAND - 12], 0)]
                       + ([("  aside", self.DIM)] if role == "aside" else []),
                       ("soldat", sid)))
+        if not R:
+            R.append(([("  aucun soldat ouvert", self.DIM)], None))
+        # Les conversations terminées de cette equipe : plus de pane, mais elles
+        # existent toujours. Tout en atténué — ce sont des soldats qu'on PEUT
+        # réveiller, pas des soldats présents. Ne pas les confondre d'un coup
+        # d'œil est tout l'intérêt de les séparer.
+        if self.dormants:
+            R.append(([("", 0)], None))
+            R.append(([("  à réveiller", self.DIM)], None))
+            for name, role, ended, sid in self.dormants:
+                segs = [("    ", 0), (name[:BAND - 12], self.DIM)]
+                if ended:
+                    segs.append(("  " + fmt_age(ended), self.DIM))
+                R.append((segs, ("wake", (sid, name))))
         return R
 
     def rows_files(self):
@@ -693,6 +726,21 @@ class Sidebar:
             else:
                 self.status = "✗ soldat introuvable (pane non enregistré)"
             return
+        if what == "wake":
+            sid, name = val
+            if not self.live:
+                self.status = "⌁ réveille « %s »" % name
+                return
+            # `renfort --resume` rouvre la conversation dans la stack des
+            # soldats (l'ancre s'en charge), avec son nom de pane d'origine.
+            r = subprocess.run(["renfort", "--resume", sid, "--name", name],
+                               capture_output=True, text=True, cwd=self.cwd)
+            if r.returncode == 0:
+                self.soldats, self.dormants = load_soldats(self.cwd, self.equipe)
+                self.status = ""
+            else:
+                self.status = "✗ %s" % (r.stderr or "réveil impossible").strip()[:38]
+            return
         if what == "accueil":
             if not self.live:
                 self.status = "⌁ ouvre le modal Ctrl+Q (détacher / fermer)"
@@ -760,7 +808,7 @@ class Sidebar:
                 self.zj("move-focus", "right")
                 continue
             if c == ord("r"):
-                self.soldats = load_soldats(self.cwd)
+                self.soldats, self.dormants = load_soldats(self.cwd, self.equipe)
                 self.live_names = live_sessions()
                 self.sessions = None
                 threading.Thread(target=self._load_sessions, daemon=True).start()
@@ -778,14 +826,6 @@ class Sidebar:
                 if r[1]:
                     self.status = ""
                     self.act(r[1])
-                continue
-            if ord("1") <= c <= ord("7"):
-                self.status = ""
-                if self.view is not None:
-                    if c == ord("1"):        # dans une liste, 1 = retour
-                        self.act(("back", None))
-                else:
-                    self.act(("entry", self.ENTRIES[c - ord("1")][3]))
                 continue
             if c == curses.KEY_MOUSE:
                 try:
