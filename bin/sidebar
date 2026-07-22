@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # @thedev session sidebar — colonne gauche du front : menu cliquable (accueil, files, soldats, sessions…)
-"""sidebar — PROTOTYPE de la colonne gauche de « le front ».
+"""sidebar — la colonne de gauche de « le front ».
 
-Menu cliquable ET clavier, pensé pour vivre dans une colonne étroite (~20 % de
-l'écran), empilé avec le pane `editor` (nvim).
+Menu cliquable ET clavier, dans une colonne étroite (~20 % de l'écran, ~35
+colonnes). Elle y est SEULE : à cette largeur nvim était inéditable, donc un
+fichier s'ouvre en plein écran (pane flottant) plutôt que dans la colonne.
 
 Écran d'accueil — sept entrées, chacune à la fois bouton et état lisible :
 
@@ -17,7 +18,8 @@ l'écran), empilé avec le pane `editor` (nvim).
 
 Les listes ne se déplient PAS sous le menu : elles REMPLACENT la colonne, seules,
 et l'entrée 1 devient « ← retour ». Une colonne étroite ne supporte pas deux
-niveaux à l'écran en même temps.
+niveaux à l'écran en même temps. Même raison pour les choix : ouvrir une equipe
+passe par une MODALE (lignes sélectionnables + annuler), pas par un dépliage.
 
 Le bandeau de ressources (fenêtre Claude, RAM, disque, charge, batterie) est en
 bas, TOUJOURS visible, quelle que soit la vue. Source unique : `thedev-metrics`.
@@ -265,7 +267,7 @@ class Sidebar:
         self.view = None        # None = menu ; sinon files | soldats | sessions
         self.status = ""
         self.expanded = set()   # dossiers dépliés dans l'arbre files
-        self.sub = None         # index de session dont le sous-menu est ouvert
+        self.modal = None       # modale de choix ouverte (dict title/opts/sess) ou None
         self.sessions = None    # None = pas encore chargé (thread)
         self.soldats = load_soldats(self.cwd)
         self.live_names = live_sessions()
@@ -348,7 +350,9 @@ class Sidebar:
         Chaque ligne = (segments, action). `action` None = ligne décorative (non
         sélectionnable). C'est cette liste qui sert AUSSI au clic : y → index."""
         R = []
-        if self.view is None:
+        if self.modal:
+            R = self.rows_modal()
+        elif self.view is None:
             R.append(([("  ", 0), (self.equipe, curses.A_BOLD)], None))
             R.append(([("", 0)], None))
             for key, icon, label, act in self.ENTRIES:
@@ -438,14 +442,28 @@ class Sidebar:
                         else self.pcolor(s["name"])),
                        ("  " + fmt_age(s["mtime"]), self.DIM)],
                       None if here else ("sess", i)))
-            if self.sub == i:
-                for j, (lab, hint) in enumerate((
-                        ("ouvrir ici", "la courante reste vivante"),
-                        ("ouvrir ici + fermer", "tue la courante"),
-                        ("nouvelle instance", "session détachée à part"))):
-                    R.append(([("     → ", self.DIM), (lab, self.GREEN)],
-                              ("open", (i, j))))
-                    R.append(([("       " + hint, self.DIM)], None))
+        return R
+
+    OPEN_MODES = (
+        ("ouvrir ici",          "la courante reste vivante"),
+        ("ouvrir ici + fermer", "tue la courante"),
+        ("nouvelle instance",   "session détachée à part"),
+    )
+
+    def rows_modal(self):
+        """Modale de choix : lignes sélectionnables + annuler.
+
+        Elle REMPLACE le contenu de la colonne au lieu de se déplier sous la
+        session — dans 35 colonnes, une liste imbriquée devient illisible, et on
+        perd de vue ce qu'on est en train de choisir."""
+        m = self.modal
+        R = [([("  ", 0), (m["title"][:BAND - 4], curses.A_BOLD)], None),
+             ([("", 0)], None)]
+        for j, (lab, hint) in enumerate(m["opts"]):
+            R.append(([("  ", 0), (lab, self.GREEN)], ("choose", j)))
+            R.append(([("    " + hint, self.DIM)], None))
+        R.append(([("", 0)], None))
+        R.append(([("  ", 0), ("annuler", self.DIM)], ("choose", None)))
         return R
 
     def metrics_rows(self):
@@ -560,12 +578,12 @@ class Sidebar:
     def act(self, action):
         kind, val = action
         if kind == "back":
-            self.view, self.sub, self.sel, self.off = None, None, 0, 0
+            self.view, self.modal, self.sel, self.off = None, None, 0, 0
             return
         if kind == "entry":
             if val in self.VIEWS:
                 # La liste REMPLACE la colonne — pas de dépliage sous le menu.
-                self.view, self.sub, self.sel, self.off = val, None, 0, 0
+                self.view, self.modal, self.sel, self.off = val, None, 0, 0
                 if val == "sessions" and self.sessions is None:
                     threading.Thread(target=self._load_sessions, daemon=True).start()
                 return
@@ -575,7 +593,18 @@ class Sidebar:
             self.expanded.symmetric_difference_update({val})
             return
         if kind == "sess":
-            self.sub = None if self.sub == val else val
+            # Choisir une equipe ouvre une modale : les 3 façons d'y aller ne
+            # sont pas équivalentes (l'une TUE la session courante), ça mérite
+            # un choix explicite avec une sortie.
+            self.modal = {"title": self.sessions[val]["name"],
+                          "opts": self.OPEN_MODES, "sess": val}
+            self.sel, self.off = 0, 0
+            return
+        if kind == "choose":
+            m, self.modal = self.modal, None
+            self.sel, self.off = 0, 0
+            if val is not None:
+                self.run("open", (m["sess"], val))
             return
         self.run(kind, val)
 
@@ -669,7 +698,7 @@ class Sidebar:
                 self.status = "⌁ ouvre le modal Ctrl+Q (détacher / fermer)"
                 return
             subprocess.run(["zellij", "run", "--floating", "--close-on-exit",
-                            "--name", "quitter", "--width", "52", "--height", "9",
+                            "--name", "quitter", "--width", "54", "--height", "11",
                             "--", "debrief-menu"], capture_output=True)
             return
         if what == "aside":
@@ -690,9 +719,10 @@ class Sidebar:
             return
 
     def back(self):
-        """Échap : referme d'abord le sous-menu, puis la vue, puis quitte."""
-        if self.sub is not None:
-            self.sub = None
+        """Échap : referme d'abord la modale, puis la vue, puis quitte."""
+        if self.modal is not None:
+            self.modal = None
+            self.sel, self.off = 0, 0
         elif self.view is not None:
             self.act(("back", None))
         else:

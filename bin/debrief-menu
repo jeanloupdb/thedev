@@ -1,52 +1,159 @@
-#!/usr/bin/env bash
+#!/usr/bin/env python3
 # @thedev session menu de fermeture propre de la session
-# debrief-menu — modal déclenché par Ctrl+Q dans zellij. Lancé en pane FLOTTANT
-# close_on_exit. d = détacher (session vivante), f = fermer (tuer), autre = annuler.
-#
-# Plus de résumé de fin : le contexte d'équipe remonte EN CONTINU (note/resume/jalon/
-# blocage) au fil du travail, il n'y a rien à capturer à la fermeture. « f » ferme, point.
-#
-# Rendu : minimaliste. Quelques lignes nues, alignées — pas de cadre ni de puce.
+"""debrief-menu — modal déclenché par Ctrl+Q, et par « ← accueil » dans la
+colonne de gauche. Lancé en pane FLOTTANT close_on_exit.
 
-# Résolution FIABLE du nom de session : dans un pane lancé par un keybind, la var
-# $ZELLIJ_SESSION_NAME peut être vide → fallback sur la session marquée (current).
-# CRITIQUE : sans ce fallback, `delete-session --force ""` (nom vide) pouvait
-# viser TOUTES les sessions au lieu de la courante.
-sess="${ZELLIJ_SESSION_NAME:-}"
-[ -z "$sess" ] && sess=$(zellij list-sessions --no-formatting 2>/dev/null | awk '/\(current\)/{print $1; exit}')
+Trois lignes SÉLECTIONNABLES (↑↓ ou clic, Entrée valide) :
+    détacher   la session reste vivante
+    fermer     tuer la session
+    annuler
 
-R=$'\033[0m'; B=$'\033[1m'; D=$'\033[2m'
-G=$'\033[1;32m'; RED=$'\033[1;31m'
+Pas de résumé de fin : le contexte d'équipe remonte EN CONTINU (note / resume /
+jalon / blocage) au fil du travail, il n'y a rien à capturer à la fermeture.
 
-clear
-printf '\n'
-printf '  %sQuitter%s %s%s%s\n\n' "$B" "$R" "$D" "$sess" "$R"
-printf '  %sd%s   détacher   %sla session reste vivante%s\n' "$G" "$R" "$D" "$R"
-printf '  %sf%s   fermer     %stuer la session%s\n' "$RED" "$R" "$D" "$R"
+Rendu minimaliste : quelques lignes nues, alignées — pas de cadre ni de puce.
+`d` / `f` restent des raccourcis directs pour qui les connaît.
+"""
+import curses
+import os
+import subprocess
+import sys
 
-# Ce que « fermer » va couper (missions/soutiens/gardes), aligné sous les descriptions.
-# debrief-impact émet du TSV « <texte_visible>\t<rendu_ANSI> » ; rien si l'equipe est inerte.
-impact=$(debrief-impact "$sess" 2>/dev/null)
-if [ -n "$impact" ]; then
-  while IFS=$'\t' read -r plain ren; do
-    [ -n "$plain" ] || continue
-    printf '      %s\n' "$ren"
-  done <<<"$impact"
-fi
 
-printf '\n  %séchap · annuler%s\n' "$D" "$R"
+def sh(cmd, timeout=4):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=timeout).stdout
+    except Exception:
+        return ""
 
-read -rsn1 key
-case "$key" in
-  d|D) zellij action detach ;;
-  f|F)
-    # FERMER = tuer la session, POINT. Aucun résumé de fin (l'info remonte en continu).
-    # Garde-fou : jamais delete-session sans nom confirmé.
-    if [ -z "$sess" ]; then
-      printf '\n  %sSession introuvable — rien fermé (sécurité).%s\n' "$RED" "$R"; sleep 1.5
-    else
-      zellij delete-session --force "$sess"
-    fi
-    ;;
-  *)   : ;;
-esac
+
+def equipe():
+    """Nom de session FIABLE : dans un pane lancé par un keybind,
+    $ZELLIJ_SESSION_NAME peut être vide → repli sur la session marquée
+    « (current) ». CRITIQUE : sans ce repli, `delete-session --force ""` (nom
+    vide) pouvait viser TOUTES les sessions au lieu de la courante."""
+    n = os.environ.get("ZELLIJ_SESSION_NAME", "").strip()
+    if n:
+        return n
+    for line in sh(["zellij", "list-sessions", "--no-formatting"], 2).splitlines():
+        if "(current)" in line:
+            return line.split()[0]
+    return ""
+
+
+def impact(eq):
+    """Ce que « fermer » va couper (missions, soutiens, gardes).
+    debrief-impact émet du TSV « texte_visible \t rendu_ANSI » ; on ne garde que
+    le texte, la couleur est refaite ici en curses."""
+    if not eq:
+        return []
+    out = []
+    for line in sh(["debrief-impact", eq]).splitlines():
+        plain = line.split("\t")[0].strip()
+        if plain:
+            out.append(plain)
+    return out
+
+
+def main(scr):
+    eq = equipe()
+    hits = impact(eq)
+    curses.use_default_colors()
+    try:
+        curses.curs_set(0)
+    except curses.error:
+        pass
+    curses.init_pair(1, curses.COLOR_GREEN, -1)
+    curses.init_pair(2, curses.COLOR_RED, -1)
+    GREEN, RED, DIM = curses.color_pair(1), curses.color_pair(2), curses.A_DIM
+    SEL = curses.A_REVERSE
+    if curses.COLORS >= 256:
+        try:
+            curses.init_pair(3, 252, 237)
+            SEL = curses.color_pair(3)
+        except curses.error:
+            pass
+    curses.mousemask(curses.ALL_MOUSE_EVENTS)
+    curses.mouseinterval(0)
+    scr.keypad(True)
+
+    # (touche, libellé, description, couleur, décision)
+    opts = [("d", "détacher", "la session reste vivante", GREEN, "detach"),
+            ("f", "fermer",   "tuer la session",          RED,   "kill"),
+            (None, "annuler", "",                         DIM,   None)]
+    sel = 0
+
+    while True:
+        scr.erase()
+        h, w = scr.getmaxyx()
+        ymap = {}
+        y = 1
+        try:
+            scr.addnstr(y, 2, "Quitter", w - 4, curses.A_BOLD)
+            scr.addnstr(y, 10, eq or "?", w - 12, DIM)
+        except curses.error:
+            pass
+        y += 2
+        for i, (_k, label, desc, col, _d) in enumerate(opts):
+            ymap[y] = i
+            a = SEL if i == sel else 0
+            try:
+                if i == sel:
+                    scr.addstr(y, 0, " " * w, SEL)
+                scr.addnstr(y, 2, label, w - 4, (col | curses.A_BOLD) | a)
+                if desc:
+                    scr.addnstr(y, 14, desc, w - 16, DIM | a)
+            except curses.error:
+                pass
+            y += 1
+            # L'impact se lit sous « fermer » : c'est ce que CE choix va couper.
+            if _d == "kill":
+                for t in hits:
+                    try:
+                        scr.addnstr(y, 6, t, w - 8, RED)
+                    except curses.error:
+                        pass
+                    y += 1
+        scr.refresh()
+
+        try:
+            c = scr.getch()
+        except KeyboardInterrupt:
+            return None
+        if c in (27, ord("q")):
+            return None
+        if c in (curses.KEY_UP, ord("k")):
+            sel = (sel - 1) % len(opts)
+        elif c in (curses.KEY_DOWN, ord("j")):
+            sel = (sel + 1) % len(opts)
+        elif c in (curses.KEY_ENTER, 10, 13):
+            return opts[sel][4]
+        elif c in (ord("d"), ord("D")):
+            return "detach"
+        elif c in (ord("f"), ord("F")):
+            return "kill"
+        elif c == curses.KEY_MOUSE:
+            try:
+                _, _, my, _, bs = curses.getmouse()
+            except curses.error:
+                continue
+            if not (bs & (curses.BUTTON1_CLICKED | curses.BUTTON1_PRESSED)):
+                continue
+            if my in ymap:
+                sel = ymap[my]
+                return opts[sel][4]
+
+
+if __name__ == "__main__":
+    eq_name = equipe()
+    decision = curses.wrapper(main)
+    if decision == "detach":
+        subprocess.run(["zellij", "action", "detach"])
+    elif decision == "kill":
+        # FERMER = tuer la session, POINT. Garde-fou : jamais delete-session
+        # sans nom confirmé (un nom vide viserait toutes les sessions).
+        if not eq_name:
+            sys.stderr.write("Session introuvable — rien fermé (sécurité).\n")
+            sys.exit(1)
+        subprocess.run(["zellij", "delete-session", "--force", eq_name])
