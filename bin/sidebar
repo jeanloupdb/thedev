@@ -38,7 +38,8 @@ session). Les actions qui frapperaient la session — détacher, tuer, attacher 
 sont seulement AFFICHÉES : la sidebar tourne dans « le camp », un vrai `detach`
 détacherait l'utilisateur. `--live` exécute tout (une fois posée dans le front).
 
-Clavier : ↑/↓ naviguer · Entrée activer · Échap revenir · q quitter
+Clavier : ↑/↓ naviguer · Entrée activer · Échap revenir d'un cran · q quitter
+          Échap ne QUITTE jamais : la colonne est permanente dans le front.
           → sort de la colonne (vers les soldats) — il n'active RIEN
 Souris  : clic = activer.
 """
@@ -827,15 +828,16 @@ class Sidebar:
             return
 
     def back(self):
-        """Échap : referme d'abord la modale, puis la vue, puis quitte."""
+        """Remonte d'un cran : d'abord la modale, puis la vue.
+
+        Ne QUITTE jamais. La colonne est un élément permanent du front — la
+        fermer par mégarde avec Échap (le réflexe pour « annuler ») laisserait
+        un pane vide sans moyen évident de la rappeler. Seul `q` sort."""
         if self.modal is not None:
             self.modal = None
             self.sel, self.off = 0, 0
         elif self.view is not None:
             self.act(("back", None))
-        else:
-            return True
-        return False
 
     # ---------- boucle ----------
 
@@ -854,8 +856,7 @@ class Sidebar:
             if c == ord("q"):
                 return
             if c == 27:
-                if self.back():
-                    return
+                self.back()
                 continue
             if c == curses.KEY_LEFT:
                 self.back()

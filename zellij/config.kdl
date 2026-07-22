@@ -169,9 +169,11 @@ keybinds clear-defaults=true {
         // Claude, parc, usage). Il remplace l'ancien mini-modal « top 10 RAM » :
         // une seule page de ressources, la même que celle de l'accueil et celle
         // de la colonne de gauche. Retour/Échap referme le pane.
+        // ⚠ Les arguments d'un Run de KEYBIND sont POSITIONNELS. Un bloc
+        // `args "…"` (syntaxe des layouts) passe le `setup --check` mais est
+        // ignoré à l'exécution — la commande partait sans `--page`.
         bind "Alt i" {
-            Run "etat-major" {
-                args "--page" "infos"
+            Run "etat-major" "--page" "infos" {
                 floating true
                 close_on_exit true
                 name "infos"
