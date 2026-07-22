@@ -28,6 +28,10 @@ rouvre en `--resume`.
 Le bandeau de ressources (fenêtre Claude, RAM, disque, charge, batterie) est en
 bas, TOUJOURS visible, quelle que soit la vue. Source unique : `thedev-metrics`.
 
+La colonne ne confirme RIEN par écrit : ouvrir un fichier, une page ou un soldat
+se voit à l'écran, l'annoncer en plus est du bruit. Une ligne n'apparaît en bas
+que si quelque chose a ÉCHOUÉ.
+
 MODE PROTOTYPE (défaut) : navigation, données et rendu sont RÉELS ; `infos` et
 `automatisations` s'ouvrent pour de bon (un pane flottant ne touche pas la
 session). Les actions qui frapperaient la session — détacher, tuer, attacher —
@@ -696,9 +700,9 @@ class Sidebar:
              "--width", "100%", "--height", "100%", "--name", name,
              "--cwd", self.cwd, "--", em, "--page", page, self.cwd],
             capture_output=True, text=True)
-        self.status = ("↑ %s en plein écran — Retour pour revenir" % name
-                       if r.returncode == 0 else
-                       "✗ %s : %s" % (name, (r.stderr or "échec").strip()[:40]))
+        # Rien à annoncer quand ça marche : l'écran s'ouvre, ça se voit.
+        if r.returncode != 0:
+            self.status = "✗ %s : %s" % (name, (r.stderr or "échec").strip()[:40])
 
     def zj(self, *args):
         """`zellij action …`, silencieux. True si la commande a abouti."""
@@ -715,14 +719,13 @@ class Sidebar:
         referme, on retombe sur le front. Le flottant évite au passage de
         polluer une stack — `zellij action edit` créerait un pane là où est le
         focus, c'est-à-dire ici, dans la colonne de gauche."""
-        rel = os.path.relpath(path, self.cwd)
         r = subprocess.run(
             ["zellij", "run", "--floating", "--close-on-exit",
              "--width", "100%", "--height", "100%", "--name", os.path.basename(path),
              "--cwd", self.cwd, "--", "nvim", path],
             capture_output=True, text=True)
-        self.status = ("→ %s" % rel if r.returncode == 0
-                       else "✗ %s" % (r.stderr or "échec").strip()[:38])
+        if r.returncode != 0:
+            self.status = "✗ %s" % (r.stderr or "échec").strip()[:38]
 
     def switch_equipe(self, idx, mode):
         """Les trois façons d'ouvrir une autre equipe.
@@ -736,9 +739,8 @@ class Sidebar:
         if mode == 2:
             r = subprocess.run(["team-open", "local", s["name"], "--dir", s["cwd"]],
                                capture_output=True, text=True)
-            self.status = ("↗ « %s » ouverte à côté (détachée)" % s["name"]
-                           if r.returncode == 0
-                           else "✗ %s" % (r.stderr or "échec").strip()[:38])
+            if r.returncode != 0:
+                self.status = "✗ %s" % (r.stderr or "échec").strip()[:38]
             return
         rel = os.path.expanduser("~/.cache/thedev/relais")
         os.makedirs(os.path.dirname(rel), exist_ok=True)
@@ -800,7 +802,7 @@ class Sidebar:
             if r.returncode == 0:
                 # Le nouveau soldat ne s'inscrit au registre qu'à son
                 # SessionStart : `r` pour le voir arriver dans la liste.
-                self.status = "＋ soldat lancé"
+                self.status = ""
             else:
                 self.status = "✗ %s" % (r.stderr or "échec").strip()[:38]
             return
