@@ -83,6 +83,42 @@ def equipe_name():
     return os.path.basename(os.getcwd()) or "?"
 
 
+def equipe_cwd(sess, fallback):
+    """Dossier de l'EQUIPE, pas simplement `getcwd()`.
+
+    Tout ce que la colonne montre (soldats présents, soldats à réveiller, arbre
+    des fichiers) est relatif à un dossier. Le prendre du process est fragile :
+    lancée depuis ailleurs — un pane du camp, un shell — la colonne afficherait
+    les soldats d'un AUTRE projet, ce qui se lit comme une liste globale.
+    On le déduit donc du registre : le dossier de la session zellij courante,
+    d'après le soldat le plus récemment démarré. Repli sur `getcwd()` si
+    l'equipe n'a encore aucun soldat inscrit."""
+    if not sess:
+        return fallback
+    best, best_t = "", -1
+    try:
+        with open(os.path.expanduser("~/.cache/soldats")) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return fallback
+    for line in lines:
+        p = line.split("\t")
+        if len(p) < 6 or p[4] != sess:
+            continue
+        try:
+            t = int(p[5])
+        except ValueError:
+            continue
+        if t > best_t:
+            best, best_t = p[1], t
+    if not best:
+        return fallback
+    try:
+        return os.path.realpath(best)
+    except OSError:
+        return fallback
+
+
 def fresh_sids(path, max_age=1800):
     """Ids de soldats marqués dans un répertoire-drapeau, encore frais (mtime)."""
     out, now = set(), time.time()
@@ -282,8 +318,8 @@ class Sidebar:
     def __init__(self, scr, live=False):
         self.scr = scr
         self.live = live
-        self.cwd = os.path.realpath(os.getcwd())
         self.equipe = equipe_name()
+        self.cwd = equipe_cwd(self.equipe, os.path.realpath(os.getcwd()))
         self.sel = 0
         self.off = 0            # première ligne visible (défilement)
         self.view = None        # None = menu ; sinon files | soldats | sessions
