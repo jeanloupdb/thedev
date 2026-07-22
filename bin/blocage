@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# @thedev commandement blocages d'equipe : points ouverts qui s'ouvrent et se ferment
+# blocage — le « en attente » d'une equipe : ce qui est COINCE. Le temps qu'un chef
+# veut voir en premier (rouge). Complementaire de `note` (present) et `jalon` (passe).
+#
+# Modele : log APPEND-ONLY par equipe (comme jalon). Ouvrir/resoudre = evenements
+# ajoutes en >> (atomique <PIPE_BUF → pas de lock). N'IMPORTE QUEL soldat peut
+# resoudre le blocage d'un autre (c'est le but : on debloque l'equipe). Historique
+# gratuit : qui a ouvert/resolu, quand.
+#
+#   blocage add "<texte>"          ouvre un blocage (signe + horodate), renvoie l'id
+#   blocage [ls] [--all]           liste les blocages OUVERTS (vieux d'abord) ; --all = + resolus
+#   blocage resolve <id> [<id>…]   ferme un/des blocage(s)  (alias: done, ok, close)
+#   blocage --data                 TSV brut des OUVERTS (epoch\tsig\tid\ttexte) pour remontee
+#
+# Un blocage ouvert depuis longtemps = alerte qui remonte toute seule (tri par age).
+# Stockage : $ROOT/blocage/<node_key>.md, lignes « epoch<TAB>sig<TAB>etat<TAB>id<TAB>texte »
+# (etat = open|done). L'etat courant se reconstruit : ouvert = un `open` sans `done`.
+set -u
+
+ROOT="$HOME/.cache/thedev/command"
+MAXL="${THEDEV_BLOCAGE_LINE:-240}"
+
+equipe_name()  { printf '%s' "${ZELLIJ_SESSION_NAME:-$(basename "$(pwd -P)")}"; }
+machine_name() {
+  local m; m="$(head -n1 "$HOME/.config/dev-vps" 2>/dev/null)"
+  [ -n "$m" ] || m="$(hostname -s)"
+  printf '%s' "$m"
+}
+node_key() {
+  printf '%s__%s' \
+    "$(machine_name | tr -c 'A-Za-z0-9._-' '_')" \
+    "$(equipe_name  | tr -c 'A-Za-z0-9._-' '_')"
+}
+my_sid() { printf '%s' "${CLAUDE_CODE_SESSION_ID:-${USER:-anon}-local}"; }
+sig_of() { printf '%s' "${1:0:6}"; }
+
+BFILE="$ROOT/blocage/$(node_key).md"
+_now() { date +%s; }
+_sanitize() { printf '%s' "$1" | tr '\t\n\r' '   ' | sed 's/  *$//'; }
+_nextid() {
+  [ -f "$BFILE" ] || { printf '1'; return; }
+  awk -F'\t' 'BEGIN{m=0} $3=="open"{if($4+0>m)m=$4+0} END{print m+1}' "$BFILE"
+}
+
+# age humain d'un epoch (m/h/j)
+_ago() {
+  local d=$(( $(_now) - ${1:-0} ))
+  if [ "$d" -lt 3600 ]; then printf '%dm' $(( d/60 ))
+  elif [ "$d" -lt 86400 ]; then printf '%dh' $(( d/3600 ))
+  else printf '%dj' $(( d/86400 )); fi
+}
+
+cmd_add() {
+  local txt; txt="$(_sanitize "$*")"
+  [ -n "$txt" ] || { echo "usage: blocage add \"<texte>\"" >&2; return 1; }
+  if [ "${#txt}" -gt "$MAXL" ]; then
+    printf '✗ trop long (%s > %s car.).\n' "${#txt}" "$MAXL" >&2; return 3
+  fi
+  mkdir -p "$(dirname "$BFILE")" || return 0
+  # Anti-conflit : plusieurs soldats peuvent `add` en même temps → l'id (max+1) doit être
+  # attribué sous verrou, sinon deux blocages prennent le même. flock borné (jamais de
+  # hang) ; en cas de timeout on procède quand même (collision quasi nulle, blocages rares).
+  exec 9>"$BFILE.lock" 2>/dev/null && flock -w 3 9 2>/dev/null
+  local id; id="$(_nextid)"
+  printf '%s\t%s\topen\t%s\t%s\n' "$(_now)" "$(sig_of "$(my_sid)")" "$id" "$txt" >> "$BFILE"
+  flock -u 9 2>/dev/null || true
+  printf '⚠ blocage #%s ouvert.\n' "$id"
+}
+
+cmd_resolve() {
+  [ $# -ge 1 ] && [ -f "$BFILE" ] || { echo "usage: blocage resolve <id> [<id>…]" >&2; return 1; }
+  local sig; sig="$(sig_of "$(my_sid)")"
+  local id done_any=0
+  for id in "$@"; do
+    case "$id" in *[!0-9]*) continue ;; esac
+    # ouvert actuellement ?
+    if awk -F'\t' -v id="$id" '$3=="open"&&$4==id{o=1} $3=="done"&&$4==id{o=0} END{exit !o}' "$BFILE"; then
+      printf '%s\t%s\tdone\t%s\t\n' "$(_now)" "$sig" "$id" >> "$BFILE"
+      printf '✓ blocage #%s résolu.\n' "$id"; done_any=1
+    else
+      printf '✗ #%s : inconnu ou déjà résolu.\n' "$id" >&2
+    fi
+  done
+  [ "$done_any" = 1 ]
+}
+
+# reconstruit l'etat : emet « openflag<TAB>id<TAB>epoch_ouv<TAB>who<TAB>texte » par blocage
+_state() {
+  [ -f "$BFILE" ] || return 0
+  awk -F'\t' '
+    $3=="open" && $4!="" { op[$4]=1; when[$4]=$1; who[$4]=$2; txt[$4]=$5 }
+    $3=="done" && $4!="" { op[$4]=0 }
+    END { for (id in txt) if (id != "") printf "%d\t%s\t%s\t%s\t%s\n", op[id], id, when[id], who[id], txt[id] }
+  ' "$BFILE"
+}
+TAB="$(printf '\t')"
+
+cmd_ls() {
+  local all=0; case "${1:-}" in --all|-a) all=1 ;; esac
+  printf '── blocages · %s (%s) ──\n' "$(equipe_name)" "$(machine_name)"
+  local rows; rows="$(_state)"
+  [ -n "$rows" ] || { echo "(aucun blocage)"; return 0; }
+  local now; now="$(_now)"
+  # OUVERTS, du plus vieux au plus recent — formatage 100% awk (pas de read/IFS)
+  local open_out
+  open_out="$(printf '%s\n' "$rows" | awk -F'\t' '$1==1' | sort -t "$TAB" -k3,3n \
+    | awk -F'\t' -v now="$now" '{
+        d=now-$3; if(d<3600)a=int(d/60)"m"; else if(d<86400)a=int(d/3600)"h"; else a=int(d/86400)"j";
+        printf "  ⚠ #%-3s  ⏳ %-4s  %-8.8s  %s\n",$2,a,$4,$5 }')"
+  if [ -n "$open_out" ]; then printf '%s\n' "$open_out"; else echo "(aucun blocage ouvert 🎉)"; fi
+  if [ "$all" = 1 ]; then
+    printf '%s\n' "$rows" | awk -F'\t' '$1==0' | sort -t "$TAB" -k3,3n \
+      | awk -F'\t' '{ printf "  ✓ #%-3s  %-8.8s  %s\n",$2,$4,$5 }'
+  fi
+}
+
+cmd_data() {   # OUVERTS seulement, TSV « epoch_ouv\tsig\tid\ttexte », vieux d'abord
+  _state | awk -F'\t' -v OFS='\t' '$1==1{print $3,$4,$2,$5}' | sort -t "$TAB" -k1,1n
+}
+
+cmd="${1:-}"; shift 2>/dev/null || true
+case "$cmd" in
+  add)                 cmd_add "$@" ;;
+  resolve|done|ok|close) cmd_resolve "$@" ;;
+  ls|list)             cmd_ls "$@" ;;
+  --all|-a)            cmd_ls --all ;;
+  --data)              cmd_data ;;
+  "")                  cmd_ls ;;
+  help|-h|--help)      sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "usage: blocage add|ls|resolve|--data …  (blocage help)" >&2; exit 1 ;;
+esac

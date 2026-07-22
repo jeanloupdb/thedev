@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+# @thedev commandement timeline d'equipe : jalons manuels ⊕ commits git (auto)
+# jalon — la TIMELINE d'une equipe : le « passe » (append-only, horodate, signe).
+# Voir plans/commandement.md. Complementaire de `note` (le « present », mutable).
+#
+# Deux sources FUSIONNEES a la lecture, triees par date :
+#   - jalons MANUELS : ce que le soldat pose explicitement (decision, demo, incident,
+#     ce qui n'est pas un commit). Stockes append-only dans le cache.
+#   - commits GIT : derives a la volee de `git log` (source de verite, zero hook,
+#     toujours a jour). Le gros du volume vient de la gratuitement.
+#
+# Propriete de remontee : fusionner deux timelines = trier par epoch. La timeline
+# d'un chef = merge des `jalon --data` de ses enfants, bornee a la recence.
+#
+#   jalon "<texte>"             pose un jalon manuel (signe + horodate auto)
+#   jalon [ls] [-n N] [--cwd C] affiche la timeline fusionnee (defaut : N derniers)
+#   jalon --data [-n N] [--cwd C]  TSV brut trie (epoch\tsource\tqui\ttexte) pour remontee
+#   jalon mine                  seulement MES jalons manuels
+#
+# Stockage manuel : $ROOT/timeline/<node_key>.md, lignes « epoch<TAB>.<TAB>sig<TAB>texte ».
+# Append atomique (<PIPE_BUF) → pas de lock malgre plusieurs soldats. Jamais edite.
+set -u
+
+ROOT="$HOME/.cache/thedev/command"
+NSHOW="${THEDEV_JALON_SHOW:-40}"     # entrees affichees par defaut (les N dernieres)
+GITCAP="${THEDEV_JALON_GITCAP:-100}" # commits git max relus
+MAXL="${THEDEV_JALON_LINE:-200}"     # caracteres max d'un jalon manuel
+
+equipe_name()  { printf '%s' "${ZELLIJ_SESSION_NAME:-$(basename "$(pwd -P)")}"; }
+machine_name() {
+  local m; m="$(head -n1 "$HOME/.config/dev-vps" 2>/dev/null)"
+  [ -n "$m" ] || m="$(hostname -s)"
+  printf '%s' "$m"
+}
+node_key() {
+  printf '%s__%s' \
+    "$(machine_name | tr -c 'A-Za-z0-9._-' '_')" \
+    "$(equipe_name  | tr -c 'A-Za-z0-9._-' '_')"
+}
+my_sid() { printf '%s' "${CLAUDE_CODE_SESSION_ID:-${USER:-anon}-local}"; }
+sig_of() { printf '%s' "${1:0:6}"; }
+
+TLFILE="$ROOT/timeline/$(node_key).md"
+
+# horloge : pas de Date.now() interdit ici (bash) → date(1) est OK.
+_now() { date +%s; }
+_sanitize() { printf '%s' "$1" | tr '\t\n\r' '   ' | sed 's/  *$//'; }
+
+# --- pose d'un jalon manuel ---------------------------------------------------
+cmd_add() {
+  local txt; txt="$(_sanitize "$*")"
+  [ -n "$txt" ] || { echo "usage: jalon \"<texte>\"" >&2; return 1; }
+  if [ "${#txt}" -gt "$MAXL" ]; then
+    printf '✗ jalon trop long (%s > %s car.). Un jalon = une ligne.\n' "${#txt}" "$MAXL" >&2
+    return 3
+  fi
+  mkdir -p "$(dirname "$TLFILE")" || return 0
+  printf '%s\t.\t%s\t%s\n' "$(_now)" "$(sig_of "$(my_sid)")" "$txt" >> "$TLFILE"
+  printf '✓ jalon posé.\n'
+}
+
+# --- sources ------------------------------------------------------------------
+_manual_lines() { [ -f "$TLFILE" ] && cat "$TLFILE" 2>/dev/null; }
+_git_lines() {   # epoch \t git \t <auteur> \t <sujet>
+  local cwd="$1"
+  git -C "$cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+  git -C "$cwd" log --no-merges -n "$GITCAP" \
+      --format='%ct%x09git%x09%an%x09%s' 2>/dev/null
+}
+# evenements blocage (ouvert / resolu) — deja dates, projetes dans le fil
+_bloc_lines() {
+  local bf="$ROOT/blocage/$(node_key).md"; [ -f "$bf" ] || return 0
+  awk -F'\t' '
+    $3=="open" { printf "%s\tbloc\t%s\t⚠ blocage : %s\n",$1,$2,$5 }
+    $3=="done" { printf "%s\tbloc\t%s\t✓ blocage #%s résolu\n",$1,$2,$4 }
+  ' "$bf"
+}
+# changements du resume d'equipe (evolution du headline) — depuis resume-log
+_resume_lines() {
+  local rl="$ROOT/resume-log/$(node_key).md"; [ -f "$rl" ] || return 0
+  awk -F'\t' '{ printf "%s\tresume\t%s\t≡ résumé : %s\n",$1,$2,$3 }' "$rl"
+}
+
+# flux fusionne trie (epoch croissant), borne aux N derniers si $1>0
+_merged() {   # $1=cwd $2=limit(0=tout)
+  local cwd="$1" lim="$2"
+  { _manual_lines "$cwd"; _git_lines "$cwd"; _bloc_lines; _resume_lines; } \
+    | awk -F'\t' 'NF>=4' \
+    | sort -t "$(printf '\t')" -k1,1n \
+    | { if [ "$lim" -gt 0 ]; then tail -n "$lim"; else cat; fi; }
+}
+
+# --- rendu --------------------------------------------------------------------
+cmd_ls() {
+  local cwd lim="$NSHOW"
+  cwd="$(pwd -P)"
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -n) lim="${2:-$lim}"; shift 2 ;;
+      --all) lim=0; shift ;;
+      --cwd) cwd="${2:-$cwd}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  printf '── timeline · %s (%s) ──\n' "$(equipe_name)" "$(machine_name)"
+  local out; out="$(_merged "$cwd" "$lim")"
+  [ -n "$out" ] || { echo "(vide — aucun jalon, aucun commit)"; return 0; }
+  # formatage : date lisible + tag de source
+  printf '%s\n' "$out" | while IFS="$(printf '\t')" read -r ep src who txt; do
+    local d tag
+    d="$(date -d "@$ep" '+%Y-%m-%d %H:%M' 2>/dev/null || printf '%s' "$ep")"
+    case "$src" in git) tag="git" ;; bloc) tag="blocage" ;; resume) tag="résumé" ;; *) tag="jalon" ;; esac
+    printf '%s  %-8.8s  %s  · %s\n' "$d" "$who" "$txt" "$tag"
+  done
+}
+
+cmd_data() {   # TSV brut trie, pour la remontee (un chef merge les --data des enfants)
+  local cwd lim="$NSHOW"
+  cwd="$(pwd -P)"
+  while [ $# -gt 0 ]; do
+    case "$1" in -n) lim="${2:-$lim}"; shift 2 ;; --all) lim=0; shift ;; --cwd) cwd="${2:-$cwd}"; shift 2 ;; *) shift ;; esac
+  done
+  _merged "$cwd" "$lim"
+}
+
+cmd_mine() {
+  [ -f "$TLFILE" ] || { echo "(aucun jalon manuel)"; return 0; }
+  local me; me="$(sig_of "$(my_sid)")"
+  awk -F'\t' -v me="$me" '$2=="." && $3==me' "$TLFILE" \
+    | while IFS="$(printf '\t')" read -r ep src who txt; do
+        printf '%s  %s\n' "$(date -d "@$ep" '+%Y-%m-%d %H:%M' 2>/dev/null || printf '%s' "$ep")" "$txt"
+      done
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  ls|list) shift; cmd_ls "$@" ;;
+  --data)  shift; cmd_data "$@" ;;
+  mine)    shift; cmd_mine ;;
+  -n|--all|--cwd) cmd_ls "$@" ;;                 # `jalon -n 10` sans « ls »
+  ""|help|-h|--help)
+    [ "$cmd" = "" ] && { cmd_ls; exit 0; }        # `jalon` nu = la timeline
+    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
+  --*) echo "usage: jalon \"<texte>\" | jalon ls|--data|mine" >&2; exit 1 ;;
+  *) cmd_add "$@" ;;                              # tout le reste = poser un jalon
+esac

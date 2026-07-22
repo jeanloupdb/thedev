@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# @thedev commandement resume d'equipe : LE headline partage qui remonte au chef
+# resume — la description de soi d'une equipe : un petit resume PARTAGE que n'importe
+# quel soldat peut modifier. C'est ce que le chef voit pour chaque equipe (le headline
+# de la facade). Voir plans/commandement.md.
+#
+# Recursif : chaque noeud a UN resume (sa description de soi). Qui l'ecrit change :
+#   equipe → co-ecrit par ses SOLDATS (collectif, pas de chef unique)
+#   chef   → ecrit par la session chef elle-meme (le « moi.md »)
+# Un chef empile les resumes (bornes) de ses enfants → borne.
+#
+#   resume                 affiche le resume courant (+ qui / quand)
+#   resume set "<texte>"   le remplace (n'importe quel soldat), borne
+#   resume --data          le corps brut, replie sur une ligne (pour la facade du chef)
+#
+# UN fichier partage par equipe (contrairement a `note`, 1/soldat). Petit + rare →
+# ecriture ATOMIQUE (temp + mv), dernier qui ecrit gagne, pas de lock. On trace le
+# dernier editeur + l'heure. Stockage : $ROOT/resume/<node_key>.md, 1re ligne meta
+# « epoch<TAB>sig », le reste = corps.
+set -u
+
+ROOT="$HOME/.cache/thedev/command"
+MAXB="${THEDEV_RESUME_MAX:-400}"     # taille max du corps (c'est un RESUME, pas un journal)
+
+equipe_name()  { printf '%s' "${ZELLIJ_SESSION_NAME:-$(basename "$(pwd -P)")}"; }
+machine_name() {
+  local m; m="$(head -n1 "$HOME/.config/dev-vps" 2>/dev/null)"
+  [ -n "$m" ] || m="$(hostname -s)"
+  printf '%s' "$m"
+}
+node_key() {
+  printf '%s__%s' \
+    "$(machine_name | tr -c 'A-Za-z0-9._-' '_')" \
+    "$(equipe_name  | tr -c 'A-Za-z0-9._-' '_')"
+}
+my_sid() { printf '%s' "${CLAUDE_CODE_SESSION_ID:-${USER:-anon}-local}"; }
+sig_of() { printf '%s' "${1:0:6}"; }
+name_of() { reg-soldat get "$1" 2>/dev/null | cut -f4 | sed 's/^◆ //'; }
+
+RFILE="$ROOT/resume/$(node_key).md"
+_now() { date +%s; }
+_ago() {
+  local d=$(( $(_now) - ${1:-0} ))
+  if [ "$d" -lt 3600 ]; then printf '%dm' $(( d/60 ))
+  elif [ "$d" -lt 86400 ]; then printf '%dh' $(( d/3600 ))
+  else printf '%dj' $(( d/86400 )); fi
+}
+_meta_epoch() { head -n1 "$RFILE" 2>/dev/null | cut -f1; }
+_meta_sig()   { head -n1 "$RFILE" 2>/dev/null | cut -f2; }
+_body()       { [ -f "$RFILE" ] && tail -n +2 "$RFILE" 2>/dev/null; }
+
+cmd_set() {
+  # extrait un éventuel --force, le reste = le texte
+  local force=0 args=()
+  local a; for a in "$@"; do case "$a" in --force|-f) force=1 ;; *) args+=("$a") ;; esac; done
+  local txt; txt="$(printf '%s' "${args[*]}" | sed 's/[[:space:]]*$//')"
+  [ -n "$txt" ] || { echo "usage: resume set [--force] \"<texte>\"" >&2; return 1; }
+  local n="${#txt}"
+  if [ "$n" -gt "$MAXB" ]; then
+    printf '✗ résumé trop long (%s > %s car.). C’est un RÉSUMÉ : raccourcis.\n' "$n" "$MAXB" >&2
+    return 3
+  fi
+  mkdir -p "$(dirname "$RFILE")" || return 0
+  local mysig; mysig="$(sig_of "$(my_sid)")"
+  # Anti-conflit : le résumé est PARTAGÉ. On sérialise l'écriture (flock borné) et on
+  # ajoute une garde optimiste — si un AUTRE soldat vient d'écrire (< 10 s), on refuse
+  # d'écraser sa modif : relis d'abord. `--force` outrepasse.
+  exec 9>"$RFILE.lock" 2>/dev/null && flock -w 3 9 2>/dev/null
+  local cur_ep cur_sig; cur_ep="$(_meta_epoch)"; cur_sig="$(_meta_sig)"
+  if [ "$force" = 0 ] && [ -n "$cur_ep" ] && [ "$cur_sig" != "$mysig" ] \
+       && [ $(( $(_now) - cur_ep )) -lt 10 ]; then
+    printf '⚠ un autre soldat (%s) vient de modifier le résumé il y a %ss. Relis « resume », puis réessaie (ou resume set --force).\n' \
+      "$cur_sig" "$(( $(_now) - cur_ep ))" >&2
+    return 1
+  fi
+  local now; now="$(_now)"
+  local tmp="$RFILE.$$.tmp"
+  { printf '%s\t%s\n' "$now" "$mysig"; printf '%s\n' "$txt"; } > "$tmp" \
+    && mv -f "$tmp" "$RFILE"                       # remplacement atomique (le « courant »)
+  # Historique daté (append-only) : garde l'évolution du headline pour la timeline.
+  # Le corps est replié sur une ligne (pas de tab/newline) → une ligne = un changement.
+  local flat; flat="$(printf '%s' "$txt" | tr '\t\n\r' '   ' | sed 's/  */ /g; s/ *$//')"
+  mkdir -p "$ROOT/resume-log" 2>/dev/null \
+    && printf '%s\t%s\t%s\n' "$now" "$mysig" "$flat" >> "$ROOT/resume-log/$(node_key).md"
+  flock -u 9 2>/dev/null || true
+  printf '✓ résumé de l’équipe mis à jour (%s/%s car.).\n' "$n" "$MAXB"
+}
+
+cmd_show() {
+  printf '── résumé · %s (%s) ──\n' "$(equipe_name)" "$(machine_name)"
+  if [ ! -s "$RFILE" ]; then
+    echo "(pas encore de résumé — resume set \"<état de l’équipe en une phrase>\")"; return 0
+  fi
+  _body
+  local ep sg nm; ep="$(_meta_epoch)"; sg="$(_meta_sig)"; nm="$(name_of "$sg" 2>/dev/null)"
+  printf '  · à jour il y a %s%s\n' "$(_ago "$ep")" "${nm:+ · $nm}"
+}
+
+cmd_data() {   # corps replie sur une ligne, pour la facade du chef (une ligne/equipe)
+  _body | tr '\n' ' ' | sed 's/  */ /g; s/ *$//'
+}
+
+# brouillon pour tuer la friction : le soldat AJUSTE au lieu de composer de zéro.
+# Source zéro-IA : le resume actuel + les derniers sujets de commit du dossier courant.
+cmd_suggest() {
+  local cwd; cwd="$(pwd -P)"
+  local cur commits
+  cur="$(_body 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g; s/ *$//')"
+  commits="$(git -C "$cwd" log --no-merges -n 3 --format='%s' 2>/dev/null | awk 'NR>1{printf " · "} {printf "%s",$0} END{if(NR)print ""}')"
+  echo "brouillon — ajuste puis : resume set \"…\""
+  [ -n "$cur" ]     && printf '  actuel          : %s\n' "$cur"
+  [ -n "$commits" ] && printf '  activité récente : %s\n' "$commits"
+  [ -z "$cur$commits" ] && echo "  (rien à suggérer — pas de resume ni de commits récents)"
+}
+
+cmd="${1:-}"; shift 2>/dev/null || true
+case "$cmd" in
+  set|edit)       cmd_set "$@" ;;
+  suggest|--suggest) cmd_suggest ;;
+  --data)         cmd_data ;;
+  show|ls|"")     cmd_show ;;
+  help|-h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "usage: resume | resume set \"...\" | resume --data" >&2; exit 1 ;;
+esac

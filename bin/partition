@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# @thedev commandement partition : range les équipes d'une machine en domaines par thème
+# partition — quand une machine déborde (> span équipes), regroupe ses équipes en ≤ span
+# DOMAINES thématiques, bien nommés. C'est la SEULE étape intelligente de l'arbre.
+#
+# Séparation nette :
+#   - la DÉCISION (le regroupement) est faite par le CLAUDE qui lance `partition apply`
+#     (intelligence sur l'ABONNEMENT, interactif — jamais `claude -p`).
+#   - ce binaire ne fait que fournir la MATIÈRE (`prep`) et l'ÉCRITURE SÛRE (`apply` :
+#     verrou par nœud + re-check du snapshot). Aucun LLM appelé ici.
+#
+# Résultat = un OVERRIDE de domaine par équipe : grouping/<clé> = <domaine>. Non intrusif
+# (n'édite pas les repos projet), lu par `arbre` (prime sur le `domaine:` déclaré), et
+# remonté au sommet comme le reste. Self-clearing : si l'ensemble d'équipes retombe
+# sous le span, l'override reste juste inoffensif.
+#
+#   partition            (= status) : la machine déborde-t-elle ? état courant
+#   partition prep       imprime la matière (clé · nom · résumé) + fige un snapshot
+#   partition apply      lit « clé<TAB>domaine » (stdin) → écrit les domaines
+#                        (verrou + refuse si l'ensemble d'équipes a changé depuis prep)
+set -u
+
+ROOT="$HOME/.cache/thedev/command"
+N_SPAN="${THEDEV_SPAN:-7}"
+GDIR="$ROOT/grouping"
+
+machine_self() { local m; m="$(head -n1 "$HOME/.config/dev-vps" 2>/dev/null)"; [ -n "$m" ] || m="$(hostname -s)"; printf '%s' "$m"; }
+_fm() { awk -v k="$2" 'NR==1&&$0=="---"{fm=1;next} fm&&$0=="---"{exit} fm&&$0~"^"k":[ \t]*"{sub("^"k":[ \t]*","");print;exit}' "$1"; }
+_resume_of() { local f="$ROOT/resume/$1.md"; [ -f "$f" ] && tail -n +2 "$f" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g; s/ *$//'; }
+me="$(machine_self)"
+
+# clés des équipes de CETTE machine (triées) — la matière à partitionner
+_local_keys() {
+  local f key mc
+  for f in "$ROOT"/equipes/*.md; do
+    [ -e "$f" ] || continue
+    key="$(basename "$f" .md)"
+    mc="$(_fm "$f" machine)"; [ -n "$mc" ] || mc="$me"
+    [ "$mc" = "$me" ] && printf '%s\n' "$key"
+  done | sort
+}
+# domaine courant d'une clé (override grouping prioritaire, sinon frontmatter)
+_dom_of() {
+  local key="$1"
+  [ -f "$GDIR/$key" ] && { head -n1 "$GDIR/$key"; return; }
+  _fm "$ROOT/equipes/$key.md" domaine
+}
+_snap() { _local_keys | tr '\n' '|'; }   # empreinte de l'ensemble d'équipes
+
+cmd_status() {
+  local keys n doms nd
+  keys="$(_local_keys)"; n="$(printf '%s\n' "$keys" | grep -c .)"
+  doms="$(for k in $keys; do d="$(_dom_of "$k")"; printf '%s\n' "${d:-(sans)}"; done | sort -u)"
+  nd="$(printf '%s\n' "$doms" | grep -c .)"
+  printf 'machine %s : %s équipe(s), %s domaine(s), span %s\n' "$me" "$n" "$nd" "$N_SPAN"
+  if [ "$nd" -gt "$N_SPAN" ]; then
+    printf '  ⚠ déborde : %s domaines > %s → `partition prep` puis regroupe par thème.\n' "$nd" "$N_SPAN"
+  else
+    printf '  ✓ dans le span (rien à faire).\n'
+  fi
+}
+
+cmd_prep() {
+  local keys n; keys="$(_local_keys)"; n="$(printf '%s\n' "$keys" | grep -c .)"
+  [ "$n" -gt 0 ] || { echo "(aucune équipe locale)"; return 0; }
+  mkdir -p "$GDIR" 2>/dev/null; _snap > "$GDIR/.snap"    # fige l'ensemble pour le re-check
+  printf '# Partition de la machine %s — %s équipes, cible ≤ %s domaines thématiques, noms clairs.\n' "$me" "$n" "$N_SPAN"
+  printf '# Matière (clé · nom · résumé) :\n'
+  local k eq rz
+  for k in $keys; do
+    eq="$(_fm "$ROOT/equipes/$k.md" equipe)"; eq="${eq#*/}"; [ -n "$eq" ] || eq="$k"
+    rz="$(_resume_of "$k")"; [ -n "$rz" ] || rz="(pas de résumé)"
+    printf '%s\t%s\t%s\n' "$k" "$eq" "$rz"
+  done
+  printf '# → Rends un mapping, une ligne par équipe : <clé><TAB><domaine>, puis : partition apply\n'
+}
+
+cmd_apply() {
+  mkdir -p "$GDIR" 2>/dev/null
+  # verrou par machine (le nœud) : une seule partition à la fois sur cette machine
+  exec 9>"$GDIR/.lock" 2>/dev/null && { flock -w 5 9 2>/dev/null || { echo "partition: occupé (une autre partition tourne) — réessaie." >&2; return 1; }; }
+  # re-check optimiste : l'ensemble d'équipes doit être identique au snapshot de `prep`
+  local snap_now snap_prep; snap_now="$(_snap)"; snap_prep="$(cat "$GDIR/.snap" 2>/dev/null)"
+  if [ -n "$snap_prep" ] && [ "$snap_now" != "$snap_prep" ]; then
+    echo "partition: l'ensemble d'équipes a changé depuis \`prep\` — relance \`partition prep\` puis regroupe." >&2
+    return 1
+  fi
+  # applique le mapping (stdin : clé<TAB>domaine)
+  local k d valid=" $(_local_keys | tr '\n' ' ') " nw=0
+  while IFS="$(printf '\t')" read -r k d; do
+    [ -n "$k" ] || continue
+    case "$k" in \#*) continue ;; esac                 # tolère les lignes de commentaire
+    case "$valid" in *" $k "*) : ;; *) printf '✗ clé inconnue: %s (ignorée)\n' "$k" >&2; continue ;; esac
+    d="$(printf '%s' "$d" | tr '\t\n\r' '   ' | sed 's/^ *//; s/ *$//')"
+    [ -n "$d" ] || continue
+    printf '%s\n' "$d" > "$GDIR/$k"
+    nw=$((nw+1))
+  done
+  flock -u 9 2>/dev/null || true
+  printf '✓ partition appliquée : %s équipe(s) rangée(s). (arbre reflète les nouveaux domaines)\n' "$nw"
+}
+
+cmd="${1:-}"; shift 2>/dev/null || true
+case "$cmd" in
+  status|"") cmd_status ;;
+  prep)      cmd_prep ;;
+  apply)     cmd_apply ;;
+  help|-h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "usage: partition [status|prep|apply]" >&2; exit 1 ;;
+esac

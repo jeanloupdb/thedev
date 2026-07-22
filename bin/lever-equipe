@@ -34,7 +34,7 @@ done
 
 [[ "$nom" =~ ^[A-Za-z0-9._-]+$ ]] || die "nom invalide: '$nom' (alphanum . _ - seulement)"
 
-PROJECTS_MD="${PROJECTS_MD:-$HOME/jlal_perso/perso/PROJECTS.md}"
+PROJECTS_MD="${PROJECTS_MD:-${DEV_ROOT:-$HOME/jlal_perso}/projets/PROJECTS.md}"
 # Garde-fou : pas de doublon dans le registre
 if [ -f "$PROJECTS_MD" ] && grep -qE "^### $nom( |\$)" "$PROJECTS_MD"; then
   die "un projet '### $nom' est déjà dans le registre ($PROJECTS_MD)"

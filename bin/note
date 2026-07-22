@@ -1,0 +1,300 @@
+#!/usr/bin/env bash
+# @thedev commandement contexte d'equipe : une note = une ligne signee par un soldat
+# note — le fichier de contexte VIVANT d'une equipe, alimente par ses soldats.
+# Voir plans/commandement.md (remontee gratuite, brique equipe).
+#
+# Modele : un DOSSIER par equipe, un FICHIER par soldat → zero contention (chaque
+# soldat n'ecrit QUE son fichier, append atomique, pas de lock). La signature est
+# implicite (le fichier = le soldat). Les ids de ligne sont locaux et stables.
+# Le contexte de l'equipe = la vue rendue (concatenation groupee par soldat).
+#
+#   note add "<texte>"          ajoute une ligne SIGNEE par moi (auto), renvoie l'id
+#   note ls                     mes lignes
+#   note ls --all               tout le contexte de l'equipe (groupe par soldat)
+#   note ls <sig>               les lignes d'un autre soldat (prefixe de sigle ou nom)
+#   note get <id>               lit UNE de mes lignes (texte nu)
+#   note get <sig> <id>         lit UNE ligne d'un autre soldat
+#   note set <id> "<texte>"     modifie MA ligne <id>
+#   note rm  <id> [<id>|<a-b>|all …]   supprime une LISTE de mes lignes (ids, plages, all)
+#
+# Les lectures/suppressions acceptent une liste pour tout faire en un appel :
+#   note rm 2 5 7        note rm 3-9        note rm all
+#   note get 1 4 6       note get 2-5       note get <sig> 3 4
+#
+# Identite soldat (cle du fichier) : CLAUDE_CODE_SESSION_ID (stable pour la vie du
+# soldat, meme si le pane est renomme). Sigle court affiche = 6 premiers caracteres.
+# Un soldat ne peut set/rm QUE ses propres lignes (les autres fichiers sont read-only).
+#
+# Quota par soldat (borne la remontee) :
+#   THEDEV_NOTE_MAX   octets max du fichier d'un soldat   (defaut 1500)
+#   THEDEV_NOTE_LINE  caracteres max d'une ligne          (defaut 240)
+# `add` qui deborde → echec (code 3) : au soldat de compacter (set/rm), il est deja
+# en contexte donc c'est gratuit.
+set -u
+
+ROOT="$HOME/.cache/thedev/command"
+MAXB="${THEDEV_NOTE_MAX:-1500}"
+MAXL="${THEDEV_NOTE_LINE:-240}"
+SOFTLINES="${THEDEV_NOTE_SOFTLINES:-7}"   # au-dela : conseiller fusion/màj plutot qu'ajout
+
+equipe_name()  { printf '%s' "${ZELLIJ_SESSION_NAME:-$(basename "$(pwd -P)")}"; }
+machine_name() {
+  local m; m="$(head -n1 "$HOME/.config/dev-vps" 2>/dev/null)"
+  [ -n "$m" ] || m="$(hostname -s)"
+  printf '%s' "$m"
+}
+node_key() {
+  printf '%s__%s' \
+    "$(machine_name | tr -c 'A-Za-z0-9._-' '_')" \
+    "$(equipe_name  | tr -c 'A-Za-z0-9._-' '_')"
+}
+
+# identite du soldat courant : la session Claude. Fallback lisible hors Claude.
+my_sid() { printf '%s' "${CLAUDE_CODE_SESSION_ID:-${USER:-anon}-local}"; }
+sig_of() { printf '%s' "${1:0:6}"; }                       # sigle court = 6 premiers
+# nom lisible d'un soldat (via le registre) ; vide si inconnu
+name_of() { reg-soldat get "$1" 2>/dev/null | cut -f4 | sed 's/^◆ //'; }
+
+NOTES_DIR="$ROOT/notes/$(node_key)"
+my_file() { printf '%s/%s.md' "$NOTES_DIR" "$(my_sid)"; }
+
+# une ligne stockee = "id<TAB>texte" ; on assainit tabs/newlines pour garder 1 ligne
+_sanitize() { printf '%s' "$1" | tr '\t\n\r' '   ' | sed 's/  *$//'; }
+
+_bytes()  { wc -c < "$1" 2>/dev/null | tr -d ' '; }
+_lines()  { [ -s "$1" ] && grep -c '' "$1" 2>/dev/null || echo 0; }
+_nextid() { awk -F'\t' 'BEGIN{m=0} {if($1+0>m)m=$1+0} END{print m+1}' "$1" 2>/dev/null; }
+_now()    { date +%s; }
+# format des lignes : « id<TAB>epoch<TAB>texte » (daté) ; les vieilles « id<TAB>texte »
+# (2 champs) sont tolérées en lecture. Le texte est sans tab (assaini) → NF discrimine.
+
+# rendu d'un fichier soldat : entete (sigle · nom  (L lignes · taille/max)) + lignes
+_render_one() {   # $1=file $2=header(1|0)
+  local f="$1" head="$2" sid sig nm b l
+  sid="$(basename "$f" .md)"; sig="$(sig_of "$sid")"; nm="$(name_of "$sid")"
+  b="$(_bytes "$f")"; l="$(_lines "$f")"
+  if [ "$head" = 1 ]; then
+    printf '▸ %s%s   (%s l · %s/%s o)\n' "$sig" "${nm:+ · $nm}" "$l" "${b:-0}" "$MAXB"
+  fi
+  awk -F'\t' -v now="$(_now)" '{
+    if (NF>=3) { id=$1; ep=$2; t=$3 } else { id=$1; ep=""; t=$2 }
+    a="";
+    if (ep!="") { d=now-ep; if(d<3600)a=int(d/60)"m"; else if(d<86400)a=int(d/3600)"h"; else a=int(d/86400)"j" }
+    printf "  %3s  %-52s%s\n", id, t, (a==""?"":"  · "a)
+  }' "$f" 2>/dev/null
+}
+
+# conseil de dosage affiche apres une ecriture ou un ls : entretenir > empiler
+_dosage_hint() {   # $1=file
+  local l b; l="$(_lines "$1")"; b="$(_bytes "$1")"
+  if [ "$l" -gt "$SOFTLINES" ]; then
+    printf '  ↻ %s lignes — entretiens plutôt qu’empile : mets à jour (set) ou retire (rm) l’obsolète.\n' "$l"
+  elif [ "$(( b * 100 / MAXB ))" -ge 80 ]; then
+    printf '  ↻ %s%% du quota — compacte tes lignes (set/rm) avant d’en ajouter.\n' "$(( b * 100 / MAXB ))"
+  fi
+}
+
+cmd_add() {
+  local txt; txt="$(_sanitize "$*")"
+  [ -n "$txt" ] || { echo "usage: note add \"<texte>\"" >&2; return 1; }
+  if [ "${#txt}" -gt "$MAXL" ]; then
+    printf '✗ ligne trop longue (%s > %s car.). Raccourcis.\n' "${#txt}" "$MAXL" >&2
+    return 3
+  fi
+  mkdir -p "$NOTES_DIR" || return 0
+  local f; f="$(my_file)"; touch "$f"
+  # borne de taille : refuse si l'ajout ferait deborder le quota du soldat
+  local cur add; cur="$(_bytes "$f")"; add=$(( ${#txt} + 8 ))
+  if [ $(( cur + add )) -gt "$MAXB" ]; then
+    printf '✗ quota atteint (%s/%s octets). Compacte tes lignes : note ls, puis note set/rm.\n' \
+      "$cur" "$MAXB" >&2
+    return 3
+  fi
+  local id; id="$(_nextid "$f")"
+  printf '%s\t%s\t%s\n' "$id" "$(_now)" "$txt" >> "$f"
+  printf '✓ note %s ajoutee (%s l · %s/%s o).\n' "$id" "$(_lines "$f")" "$(_bytes "$f")" "$MAXB"
+  _dosage_hint "$f"
+}
+
+cmd_set() {
+  local id="${1:-}"; shift 2>/dev/null || true
+  local txt; txt="$(_sanitize "$*")"
+  [ -n "$id" ] && [ -n "$txt" ] || { echo "usage: note set <id> \"<texte>\"" >&2; return 1; }
+  if [ "${#txt}" -gt "$MAXL" ]; then
+    printf '✗ ligne trop longue (%s > %s car.).\n' "${#txt}" "$MAXL" >&2; return 3
+  fi
+  local f; f="$(my_file)"
+  [ -f "$f" ] && grep -q "^$id"$'\t' "$f" || { printf '✗ pas de note %s chez toi.\n' "$id" >&2; return 1; }
+  awk -F'\t' -v OFS='\t' -v id="$id" -v t="$txt" -v now="$(_now)" \
+    '$1==id{print id,now,t; next} {print}' "$f" > "$f.tmp" \
+    && mv "$f.tmp" "$f"
+  printf '✓ note %s mise a jour.\n' "$id"
+}
+
+cmd_rm() {
+  [ $# -ge 1 ] || { echo "usage: note rm <id> [<id>|<a-b>|all …]" >&2; return 1; }
+  local f; f="$(my_file)"
+  [ -s "$f" ] || { echo "(rien à supprimer)"; return 0; }
+  local ids; ids="$(_ids_from_args "$f" "$@" | sort -un | tr '\n' ' ')"
+  [ -n "${ids// /}" ] || { echo "✗ aucun id valide." >&2; return 1; }
+  local before after
+  before="$(wc -l < "$f" | tr -d ' ')"
+  awk -F'\t' -v ids=" $ids " '/./ { if (index(ids, " " $1 " ")) next; print }' "$f" > "$f.tmp" \
+    && mv "$f.tmp" "$f"
+  after="$(wc -l < "$f" | tr -d ' ')"
+  printf '✓ %s note(s) supprimée(s) (%s → %s restantes).\n' "$(( before - after ))" "$before" "$after"
+}
+
+# expanse une liste d'arguments d'ids en ids concrets, un par ligne :
+#   entier « 3 » · plage « 5-8 » · « all » (= tous les ids du fichier $1)
+# les jetons non numeriques sont ignores silencieusement (deja resolus ailleurs).
+_ids_from_args() {   # $1=file ; $2.. = args
+  local f="$1"; shift
+  local a lo hi
+  for a in "$@"; do
+    case "$a" in
+      all|--all|-a) awk -F'\t' '{print $1}' "$f" 2>/dev/null ;;
+      *-*)
+        lo="${a%%-*}"; hi="${a##*-}"
+        case "$lo$hi" in ""|*[!0-9]*) continue ;; esac
+        [ "$lo" -le "$hi" ] 2>/dev/null && seq "$lo" "$hi" ;;
+      *[!0-9]*) : ;;                       # non numerique → ignore
+      *) printf '%s\n' "$a" ;;
+    esac
+  done
+}
+
+# resout un fichier soldat depuis un sigle/nom (prefixe de sigle, ou sous-chaine de nom)
+_file_of_sig() {   # $1=sig → echo chemin, code 1 si aucun
+  local f sid nm
+  for f in "$NOTES_DIR"/*.md; do
+    [ -e "$f" ] || continue
+    sid="$(basename "$f" .md)"; nm="$(name_of "$sid")"
+    case "$sid" in "$1"*) printf '%s' "$f"; return 0 ;; esac
+    case "$nm"  in *"$1"*) printf '%s' "$f"; return 0 ;; esac
+  done
+  return 1
+}
+
+cmd_get() {
+  [ $# -ge 1 ] || { echo "usage: note get [<sig>] <id> [<id>|<a-b>|all …]" >&2; return 1; }
+  local f
+  # 1er arg = sigle d'un AUTRE soldat si (≥2 args) et qu'il n'est pas un de MES ids
+  if [ $# -ge 2 ] && ! awk -F'\t' -v id="$1" '$1==id{ok=1} END{exit !ok}' "$(my_file)" 2>/dev/null; then
+    f="$(_file_of_sig "$1")" || { printf '✗ aucun soldat « %s ».\n' "$1" >&2; return 1; }
+    shift
+  else
+    f="$(my_file)"
+  fi
+  local ids id txt miss=0
+  ids="$(_ids_from_args "$f" "$@" | sort -un)"
+  [ -n "$ids" ] || { echo "✗ aucun id valide." >&2; return 1; }
+  for id in $ids; do
+    txt="$(awk -F'\t' -v id="$id" '$1==id{print (NF>=3?$3:$2); ok=1} END{exit !ok}' "$f" 2>/dev/null)" \
+      && printf '%s\n' "$txt" || { printf '✗ pas de note %s.\n' "$id" >&2; miss=1; }
+  done
+  return $miss
+}
+
+cmd_ls() {
+  local arg="${1:-}"
+  # --all : tout le contexte de l'equipe, groupe par soldat
+  if [ "$arg" = "--all" ] || [ "$arg" = "-a" ]; then
+    printf '── contexte de l’équipe %s (%s) ──\n' "$(equipe_name)" "$(machine_name)"
+    local any=0 f
+    for f in "$NOTES_DIR"/*.md; do
+      [ -e "$f" ] || continue
+      [ -s "$f" ] || continue
+      any=1; _render_one "$f" 1; echo
+    done
+    [ "$any" = 1 ] || echo "(vide — aucun soldat n’a encore pris de note)"
+    return 0
+  fi
+  # note ls <sig> : les lignes d'un autre soldat (prefixe de sigle, ou nom de pane)
+  if [ -n "$arg" ]; then
+    local f match=""
+    for f in "$NOTES_DIR"/*.md; do
+      [ -e "$f" ] || continue
+      local sid nm; sid="$(basename "$f" .md)"; nm="$(name_of "$sid")"
+      case "$sid" in "$arg"*) match="$f"; break ;; esac
+      case "$nm"  in *"$arg"*) match="$f"; break ;; esac
+    done
+    [ -n "$match" ] || { printf '✗ aucun soldat « %s » dans cette équipe.\n' "$arg" >&2; return 1; }
+    _render_one "$match" 1
+    return 0
+  fi
+  # note ls : mes lignes
+  local f; f="$(my_file)"
+  if [ ! -s "$f" ]; then echo "(tu n’as pas encore de note — note add \"...\")"; return 0; fi
+  _render_one "$f" 1
+  _dosage_hint "$f"
+}
+
+# ── note gc : purge le contexte des soldats VRAIMENT quittés ──────────────────
+# Fermer l'équipe ≠ quitter ses soldats. On ne supprime JAMAIS sur SessionEnd (qui
+# frappe tout le monde au quit) : ce gc tourne quand l'équipe est VIVANTE (SessionStart
+# du principal). Conservateur : on ne supprime un fichier QUE si `reg-soldat` prouve
+# une fermeture délibérée ANTÉRIEURE à la rafale du quit (ended>0 hors cohorte), ou
+# si le fichier est orphelin (aucune ligne) et vieux. Vivants, cohorte du quit, soldat
+# courant → jamais touchés. Une équipe close ne déclenche rien → tout est préservé.
+cmd_gc() {
+  local cwd; cwd="$(pwd -P)"; local dry=0
+  while [ $# -gt 0 ]; do case "$1" in
+    --cwd) cwd="${2:-$cwd}"; shift 2 ;;
+    --dry|-n) dry=1; shift ;;
+    *) shift ;;
+  esac; done
+  [ -d "$NOTES_DIR" ] || return 0
+  local reg="$HOME/.cache/soldats" now; now="$(date +%s)"
+  local win=45 maxage=172800 stale_days="${THEDEV_NOTE_STALE_DAYS:-14}"
+
+  # keep-set : sids de CETTE équipe (par cwd) encore vivants ou restaurables
+  local keep=""
+  if [ -f "$reg" ]; then
+    keep="$(awk -F'\t' -v c="$cwd" -v w="$win" -v now="$now" -v maxage="$maxage" '
+      $2==c { rows[NR]=$0; if ($7+0>ref) ref=$7+0 }
+      END { for (i=1;i<=NR;i++) if (i in rows) {
+              split(rows[i],a,"\t")
+              if ((a[7]+0==0 && a[6]+0 >= now-maxage) || a[7]+0 >= ref-w) print a[1]
+            } }' "$reg")"
+  fi
+  keep="$keep
+$(my_sid)"                                        # toujours garder le soldat courant
+
+  local f sid row ended mtime age removed=0 kept=0
+  for f in "$NOTES_DIR"/*.md; do
+    [ -e "$f" ] || continue
+    sid="$(basename "$f" .md)"
+    if printf '%s\n' "$keep" | grep -qxF "$sid"; then kept=$((kept+1)); continue; fi
+    row="$(awk -F'\t' -v id="$sid" '$1==id{print;exit}' "$reg" 2>/dev/null)"
+    if [ -n "$row" ]; then
+      ended="$(printf '%s' "$row" | cut -f7)"
+      if [ "${ended:-0}" -gt 0 ] 2>/dev/null; then
+        # fermé délibérément avant la rafale → mort pour de bon
+        [ "$dry" = 1 ] && printf 'rm (quitté) %s\n' "$sid" || rm -f "$f"; removed=$((removed+1))
+      fi
+      # ended==0 mais hors keep = zombie/stale-open : on laisse le gc de reg-soldat gérer
+    else
+      # orphelin (ligne purgée par reg-soldat) : supprimer seulement si vieux
+      mtime="$(stat -c %Y "$f" 2>/dev/null || echo "$now")"; age=$(( (now - mtime) / 86400 ))
+      if [ "$age" -ge "$stale_days" ]; then
+        [ "$dry" = 1 ] && printf 'rm (orphelin %sj) %s\n' "$age" "$sid" || rm -f "$f"; removed=$((removed+1))
+      fi
+    fi
+  done
+  [ "$removed" -gt 0 ] && printf '✓ note gc : %s soldat(s) quitté(s) purgé(s), %s gardé(s).\n' "$removed" "$kept"
+  return 0
+}
+
+cmd="${1:-}"; shift 2>/dev/null || true
+case "$cmd" in
+  add)        cmd_add "$@" ;;
+  gc)         cmd_gc  "$@" ;;
+  get|cat)    cmd_get "$@" ;;
+  ls|list|"") cmd_ls  "$@" ;;
+  set|edit)   cmd_set "$@" ;;
+  rm|del)     cmd_rm  "$@" ;;
+  help|-h|--help)
+    sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "usage: note add|ls|set|rm …  (note help)" >&2; exit 1 ;;
+esac

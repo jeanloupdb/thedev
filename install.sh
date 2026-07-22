@@ -30,6 +30,24 @@ link "$REPO/zellij/config.kdl"       "$HOME/.config/zellij/config.kdl"
 link "$REPO/zellij/themes/muted.kdl" "$HOME/.config/zellij/themes/muted.kdl"
 link "$REPO/zellij/layouts/dev.kdl"  "$HOME/.config/zellij/layouts/dev.kdl"
 link "$REPO/zellij/layouts/commandement.kdl" "$HOME/.config/zellij/layouts/commandement.kdl"
+link "$REPO/zellij/plugins"          "$HOME/.config/zellij/plugins"
+
+# Pré-accorde les permissions de zjstatus (la barre du bas) : sinon le prompt de
+# permission ne peut pas s'afficher dans une barre d'1 ligne → barre vide au 1er
+# lancement, sans explication.
+# NB : zellij indexe le cache par le CHEMIN NU du plugin (sans préfixe « file: »).
+zj_perm="${XDG_CACHE_HOME:-$HOME/.cache}/zellij/permissions.kdl"
+if [ ! -f "$zj_perm" ] || ! grep -q 'zjstatus.wasm' "$zj_perm" 2>/dev/null; then
+  mkdir -p "$(dirname "$zj_perm")"
+  cat >> "$zj_perm" <<ZJPERM
+"$HOME/.config/zellij/plugins/zjstatus.wasm" {
+    ReadApplicationState
+    ChangeApplicationState
+    RunCommands
+}
+ZJPERM
+  log "permissions zjstatus accordées ($zj_perm)"
+fi
 
 log "helpers ~/.local/bin (dérivés du manifest — tags @thedev, jamais une liste figée)…"
 for b in $("$REPO/bin/thedev-manifest" --scripts); do
@@ -46,16 +64,16 @@ else
   warn "  cp $REPO/thedev-machines.example $REPO/thedev-machines  (puis liste tes hôtes ssh)"
 fi
 
-# Hook dev-claude-track : registre des Claude ouverts (resume + noms persistants)
+# Hook soldat-track : registre des Claude ouverts (resume + noms persistants)
 # + marqueur « busy » + nudge pane-name. On ne REMPLACE pas settings.json : on
 # FUSIONNE le hook dans les 4 events via jq, idempotent.
 SETTINGS="$HOME/.claude/settings.json"
-TRACK="$REPO/claude/hooks/dev-claude-track.sh"
+TRACK="$REPO/claude/hooks/soldat-track.sh"
 if command -v jq >/dev/null 2>&1; then
   mkdir -p "$HOME/.claude"
   [ -s "$SETTINGS" ] || echo '{}' > "$SETTINGS"
-  if grep -qF "dev-claude-track" "$SETTINGS"; then
-    log "hook dev-claude-track déjà câblé"
+  if grep -qF "soldat-track" "$SETTINGS"; then
+    log "hook soldat-track déjà câblé"
   else
     tmp=$(mktemp)
     if jq --arg h "$TRACK" '
@@ -67,13 +85,13 @@ if command -v jq >/dev/null 2>&1; then
           | .hooks.PreToolUse       = ((.hooks.PreToolUse       // []) + [{matcher:"AskUserQuestion",hooks:[{type:"command",command:$h}]}])
           | .hooks.PostToolUse      = ((.hooks.PostToolUse      // []) + [{matcher:"AskUserQuestion",hooks:[{type:"command",command:$h}]}])
         ' "$SETTINGS" > "$tmp" && jq -e . "$tmp" >/dev/null 2>&1; then
-      mv "$tmp" "$SETTINGS"; log "hook dev-claude-track ajouté à settings.json (4 events + QCM)"
+      mv "$tmp" "$SETTINGS"; log "hook soldat-track ajouté à settings.json (4 events + QCM)"
     else
       rm -f "$tmp"; warn "fusion jq échouée : hook non câblé (registre/nudge désactivés)"
     fi
   fi
 else
-  warn "jq absent : hook dev-claude-track non câblé (registre/nudge désactivés)"
+  warn "jq absent : hook soldat-track non câblé (registre/nudge désactivés)"
 fi
 
 # Fonctions dev/srv/aside : sourcées depuis le .bashrc réel (jamais remplacé), idempotent.

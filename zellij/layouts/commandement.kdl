@@ -7,7 +7,7 @@ layout {
         // Même barre que la page dev : le losange ◆ et l'alerte « ⚠ action t'attend »
         // du chef (QCM) s'y affichent aussi.
         pane size=1 borderless=true {
-            plugin location="file:/home/jlal/.config/zellij/plugins/zjstatus.wasm" {
+            plugin location="file:~/.config/zellij/plugins/zjstatus.wasm" {
                 format_left  "#[bg=#000000,fg=#8ed68e,bold] 󰉋 {session} #[bg=#000000,fg=#4a4a4a]│#[bg=#000000,fg=#808080]  {tabs}{pipe_wait}"
                 format_right "#[bg=#000000]{mode}#[bg=#000000,fg=#607a60,bold] {swap_layout} "
                 format_space "#[bg=#000000]"
@@ -23,8 +23,8 @@ layout {
 
     tab name="commandement" focus=true {
         pane split_direction="vertical" {
-            pane size="34%" name="commandement" command="/home/jlal/.local/bin/commandement-nav"
-            pane name="chef" command="/home/jlal/.local/bin/commandement-driver"
+            pane size="34%" name="commandement" command="~/.local/bin/commandement-nav"
+            pane name="chef" command="~/.local/bin/commandement-driver"
         }
     }
 }

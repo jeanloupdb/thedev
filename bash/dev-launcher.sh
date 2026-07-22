@@ -19,9 +19,17 @@ alias aside='renfort'
 # zellij tourne en tâche de fond côté serveur (client/serveur, sans GUI) : si tu
 # fermes ton PC, la session + Claude continuent là-bas. Reconnecte avec `srv …`
 # et dev se rattache à la session vivante (tu reprends où tu en étais).
-# Hôte par défaut = alias SSH 'jlax' (surcharge : SRV_HOST=... srv …).
+# Hôte par défaut = la 1re machine de ~/.config/thedev-machines (surcharge :
+# SRV_HOST=... srv …). Pas de fichier = pas de serveur : on le dit au lieu de
+# tenter un alias ssh qui n'existe que chez son auteur.
 srv() {
-  local host="${SRV_HOST:-jlax}"
+  local host="${SRV_HOST:-$(sed 's/#.*//' "$HOME/.config/thedev-machines" 2>/dev/null \
+                            | grep -m1 '[^[:space:]]' | tr -d '[:space:]')}"
+  [ -n "$host" ] || {
+    echo "srv: aucune machine — liste tes alias ssh dans ~/.config/thedev-machines"
+    echo "     (1 par ligne), ou lance : SRV_HOST=<alias> srv"
+    return 1
+  }
   # ConnectTimeout : si le VPS est down, on échoue en ~8s (pas un long hang) et on
   # rend la main proprement → l'etat-major thedev se ré-affiche (boucle de dev()).
   case "${1:-}" in

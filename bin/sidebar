@@ -26,8 +26,12 @@ nom apparaît dans le layout courant) de ceux « à réveiller » — conversati
 sans pane, en atténué, qu'un Entrée rouvre en `--resume`. Elle se rafraîchit
 toute seule : la colonne vit des heures, un état figé au démarrage ment vite.
 
-Le bandeau de ressources (fenêtre Claude, RAM, disque, charge, batterie) est en
-bas, TOUJOURS visible, quelle que soit la vue. Source unique : `thedev-metrics`.
+Le bandeau de ressources (fenêtre Claude, RAM, disque, charge, chaleur, batterie)
+est en bas, TOUJOURS visible, quelle que soit la vue. Source unique :
+`thedev-metrics`. La chaleur s'y lit en degrés — la couleur suffit à dire si le
+chiffre est bon, un adjectif n'ajouterait rien. Elle bascule sur « étouffé » quand
+la machine est chaude SANS travailler : le PC posé sur un lit, qui se bride et cuit
+sa batterie. Le détail (ventilateur, bridages subis) est sur la page « infos ».
 
 La colonne ne confirme RIEN par écrit : ouvrir un fichier, une page ou un soldat
 se voit à l'écran, l'annoncer en plus est du bruit. Une ligne n'apparaît en bas
@@ -57,6 +61,11 @@ import unicodedata
 # Largeur simulée de la colonne gauche. Dans « le camp » le pane est large ; on
 # dessine quand même dans une bande étroite pour juger le VRAI rendu du front.
 BAND = 38
+
+# Habillage d'activité posé sur le TITRE du pane par `pane-pulse` (◆ plein ↔ ◇ creux,
+# alternés pendant qu'un soldat répond). Jamais une partie du nom : le registre stocke
+# le nom nu, donc tout rapprochement layout ↔ registre doit le retirer d'abord.
+PULSE_RE = re.compile(r"^[◆◇]\s+")
 
 IGNORE = {".git", "node_modules", "__pycache__", ".next", ".venv", "target", ".cache"}
 
@@ -148,8 +157,14 @@ def live_pane_names():
     C'est la seule vérité terrain sur « qui occupe un pane ». Le champ `ended`
     du registre ment dans les deux sens : un soldat tué net garde `ended == 0`,
     et un SessionEnd parasite (compactage, relance) marque terminé un soldat
-    bien vivant. On lit donc le layout. Le « ◆ » du pulse est retiré : c'est un
+    bien vivant. On lit donc le layout, en retirant le losange du pulse : c'est un
     habillage d'activité, pas une partie du nom.
+
+    Les DEUX glyphes comptent. `pane-pulse` alterne ◆ et ◇ toutes les ~0,7 s pendant
+    qu'un soldat répond ; n'en retirer qu'un fait échouer le rapprochement une frame
+    sur deux, et le soldat le plus actif de l'équipe clignote entre « ouverts » et
+    « à réveiller ». Le registre, lui, ne stocke que le nom NU (cf. pane-name).
+
     Renvoie None si le layout est illisible — l'appelant retombe alors sur
     `ended`, imparfait mais toujours mieux que rien."""
     out = sh(["zellij", "action", "dump-layout"], 8)
@@ -157,8 +172,7 @@ def live_pane_names():
         return None
     names = []
     for m in re.finditer(r'name="((?:[^"\\]|\\.)*)"', out):
-        n = m.group(1)
-        names.append(n[2:] if n.startswith("◆ ") else n)
+        names.append(PULSE_RE.sub("", m.group(1)))
     return names
 
 
@@ -192,6 +206,14 @@ def load_soldats(cwd, sess="", dormant_max=12):
                 continue
         except OSError:
             continue
+        # …ET de CETTE équipe. Le dossier ne suffit pas : un `claude` lancé à la main
+        # depuis la tente, ou une mission entrante, travaille dans le même répertoire
+        # sans avoir jamais fait partie de l'équipe. Sa place est dans l'écran
+        # « sessions », qui recense toutes les conversations de la machine — pas ici,
+        # où la liste répond à « qui est, ou a été, de cette équipe ». Filtre levé si
+        # l'équipe est inconnue (sidebar lancée hors zellij), sinon on masquerait tout.
+        if sess and p[4] != sess:
+            continue
         try:
             started, ended = int(p[5]), int(p[6])
         except ValueError:
@@ -219,8 +241,40 @@ def load_soldats(cwd, sess="", dormant_max=12):
             actifs.append((r["name"], r["role"], state, r["sid"]))
         else:
             dormants.append((r["name"], r["role"], r["ended"] or r["started"], r["sid"]))
-    dormants.sort(key=lambda d: -d[2])
-    return actifs, dormants[:dormant_max]
+    # Une conversation qui redémarre (reprise, relance de l'équipe, compactage) reçoit
+    # un NOUVEAU session id. Le registre accumule donc plusieurs entrées pour un même
+    # pane, chacune portant le nom que le pane avait à ce moment-là — un soldat renommé
+    # deux fois laissait quatre lignes « à réveiller » qui sont ses propres vies
+    # antérieures, pas des conversations à part entière.
+    # D'où : une seule entrée par pane, la plus récente. Et AUCUNE si un soldat vivant
+    # occupe ce pane — c'est lui, la conversation, les autres n'en sont que des traces.
+    # Rien n'est perdu : l'écran « sessions » liste toutes les conversations, lui.
+    # La clé est le pane ET la session zellij, pas le pane seul : zellij renumérote
+    # ses panes à partir de zéro à chaque session, donc deux conversations sans
+    # rapport se retrouvent « pane 6 » et fusionneraient à tort.
+    panes_pris = {soldat_ancre(sid) for _, _, _, sid in actifs}
+    panes_pris.discard("")
+    vus, uniques = set(), []
+    for d in sorted(dormants, key=lambda d: -d[2]):
+        p = soldat_ancre(d[3])
+        if p:
+            if p in panes_pris or p in vus:
+                continue
+            vus.add(p)
+        uniques.append(d)
+    return actifs, uniques[:dormant_max]
+
+
+def soldat_ancre(sid):
+    """« pane + session zellij » d'un soldat — l'emplacement qu'il occupait, unique
+    dans le temps là où `soldat_pane` seul ne l'est pas (les panes sont renumérotés
+    à chaque session). Sert à reconnaître les entrées de registre qui décrivent le
+    MÊME emplacement, donc la même conversation reprise. Vide si jamais vu."""
+    try:
+        with open(os.path.expanduser("~/.cache/soldat-panes/%s" % sid)) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
 
 
 def soldat_pane(sid):
@@ -337,6 +391,10 @@ def parse_metrics(out):
                 m.append(("DISK", p[1], int(p[2])))
             elif p[0] == "LOAD" and len(p) >= 3:
                 m.append(("LOAD", float(p[1]), int(p[2])))
+            elif p[0] == "TEMP" and len(p) >= 5:
+                # (T °C, T critique, ventilateur tr/min ou 0, étouffé)
+                m.append(("TEMP", int(p[1]), int(p[2]),
+                          int(p[3]) if p[3] else 0, p[4] == "1"))
             elif p[0] == "BAT" and len(p) >= 2:
                 m.append(("BAT", int(p[1]), p[2] if len(p) >= 3 else "",
                           p[3] if len(p) >= 4 else ""))
@@ -496,12 +554,10 @@ class Sidebar:
             if not n:
                 return []
             segs = [("  %d" % n, self.DIM)]
+            # Même règle que la liste : on ne compte QUE ce qui demande une action.
             w = sum(1 for s in self.soldats if s[2] == "waiting")
-            b = sum(1 for s in self.soldats if s[2] == "busy")
             if w:
                 segs.append((" ⚠%d" % w, self.CYAN | curses.A_BOLD))
-            elif b:
-                segs.append((" ◆%d" % b, self.YEL | curses.A_BOLD))
             return segs
         if act == "sessions" and self.sessions:
             return [("  %d" % len(self.sessions), self.DIM)]
@@ -510,9 +566,13 @@ class Sidebar:
     def rows_soldats(self):
         R = []
         for name, role, state, sid in self.soldats:
-            dot, col = {"waiting": ("◆", self.CYAN | curses.A_BOLD),
-                        "busy":    ("◆", self.YEL | curses.A_BOLD)}.get(
-                            state, ("·", self.DIM))
+            # Pas de losange d'activité ici : que tel soldat soit en train de
+            # répondre n'appelle AUCUN geste, et le marqueur bougeait sans arrêt
+            # dans une liste qu'on lit pour choisir où aller. Le seul état qui
+            # mérite un signe est celui qui demande quelque chose — « t'attend » —
+            # et il porte le ⚠ du badge, pas un losange de plus.
+            dot, col = (("⚠", self.CYAN | curses.A_BOLD) if state == "waiting"
+                        else ("·", self.DIM))
             R.append(([("  %s " % dot, col), (name[:BAND - 12], 0)]
                       + ([("  aside", self.DIM)] if role == "aside" else []),
                       ("soldat", sid)))
@@ -623,6 +683,15 @@ class Sidebar:
                 v, n = it[1], it[2]
                 c = self.GREEN if v < n * 0.7 else (self.YEL if v < n else self.RED)
                 out.append(("charge", "%.2f" % v, c))
+            elif it[0] == "TEMP":
+                # Le degré et sa couleur, rien de plus : un adjectif ne dirait pas
+                # mieux que le rouge. Le seul mot qui s'ajoute est « étouffé » — pas
+                # un commentaire du chiffre, mais la seule chose qu'il ne dit PAS :
+                # cette chaleur-là ne vient pas du travail, et se répare d'un geste.
+                t, crit, _fan, etouf = it[1], it[2], it[3], it[4]
+                pct = (100.0 * t / crit) if crit else 0.0
+                out.append(("chaleur", "%d°%s" % (t, " étouffé" if etouf else ""),
+                            self.RED if etouf else self.gcol(pct)))
             elif it[0] == "BAT":
                 # Jauge INVERSE (bas = danger) ; ↑ en charge, ↓ en décharge.
                 p, st, tm = it[1], it[2], it[3]

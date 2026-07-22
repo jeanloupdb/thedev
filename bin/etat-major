@@ -38,6 +38,18 @@ def vps_label():
         return ""
 
 
+def read_machines():
+    """Hôtes ssh des autres machines thedev, depuis ~/.config/thedev-machines
+    (1 alias par ligne, # = commentaire) — MÊME source que thedev-status.
+    Absent = machine seule : aucune ligne « remote control » et aucun SSH."""
+    try:
+        with open(os.path.expanduser("~/.config/thedev-machines")) as f:
+            lines = [l.split("#", 1)[0].strip() for l in f]
+    except Exception:
+        return []
+    return [l for l in lines if l]
+
+
 def live_sessions():
     """Noms des sessions zellij vivantes (pour marquer '● en cours')."""
     try:
@@ -331,6 +343,55 @@ def gather_infos(vps, update_available, head):
         health.append(("gauge", "charge CPU", pct, "%.1f / %d cœurs" % (load1, ncpu)))
     except Exception:
         pass
+    # chaleur : même jauge que les autres (en % du seuil de bridage du capteur), plus
+    # ce que la colonne étroite de la sidebar n'a pas la place de dire — à quel régime
+    # souffle le ventilateur, et combien de fois la machine s'est DÉJÀ bridée.
+    raw = ""
+    try:
+        raw = subprocess.run([os.path.expanduser("~/.local/bin/thedev-metrics"), "--raw"],
+                             capture_output=True, text=True, timeout=5).stdout
+        tp = next((l.split("\t") for l in raw.splitlines() if l.startswith("TEMP\t")), None)
+        if tp and len(tp) >= 5 and int(tp[2]):
+            t, crit, fan, etouf = int(tp[1]), int(tp[2]), tp[3], tp[4] == "1"
+            health.append(("gauge", "chaleur", 100.0 * t / crit, "%d °C" % t))
+            if fan and fan != "0":
+                health.append(("kv", "ventilateur", "%s tr/min" % fan))
+            health.append(("kv", "bridage à", "%d °C" % crit))
+            if etouf:
+                # Chaud sans travailler : l'air ne sort plus. Seule ligne de la page qui
+                # demande un GESTE — d'où l'impératif, et le rouge.
+                health.append(("kv", "aération", ("bloquée — surélève le PC", "red")))
+    except Exception:
+        pass
+    try:
+        # Bridages thermiques déjà subis (compteurs noyau, depuis le démarrage). C'est la
+        # trace des surchauffes passées, invisible autrement : la fréquence s'effondre
+        # sans que ni la charge ni la RAM ne bougent, donc aucune autre jauge ne le voit.
+        thr = "/sys/devices/system/cpu/cpu0/thermal_throttle/"
+        n = int(_read_file(thr + "package_throttle_count") or 0)
+        ms = int(_read_file(thr + "package_throttle_total_time_ms") or 0)
+        if n:
+            health.append(("kv", "bridages", ("%d × · %.0f s cumulées" % (n, ms / 1000.0),
+                                              "yel" if ms > 60000 else "")))
+    except Exception:
+        pass
+    try:
+        # Capacité pleine actuelle / capacité d'origine. Le libellé ne peut PAS être
+        # « batterie » : le bandeau appelle déjà ainsi le niveau de charge, et les deux
+        # sont des pourcentages — on lirait « batterie 70 % » comme « il reste 70 % ».
+        # « capacité max » est le terme qui dit qu'on parle du plafond, pas du contenu
+        # (c'est aussi celui qu'affiche iOS pour la même grandeur).
+        # Jauge INVERSE : 100 % est l'état neuf, c'est la chute qui alarme, au contraire
+        # de la RAM ou du disque où c'est le remplissage. Seuil de fin de vie annoncé par
+        # les constructeurs : 80 %, d'où le passage au jaune à cet endroit.
+        bh = next((l.split("\t") for l in raw.splitlines() if l.startswith("BATH\t")), None)
+        if bh and len(bh) >= 4:
+            det = "%s sur %s Wh" % (bh[2], bh[3])
+            if len(bh) >= 5 and bh[4].strip():
+                det += " · %s cy" % bh[4].strip()
+            health.append(("gaugeinv", "capacité max", int(bh[1]), det))
+    except Exception:
+        pass
     try:
         up = float(_read_file("/proc/uptime").split()[0])
         d, h, m = int(up // 86400), int(up % 86400 // 3600), int(up % 3600 // 60)
@@ -513,7 +574,7 @@ class Picker:
         # « remote control dispo » : sessions de dev des serveurs + leurs panes
         # Claude, chargées en arrière-plan (SSH) pour ne pas bloquer l'affichage.
         # Rien quand on est déjà sur un serveur (self.vps).
-        self.rc_hosts = [] if self.vps else ["jlax", "indice"]
+        self.rc_hosts = [] if self.vps else read_machines()
         self.rc_data = {h: {"loading": True} for h in self.rc_hosts}
         self.rc_lock = threading.Lock()
         self.rc_loading = bool(self.rc_hosts)
@@ -1961,14 +2022,18 @@ class Picker:
                 pass
 
         LBL = 12                                   # largeur de libellé fixe → barres alignées
-        def gauge_row(label, pct, detail, contentw):
+        def gauge_row(label, pct, detail, contentw, inv=False):
             pct = max(0.0, min(100.0, float(pct)))
             detail = (detail or "")[:28]
             # largeur de barre CONSTANTE (réserve fixe pour % + détail) → toutes les
             # pistes ont la même longueur et le % tombe à la même colonne.
             barw = max(8, min(30, contentw - (LBL + 2) - 6 - 18))
             fill = int(round(pct / 100 * barw))
-            col = G if pct < 70 else (Y if pct < 88 else R)
+            # `inv` : jauge où le HAUT est le bon état (santé d'une batterie, 100 % = neuf)
+            # au lieu du remplissage d'une ressource. Seuils constructeur : 80 % = fin de
+            # vie annoncée, 60 % = capacité franchement entamée.
+            col = ((G if pct >= 80 else (Y if pct >= 60 else R)) if inv else
+                   (G if pct < 70 else (Y if pct < 88 else R)))
             return [(" %-*s " % (LBL, label), DIM), ("█" * fill, col), ("░" * (barw - fill), DIM),
                     (" %3.0f%% " % pct, col | curses.A_BOLD), (" " + detail, DIM)]
         def kv_row(k, v):
@@ -1980,8 +2045,9 @@ class Picker:
         def items_to_rows(items, contentw):
             out = []
             for it in items:
-                if isinstance(it, tuple) and it[0] == "gauge":
-                    out.append(gauge_row(it[1], it[2], it[3], contentw))
+                if isinstance(it, tuple) and it[0] in ("gauge", "gaugeinv"):
+                    out.append(gauge_row(it[1], it[2], it[3], contentw,
+                                         inv=it[0] == "gaugeinv"))
                 elif isinstance(it, tuple) and it[0] == "kv":
                     out.append(kv_row(it[1], it[2]))
                 else:

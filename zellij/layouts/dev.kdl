@@ -5,7 +5,7 @@ layout {
         // tab-bar natif pour mettre le NOM DE SESSION (= dossier) en avant et virer
         // l'habillage « Zellij (...) » codé en dur. Palette = thème muted.
         pane size=1 borderless=true {
-            plugin location="file:/home/jlal/.config/zellij/plugins/zjstatus.wasm" {
+            plugin location="file:~/.config/zellij/plugins/zjstatus.wasm" {
                 format_left  "#[bg=#000000,fg=#8ed68e,bold] 󰉋 {session} #[bg=#000000,fg=#4a4a4a]│#[bg=#000000,fg=#808080]  {tabs}{pipe_wait}"
                 format_right "#[bg=#000000]{mode}#[bg=#000000,fg=#607a60,bold] {swap_layout} "
                 format_space "#[bg=#000000]"
@@ -35,16 +35,16 @@ layout {
             // `editor` ne servait à rien. Un fichier s'ouvre en plein écran
             // (pane flottant), ce qui est de toute façon la seule taille où
             // éditer est confortable.
-            pane size="20%" name="sidebar" command="/home/jlal/.local/bin/sidebar" {
+            pane size="20%" name="sidebar" command="~/.local/bin/sidebar" {
                 args "--live"
             }
             pane split_direction="horizontal" {
                 pane stacked=true {
-                    pane name="claude" focus=true command="/home/jlal/.local/bin/engine" {
+                    pane name="claude" focus=true command="~/.local/bin/engine" {
                         args "launch"
                     }
                 }
-                pane size=1 borderless=true name="＋ claude" command="/home/jlal/.local/bin/aside-button"
+                pane size=1 borderless=true name="＋ claude" command="~/.local/bin/aside-button"
             }
         }
     }
@@ -55,15 +55,15 @@ layout {
     // « le camp » ne se vide (ni ne disparaît) pas quand un soutien se termine.
     tab name="le camp" {
         pane stacked=true {
-            pane name="garnison" command="/home/jlal/.local/bin/garnison"
+            pane name="garnison" command="~/.local/bin/garnison"
         }
     }
 
     // Page 3 — la tente : shell + git (terminaux perso, côte à côte)
     tab name="la tente" {
         pane split_direction="vertical" {
-            pane name="shell" command="/home/jlal/.local/bin/shell-pane"
-            pane name="git" command="/home/jlal/.local/bin/git-pane"
+            pane name="shell" command="~/.local/bin/shell-pane"
+            pane name="git" command="~/.local/bin/git-pane"
         }
     }
 }

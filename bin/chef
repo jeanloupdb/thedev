@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# @thedev commandement chef — ouvre un Claude interactif briefé comme CE chef (convocable)
+# chef — « discuter avec un chef ». Un chef est STRUCTUREL (pas de session debout) : le
+# convoquer = lancer un Claude INTERACTIF (abonnement, jamais `claude -p`) briefé avec le
+# contexte agrégé de son périmètre — les RÉSUMÉS de ses équipes (bornés), leurs blocages,
+# leur fraîcheur. Il répond au survol, et peut DESCENDRE dans le détail à la demande.
+#
+#   chef                     le GÉNÉRAL : toute la flotte
+#   chef <machine>           le chef d'une machine
+#   chef <machine>/<domaine> le sous-chef d'un domaine
+#   chef --brief [<node>]    imprime seulement le briefing (ne lance pas Claude)
+#
+# Le contexte vient de `arbre --data` (qui agrège déjà local + flotte via le sommet) →
+# marche pour un chef local OU distant. La descente fine (`note ls --all`, `jalon`) est
+# pleine pour le local ; pour une machine distante, le détail vit sur le sommet (ouvrir
+# le chef là-bas pour descendre plus loin — évolution).
+set -u
+
+BRIEF_ONLY=0
+case "${1:-}" in --brief) BRIEF_ONLY=1; shift ;; esac
+node="${1:-}"                       # "" = général | "machine" | "machine/domaine"
+
+mach="${node%%/*}"; dom=""
+case "$node" in */*) dom="${node#*/}" ;; esac
+
+# titre lisible du périmètre
+if   [ -z "$node" ]; then scope="général — toute la flotte"
+elif [ -z "$dom" ];  then scope="chef de la machine $mach"
+else                      scope="sous-chef du domaine « $dom » ($mach)"; fi
+
+# équipes du périmètre, depuis arbre --data : machine \t domaine \t equipe \t live \t etat \t ago
+lines="$(arbre --data 2>/dev/null | awk -F'\t' -v m="$mach" -v d="$dom" '
+  $1 ~ /^#/ { next }
+  { if (m!="" && $1!=m) next; if (d!="" && $2!=d) next;
+    eq=$3; etat=$5; ago=$6;
+    printf "  - %s", eq;
+    if (etat!="" && etat!="—") printf " : %s", etat;
+    if (ago!="") printf "  (%s)", ago;
+    printf "\n" }')"
+[ -n "$lines" ] || lines="  (aucune équipe dans ce périmètre — le namespace se peuple aux ouvertures/remontées)"
+
+brief="Tu es convoqué comme ${scope}.
+
+Tu n'es PAS une équipe : tu es un chef. Ton rôle = connaître l'état de tes équipes (leurs
+résumés remontés) et répondre aux questions sur ce périmètre. Tu peux DESCENDRE dans le
+détail quand c'est utile (ne devine pas) :
+  • \`arbre\`               l'arbre de commandement complet
+  • \`note ls --all\`       le contexte détaillé d'une équipe (sur son dossier)
+  • \`jalon\` / \`blocage\`   la timeline / les points bloqués d'une équipe
+
+État actuel de ton périmètre (résumés partagés + blocages ⚠, fraîcheur entre parenthèses) :
+${lines}
+
+Tu tournes en INTERACTIF (abonnement). Commence par te présenter en une phrase comme ${scope},
+puis donne l'état en 2-4 lignes (ce qui avance, ce qui est bloqué, ce qui mérite attention)."
+
+if [ "$BRIEF_ONLY" = 1 ]; then printf '%s\n' "$brief"; exit 0; fi
+
+# convocation : Claude interactif, briefé, avec un 1er message qui le fait se présenter.
+exec claude --append-system-prompt "$brief" "Présente-toi et donne l'état de ton périmètre."

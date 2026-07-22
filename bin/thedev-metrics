@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# @thedev infra métriques limitantes locales (RAM/disque/load) — source unique
+# @thedev infra métriques limitantes locales (RAM/disque/load/chaleur) — source unique
 # Affichées en permanence : l'etat-major (ligne du bas) et la ligne « ＋ Nouveau soldat ».
 #   thedev-metrics            bande ANSI colorée (vert<70 · jaune<88 · rouge sinon)
 #   thedev-metrics --raw      valeurs machine, 1/ligne (pour l'etat-major, qui colore en curses)
@@ -15,6 +15,7 @@ ncpu=$(nproc 2>/dev/null || echo 1)
 ram_pct()  { awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} END{ if(t) printf "%.0f", 100*(t-a)/t }' /proc/meminfo 2>/dev/null; }
 disk_pct() { df -P "$1" 2>/dev/null | awk 'NR==2{gsub(/%/,"",$5); print $5}'; }
 load1()    { awk '{print $1}' /proc/loadavg 2>/dev/null; }
+load5()    { awk '{print $2}' /proc/loadavg 2>/dev/null; }
 
 # Batterie (portable uniquement — silencieux sur serveur sans BAT*).
 # BAT_PCT=% · BAT_ST=dis|chg|full · BAT_TIME=XhMM restant (avant vide si décharge,
@@ -50,6 +51,113 @@ for _b in /sys/class/power_supply/BAT*; do
   break   # première batterie seulement
 done
 
+# Santé de la batterie = capacité pleine ACTUELLE / capacité pleine D'ORIGINE, telle
+# que le firmware les expose. Déterministe (une division, pas d'historique à tenir) et
+# portable : c'est la seule paire de valeurs que tous les portables publient. Deux
+# nomenclatures existent selon le firmware et il faut gérer les deux — energy_* (µWh,
+# fréquent chez Lenovo/Dell) ou charge_* (µAh, fréquent chez Asus/HP), ces derniers
+# convertis en Wh par la tension nominale. cycle_count n'est pas universel : souvent
+# absent ou bloqué à 0, il n'est joint que s'il porte une vraie valeur.
+BATH="" BATH_FULL="" BATH_DES="" BATH_CYC=""
+for _b in /sys/class/power_supply/BAT*; do
+  [ -e "$_b/present" ] || continue
+  _f=""; _d=""
+  if [ -s "$_b/energy_full" ] && [ -s "$_b/energy_full_design" ]; then
+    _f=$(cat "$_b/energy_full"); _d=$(cat "$_b/energy_full_design")
+    BATH_FULL=$(awk -v x="$_f" 'BEGIN{printf "%.1f", x/1e6}')
+    BATH_DES=$(awk -v x="$_d" 'BEGIN{printf "%.1f", x/1e6}')
+  elif [ -s "$_b/charge_full" ] && [ -s "$_b/charge_full_design" ]; then
+    _f=$(cat "$_b/charge_full"); _d=$(cat "$_b/charge_full_design")
+    _v=$(cat "$_b/voltage_min_design" 2>/dev/null || echo 0)
+    if [ "${_v:-0}" -gt 0 ] 2>/dev/null; then    # µAh × µV → Wh
+      BATH_FULL=$(awk -v x="$_f" -v v="$_v" 'BEGIN{printf "%.1f", x*v/1e12}')
+      BATH_DES=$(awk -v x="$_d" -v v="$_v" 'BEGIN{printf "%.1f", x*v/1e12}')
+    fi
+  fi
+  if [ -n "$_f" ] && [ "${_d:-0}" -gt 0 ] 2>/dev/null; then
+    BATH=$(awk -v f="$_f" -v d="$_d" 'BEGIN{printf "%.0f", 100*f/d}')
+  fi
+  _c=$(cat "$_b/cycle_count" 2>/dev/null)
+  [ "${_c:-0}" -gt 0 ] 2>/dev/null && BATH_CYC="$_c"
+  break
+done
+
+# Chaleur (température du die) — portable surtout : un PC posé sur un lit ou une
+# couverture n'évacue plus, se bride, et cuit sa batterie. Capteur : « Package id 0 »
+# de coretemp (Intel) ou Tctl de k10temp (AMD) — c'est CETTE température qui déclenche
+# le bridage. À défaut : zone x86_pkg_temp, puis acpitz (grossier mais universel).
+# TCRIT est lu SUR LE CAPTEUR (100 °C Intel, ~95 AMD), donc tous les seuils sont des
+# % de crit et jamais des degrés en dur : une autre machine se calibre toute seule.
+# On sort le DEGRÉ, pas un adjectif : la couleur (bornes 70/88 comme toutes les autres
+# jauges) dit déjà si le chiffre est bon. Le seul mot ajouté est « étouffé », qui n'est
+# pas un niveau mais un diagnostic — il se répare d'un geste.
+TEMP="" TCRIT="" FAN="" TETOUF=0
+for _h in /sys/class/hwmon/hwmon*; do
+  case "$(cat "$_h/name" 2>/dev/null)" in
+    coretemp|k10temp|zenpower)
+      [ -e "$_h/temp1_input" ] || continue
+      TEMP=$(( $(cat "$_h/temp1_input" 2>/dev/null || echo 0) / 1000 ))
+      [ -e "$_h/temp1_crit" ] && TCRIT=$(( $(cat "$_h/temp1_crit") / 1000 ))
+      break;;
+  esac
+done
+if [ -z "$TEMP" ]; then                      # 2 passes : x86_pkg_temp d'abord, acpitz en dernier
+  for _want in x86_pkg_temp acpitz; do
+    for _z in /sys/class/thermal/thermal_zone*; do
+      [ "$(cat "$_z/type" 2>/dev/null)" = "$_want" ] || continue
+      TEMP=$(( $(cat "$_z/temp" 2>/dev/null || echo 0) / 1000 )); break 2
+    done
+  done
+fi
+# Ventilateur : informatif (il confirme l'étouffement), jamais décisif — son régime
+# max n'est écrit nulle part, donc on ne peut pas en faire un seuil. `acpi_fan` expose
+# souvent un fan1_input VIDE : le test > 0 l'écarte au profit du pilote constructeur.
+for _h in /sys/class/hwmon/hwmon*; do
+  case "$(cat "$_h/name" 2>/dev/null)" in
+    asus|dell_smm|thinkpad|applesmc|acpi_fan)
+      _v=$(cat "$_h/fan1_input" 2>/dev/null)
+      if [ -n "$_v" ] && [ "$_v" -gt 0 ] 2>/dev/null; then FAN=$_v; break; fi;;
+  esac
+done
+# Sur secteur ou sur batterie ? Le branchement déplafonne le CPU (les limites de
+# puissance montent), et ça décale TOUT : mesuré sur un Zenbook, même travail,
+# 58 °C sur batterie contre 80 °C branché. Un seuil unique ne peut donc pas servir
+# les deux régimes — il crierait au loup en permanence dès qu'on branche.
+AC=0
+for _a in /sys/class/power_supply/*/type; do
+  [ "$(cat "$_a" 2>/dev/null)" = Mains ] || continue
+  [ "$(cat "${_a%/type}/online" 2>/dev/null)" = 1 ] && AC=1
+  break
+done
+
+if [ -n "$TEMP" ] && [ "$TEMP" -gt 0 ] 2>/dev/null; then
+  : "${TCRIT:=100}"
+  # ÉTOUFFÉ = chaud SANS travail. C'est la signature d'un PC dont l'air ne sort plus,
+  # pas celle d'un build (qui, lui, a le droit de chauffer). On lit load5 et non load1 :
+  # la moyenne 5 min du noyau fait le lissage, donc aucune alerte dans la queue de
+  # refroidissement qui suit une compilation, et aucun cache à tenir de notre côté.
+  #
+  # Les seuils viennent d'une MESURE, pas d'un raisonnement. Même machine, même
+  # travail (load ~3,5), trois régimes enregistrés à la minute :
+  #     sur batterie ................ 58 °C
+  #     branché, sur un bureau ...... 80 °C
+  #     branché, sur un lit ......... 92 °C
+  # Le secteur pèse +22 °C, le lit +12 °C de plus. D'où deux seuils, placés entre
+  # le normal et l'étouffé de CHAQUE régime — et non un seuil unique, qui serait
+  # allumé en permanence dès le branchement.
+  #
+  # C'est bien le DIE qu'on lit, pas les capteurs de châssis (SEN*) : ces derniers
+  # ont été essayés et rejetés sur mesure. Ils mettent des dizaines de minutes à
+  # bouger et la charge de la batterie les chauffe en continu — sortis du lit,
+  # trois d'entre eux étaient PLUS chauds que dessus. Le die, lui, répond en
+  # secondes et sépare nettement les deux positions.
+  seuil=$(awk -v ac="$AC" 'BEGIN{ print (ac ? 0.88 : 0.70) }')
+  TETOUF=$(awk -v t="$TEMP" -v c="$TCRIT" -v l="$(load5)" -v n="$ncpu" -v s="$seuil" \
+    'BEGIN{ e=0; if(t >= s*c && l < 0.35*n) e=1; print e }')
+else
+  TEMP=""
+fi
+
 RAM=$(ram_pct)
 DISKS=()
 for m in / /data; do
@@ -79,7 +187,9 @@ if [ "${1:-}" = "--raw" ]; then
   [ -n "$RAM" ] && printf 'RAM\t%s\n' "$RAM"
   for d in "${DISKS[@]}"; do printf 'DISK\t%s\t%s\n' "${d%%:*}" "${d##*:}"; done
   [ -n "$LOAD" ] && printf 'LOAD\t%s\t%s\n' "$LOAD" "$ncpu"
+  [ -n "$TEMP" ] && printf 'TEMP\t%s\t%s\t%s\t%s\n' "$TEMP" "$TCRIT" "$FAN" "$TETOUF"
   [ -n "$BAT_PCT" ] && printf 'BAT\t%s\t%s\t%s\n' "$BAT_PCT" "$BAT_ST" "$BAT_TIME"
+  [ -n "$BATH" ] && printf 'BATH\t%s\t%s\t%s\t%s\n' "$BATH" "$BATH_FULL" "$BATH_DES" "$BATH_CYC"
   exit 0
 fi
 
@@ -109,6 +219,11 @@ else
     lc=$(awk -v l="$LOAD" -v n="$ncpu" 'BEGIN{ if(l<n*0.7)print"g"; else if(l<n)print"y"; else print"r" }')
     case "$lc" in g) c=$G;; y) c=$Y;; *) c=$R;; esac
     add "${D}load ${Z}${c}${LOAD}${Z}"
+  fi
+  if [ -n "$TEMP" ]; then
+    # Colorée en % de crit → mêmes bornes 70/88 que toutes les autres jauges thedev.
+    if [ "$TETOUF" = 1 ]; then add "${D}chaleur ${Z}${R}${TEMP}° étouffé${Z}"
+    else add "${D}chaleur ${Z}$(col_pct "$(( 100 * TEMP / TCRIT ))")${TEMP}°${Z}"; fi
   fi
 fi
 if [ -n "$BAT_PCT" ]; then
