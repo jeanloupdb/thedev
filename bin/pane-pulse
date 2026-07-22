@@ -47,6 +47,10 @@ while :; do
   cur=""
   for f in "$BUSY_DIR"/*; do
     [ -f "$f" ] || continue
+    # Filet anti-orphelin : un tour INTERROMPU/crashé ne tire pas `Stop` → le marqueur
+    # reste et animerait le ◆ sans fin. Le hook rafraîchit le marqueur à chaque outil ;
+    # donc s'il n'a pas bougé depuis >2 min, le tour est fini → on purge (→ reset du pane).
+    if [ -n "$(find "$f" -mmin +2 2>/dev/null)" ]; then rm -f "$f" 2>/dev/null; continue; fi
     IFS=$'\t' read -r pid zs < "$f" 2>/dev/null || continue
     [ -n "${pid:-}" ] && [ "${zs:-}" = "$ZS" ] || continue
     cur="$cur$(basename "$f")	$pid
@@ -59,7 +63,7 @@ while :; do
       [ -n "$psid" ] || continue
       case "$cur" in
         *"$psid	$ppid"*) ;;                       # encore busy
-        *) nm=$(nu_name "$psid"); [ -n "$nm" ] && rename "$ppid" "$nm" ;;
+        *) nm=$(nu_name "$psid"); [ -n "$nm" ] || nm="claude"; rename "$ppid" "$nm" ;;  # toujours stripper le ◆ (fallback si nom absent)
       esac
     done <<EOF
 $prev

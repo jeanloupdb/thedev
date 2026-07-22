@@ -37,6 +37,10 @@ if [ "$DRY" = 1 ]; then
   exit 0
 fi
 
+# Verrou non-bloquant : appelé en arrière-plan à chaque fin de tour → si un rsync tourne
+# déjà, on saute (évite deux `--delete` concurrents vers le même sous-arbre distant).
+exec 9>"$HOME/.cache/thedev/remonter.lock" 2>/dev/null && { flock -n 9 2>/dev/null || exit 0; }
+
 # 1) prepare le sous-arbre distant (echoue vite si le sommet dort)
 if ! ssh -o ConnectTimeout=10 "$sommet" "mkdir -p $dest" 2>/dev/null; then
   echo "remonter: sommet '$sommet' injoignable — la remontee attend (retentee au prochain appel)."
@@ -44,7 +48,7 @@ if ! ssh -o ConnectTimeout=10 "$sommet" "mkdir -p $dest" 2>/dev/null; then
 fi
 # 2) pousse (--delete borne a MON sous-arbre)
 if rsync -az --delete -e "ssh -o ConnectTimeout=10" "$SRC/" "$sommet:$dest/" 2>/dev/null; then
-  echo "remonter: ✓ cartes+debriefs remontes vers $sommet:command-fleet/$me/"
+  echo "remonter: ✓ arbre mémoire (resume/note/jalon/blocage + cartes) remonté vers $sommet:command-fleet/$me/"
 else
   echo "remonter: rsync a echoue vers '$sommet' — reessayer plus tard."
   exit 0

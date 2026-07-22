@@ -147,6 +147,18 @@ if [ -f "$HOME/.config/dev-vps" ] && [ -z "${CLAUDE_PANE_ONCE:-}" ] && [ -n "${Z
   zellij action rename-pane -p "$ZELLIJ_PANE_ID" "claude [$(cat "$HOME/.config/dev-vps")]" 2>/dev/null
 fi
 
+# ANCRE de la stack des soldats : où vit le soldat principal de cette equipe.
+# `zellij run --stacked` s'empile sur le pane FOCUS — donc un nouveau soldat
+# atterrissait dans la colonne de gauche si l'utilisateur s'y trouvait. renfort
+# lit cette ancre pour viser la bonne stack quel que soit le focus. Posée AVANT
+# la restauration des asides (qui passe par renfort) et par le principal seul.
+if [ -z "${CLAUDE_PANE_ONCE:-}" ] && [ -n "${ZELLIJ_PANE_ID:-}" ]; then
+  _anch="$HOME/.cache/thedev/front-stack"
+  mkdir -p "$_anch" 2>/dev/null
+  printf '%s\n' "$ZELLIJ_PANE_ID" \
+    > "$_anch/$(printf '%s' "${ZELLIJ_SESSION_NAME:-$(basename "$(pwd -P)")}" | tr -c 'A-Za-z0-9._-' '_')" 2>/dev/null
+fi
+
 # Restauration des soldats secondaires (asides) ouverts avant un « quitter » (kill).
 # Le launcher pose DEV_RESTORE=1 sur une reprise (pas sur une session NEUVE) ; on
 # relit le registre pour CE dossier et on respawn un aside --resume par soldat

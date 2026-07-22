@@ -179,8 +179,28 @@ dev() {
   # Boucle : après un detach (Ctrl+Q) ou la fin d'une session, zellij rend la
   # main → on ré-affiche le sélecteur (on peut rejoindre la session ● restée
   # vivante, ou en choisir une autre). Esc dans le sélecteur sort vers le shell.
+  local relf="$HOME/.cache/thedev/relais" rel relkill
   while :; do
     cd "$start" 2>/dev/null
+    # RELAIS : la colonne de gauche du front (`sidebar`) ne peut pas s'attacher à
+    # une autre equipe depuis l'intérieur (elle mourrait avec la session). Elle
+    # écrit son choix ici puis détache ; c'est NOUS, de retour dans la boucle,
+    # qui l'appliquons — sans repasser par le sélecteur.
+    #   <ACTION>\t<cwd>\t<id>\t<session_à_tuer>
+    if [ -f "$relf" ]; then
+      rel=$(head -n1 "$relf" 2>/dev/null); rm -f "$relf"
+      relkill=$(printf '%s' "$rel" | cut -f4)
+      [ -n "$relkill" ] && zellij delete-session --force "$relkill" >/dev/null 2>&1
+      cwd=$(printf '%s' "$rel" | cut -f2)
+      id=$(printf '%s' "$rel" | cut -f3)
+      if [ -d "$cwd" ]; then
+        case "$rel" in
+          RESUME*) _dev_launch "$cwd" "$id" ;;
+          NEW*)    _dev_launch "$cwd" "" ;;
+        esac
+        continue
+      fi
+    fi
     outf=$(mktemp)
     # stdout NON capturé → le TUI garde le terminal ; la décision est écrite dans outf.
     "$etajm" "$(pwd -P)" "$outf"

@@ -496,6 +496,7 @@ class Picker:
         self._busy_ts = 0             # throttle de _refresh_busy
         self.vps = vps_label()        # non-vide si on tourne sur un serveur distant
         self.mode = "sessions"        # 'sessions' | 'browser'
+        self.solo_page = None         # page ouverte SEULE (--page infos|autos), sans accueil derrière
         self.new_open = False         # bouton « nouvelle équipe » déplié ? (cibles ici/ailleurs)
         self.focus = "right"          # 'left' | 'right' — démarre sur ACTIONS (quitter présélectionné)
         self.filt = ""
@@ -517,8 +518,15 @@ class Picker:
         self.rc_lock = threading.Lock()
         self.rc_loading = bool(self.rc_hosts)
         self.rc_stop = threading.Event()   # arrête le polling à la fermeture de l'etat-major
+        # Une SEULE pinentry à l'ouverture : on déverrouille la clé SSH + on monte le
+        # master ControlMaster AVANT le fan-out parallèle (rc + autos). Sans ça, les 4
+        # connexions concurrentes réclament chacune la passphrase (cf. _ssh_warmup).
+        self.ssh_warmed = threading.Event()
         if self.rc_hosts:
+            threading.Thread(target=self._ssh_warmup, daemon=True).start()
             threading.Thread(target=self._rc_worker, daemon=True).start()
+        else:
+            self.ssh_warmed.set()   # pas d'hôte distant → rien à déverrouiller
         self.carte_nodes = None       # écran Commandement : arbre de nœuds (None = chargement)
         self.ci = 0                   # sélection dans la page Commandement (index sélectionnable)
         # Automatisations (timers thedev) : gather en fond pour le bouton + l'écran dédié.
@@ -619,6 +627,22 @@ class Picker:
         self.ai = -1                  # bouton Retour sélectionné par défaut
         self._autos_flat = []
         threading.Thread(target=self._autos_worker, daemon=True).start()   # rafraîchit l'état
+
+    def back_page(self):
+        """« Retour » depuis une page plein écran (infos / la garde).
+
+        Ouverte en solo (`--page`, typiquement lancée depuis la colonne de
+        gauche du front), la page n'a PAS de liste de sessions derrière elle :
+        Retour doit fermer l'écran — le pane flottant se referme et rend la main
+        au front. Sinon, comportement historique : retour à l'accueil.
+        Renvoie True s'il faut sortir de la boucle."""
+        if self.solo_page:
+            return True
+        self.mode = "sessions"
+        self.focus = "left"
+        self.li = self.ri = 0
+        self.loff = 0
+        return False
 
     def enter_infos(self):
         self.mode = "infos"
@@ -886,6 +910,30 @@ class Picker:
         finally:
             self.git_checking = False
 
+    def _ssh_warmup(self):
+        """Déverrouille la clé SSH (agent/trousseau) et monte le master ControlMaster
+        UNE FOIS, séquentiellement, avant que rc_worker/autos_worker ne se connectent
+        en parallèle. À froid la clé est verrouillée : chaque connexion concurrente
+        déclencherait sa propre pinentry (→ 4 saisies à l'ouverture). Ici la 1re
+        connexion qui aboutit déverrouille la clé pour toute la session de login ; les
+        hôtes/threads suivants réutilisent l'agent déverrouillé, sans prompt.
+        `ssh_warmed` est le feu vert que le fan-out attend."""
+        for h in self.rc_hosts:
+            if self.rc_stop.is_set():
+                break
+            try:
+                r = subprocess.run(
+                    ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes",
+                     "-o", "ControlMaster=auto", "-o", "ControlPath=~/.ssh/dev-cm-%C",
+                     "-o", "ControlPersist=60s", h, "true"],
+                    capture_output=True, text=True, timeout=12)
+                if r.returncode == 0:
+                    self.ssh_warmed.set()   # clé déverrouillée → on libère le fan-out
+                    break
+            except Exception:
+                pass
+        self.ssh_warmed.set()   # filet : tous injoignables (pas de pinentry si down) → on libère
+
     def _rc_worker(self):
         """Un thread de rafraîchissement PAR hôte, interrogés EN PARALLÈLE : un VPS
         lent ou injoignable ne retarde plus l'apparition ni le refresh des autres
@@ -893,6 +941,7 @@ class Picker:
         ~6 s). Chaque hôte met à jour sa propre entrée dès que son fetch revient,
         puis reboucle ~4 s. S'arrête quand l'etat-major se ferme (rc_stop)."""
         def host_loop(h):
+            self.ssh_warmed.wait(12)   # attend le déverrouillage SSH (1 pinentry) avant de se connecter
             while not self.rc_stop.is_set():
                 d = fetch_remote_claudes(h)
                 with self.rc_lock:
@@ -926,6 +975,8 @@ class Picker:
         for h in hosts:
             if self.rc_stop.is_set():
                 return
+            if h != "local":
+                self.ssh_warmed.wait(12)   # attend le déverrouillage SSH avant tout fetch distant
             res.extend(fetch_autos(h))
         with self.rc_lock:
             self.autos = res
@@ -1567,45 +1618,24 @@ class Picker:
             col += len(tag) + 1
         if self.msg:
             self.scr.addnstr(H - 1, col, self.msg, max(0, W - col - 1), self.YEL)
-        # bande des métriques limitantes (droite) : libellé + valeur, colorés par
-        # sévérité (vert<70 · jaune<88 · rouge sinon). La COULEUR = la jauge (lisible
-        # et compact). Colonnes │. /data laissé à l'écran Infos (jauges complètes).
-        if self.metrics:
-            def pcol(p):
-                return self.GREEN if p < 70 else (self.YEL if p < 88 else self.RED)
-            segs = []
-            for it in self.metrics:
-                s = None                              # [(libellé DIM), (valeur COLORÉE)]
-                if it[0] == "CLAUDE":
-                    win, p = it[1], it[2]
-                    el = it[3] if len(it) >= 4 else ""
-                    label = ("$ %s/%s " % (el, win)) if el else "$ "
-                    s = [(label, curses.A_DIM), ("%d%%" % p, pcol(p))]
-                elif it[0] == "RAM":
-                    p = it[1]
-                    s = [("RAM ", curses.A_DIM), ("%d%%" % p, pcol(p))]
-                elif it[0] == "DISK":
-                    mnt, p = it[1], it[2]
-                    if mnt == "/":                       # racine seulement (compact)
-                        s = [("disque ", curses.A_DIM), ("%d%%" % p, pcol(p))]
-                elif it[0] == "LOAD":
-                    v, n = it[1], it[2]
-                    c = self.GREEN if v < n * 0.7 else (self.YEL if v < n else self.RED)
-                    s = [("load ", curses.A_DIM), ("%s" % v, c)]
-                elif it[0] == "BAT":
-                    # jauge INVERSE (bas = danger) ; ↑ = en charge (temps → plein),
-                    # ↓ = décharge (temps → extinction)
-                    p, st, tm = it[1], it[2], it[3]
-                    c = self.GREEN if (p >= 40 or st == "chg") else (self.YEL if p >= 15 else self.RED)
-                    arrow = {"chg": "↑", "dis": "↓"}.get(st, "")
-                    s = [("bat%s " % arrow, curses.A_DIM), ("%d%%" % p, c)]
-                    if tm:
-                        s.append((" %s" % tm, curses.A_DIM))
-                if s is None:
+        # Coin bas-droit : HEURE + BATTERIE, rien d'autre. Les jauges détaillées
+        # (fenêtre Claude, RAM, disque, charge) ont déménagé dans la colonne de
+        # gauche du front (`sidebar`), où elles sont visibles en permanence pendant
+        # le travail — les répéter ici ne ferait que charger l'écran.
+        if True:
+            segs = [(time.strftime("%H:%M"), curses.A_DIM)]
+            for it in (self.metrics or []):
+                if it[0] != "BAT":
                     continue
-                if segs:
-                    segs.append((" │ ", curses.A_DIM))
-                segs.extend(s)
+                # Jauge INVERSE (bas = danger) ; ↑ = en charge (temps → plein),
+                # ↓ = décharge (temps → extinction).
+                p, st, tm = it[1], it[2], it[3]
+                c = self.GREEN if (p >= 40 or st == "chg") else (self.YEL if p >= 15 else self.RED)
+                arrow = {"chg": "↑", "dis": "↓"}.get(st, "")
+                segs += [(" │ ", curses.A_DIM), ("bat%s " % arrow, curses.A_DIM),
+                         ("%d%%" % p, c)]
+                if tm:
+                    segs.append((" %s" % tm, curses.A_DIM))
             total = sum(len(t) for t, _ in segs)
             x = W - 2 - total
             if x > col + 1:               # ne pas écraser le badge/msg
@@ -2360,8 +2390,8 @@ class Picker:
                         self.msg = "suppression annulée"
                     continue
                 if ch == 27:
-                    self.mode = "sessions"; self.focus = "left"
-                    self.li = self.ri = 0; self.loff = 0
+                    if self.back_page():
+                        return
                 elif ch == curses.KEY_UP:
                     self.ai = self.ai - 1
                     if self.ai < -1: self.ai = n - 1
@@ -2369,8 +2399,8 @@ class Picker:
                     self.ai = self.ai + 1
                     if self.ai > n - 1: self.ai = -1
                 elif ch in (curses.KEY_ENTER, 10, 13) and self.ai == -1:
-                    self.mode = "sessions"; self.focus = "left"   # bouton Retour
-                    self.li = self.ri = 0; self.loff = 0
+                    if self.back_page():                          # bouton Retour
+                        return
                 elif ch in (curses.KEY_ENTER, 10, 13) and 0 <= self.ai < n:
                     a = self._autos_flat[self.ai]
                     if a["state"] not in ("active", "running"):   # arrêté → réactiver le timer
@@ -2407,8 +2437,8 @@ class Picker:
                 continue
             if self.mode == "infos":                # écran infos : bouton Retour (↵) ou Esc
                 if ch in (27, curses.KEY_ENTER, 10, 13):
-                    self.mode = "sessions"; self.focus = "left"
-                    self.li = self.ri = 0; self.loff = 0
+                    if self.back_page():
+                        return
                 continue
             self.msg = ""
             if ch in (curses.KEY_UP,):
@@ -2575,13 +2605,25 @@ class Picker:
 
 
 def main():
-    cur_dir = os.path.realpath(sys.argv[1]) if len(sys.argv) > 1 else os.getcwd()
-    outfile = sys.argv[2] if len(sys.argv) > 2 else None
+    # `--page infos|autos` ouvre DIRECTEMENT cet écran, seul (sans la liste des
+    # sessions derrière) : c'est ainsi que la colonne de gauche du front les
+    # affiche en plein écran. Retour/Esc ferme alors le process (cf. back_page).
+    argv = sys.argv[1:]
+    page = None
+    if "--page" in argv:
+        i = argv.index("--page")
+        page = argv[i + 1] if i + 1 < len(argv) else None
+        del argv[i:i + 2]
+    cur_dir = os.path.realpath(argv[0]) if argv else os.getcwd()
+    outfile = argv[1] if len(argv) > 1 else None
     picker = [None]
 
     def wrapped(scr):
         p = Picker(scr, cur_dir)
         picker[0] = p
+        if page in ("infos", "autos"):
+            p.solo_page = page
+            (p.enter_infos if page == "infos" else p.enter_autos)()
         p.run()
         p.rc_stop.set()   # stoppe le polling RC en fond
 

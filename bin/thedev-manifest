@@ -95,7 +95,7 @@ cmd_render() {
 
 ## Modèle mental
 
-**machine** → **equipe** (1 projet × 1 machine, tous pairs) → **pages** (\`le front\` = nvim + stack de Claude · \`le camp\` = territoire agents/soutiens · \`la tente\` = terminaux humains) → **panes**.
+**machine** → **equipe** (1 projet × 1 machine, tous pairs) → **pages** (\`le front\` = la sidebar + la stack des soldats · \`le camp\` = territoire la garde/soutiens · \`la tente\` = terminaux humains) → **panes**.
 Un **soutien** = un pane long-running lancé dans le camp. Les equipes s'échangent des **missions** cross-machine (interactif, sur l'abonnement). Vocabulaire complet : \`NAMING.md\` · liens : \`plans/thedev-liens.md\`.
 
 ## Commandes

@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# @thedev commandement carte d'etat-major : l'arbre des equipes, groupe par domaine
-# carte — agrege les cartes d'equipe (equipes/*.md) + le DERNIER debrief de chacune
+# @thedev commandement arbre de commandement : l'arbre des equipes, groupe par domaine
+# arbre — agrege les cartes d'equipe (equipes/*.md) + le DERNIER debrief de chacune
 # (debriefs/<cle>/) du namespace ~/.cache/thedev/command/, et rend l'ARBRE groupe par
 # `domaine`. Tant que l'arbre est plat, le domaine EST le proto-chef. C'est le verbe
 # « donne-moi l'arbre » du contrat (plans/commandement.md, brique 2). Read-only.
 #
-#   carte                 rend l'arbre
+#   arbre                 rend l'arbre (depuis une FEUILLE : demande la flotte complète au sommet)
+#   arbre --local         force la vue LOCALE (ne consulte pas le sommet)
+#   arbre --data          sortie machine-lisible (pour l'état-major)
 #   (ordre vers une feuille = `mission <machine>/<equipe> "<ordre>"`, transport existant)
 set -u
-DATA=0; [ "${1:-}" = "--data" ] && DATA=1   # --data : sortie machine-lisible (pour l'état-major)
+DATA=0; LOCAL=0
+for a in "$@"; do case "$a" in --data) DATA=1 ;; --local) LOCAL=1 ;; esac; done
 ROOT="$HOME/.cache/thedev/command"
 FLEET="$HOME/.cache/thedev/command-fleet"   # sous-arbres remontes par les autres machines
 N_SPAN="${THEDEV_SPAN:-7}"                   # span de controle (meme valeur que `reorg`)
@@ -35,10 +38,39 @@ _ago() {   # $1 = timestamp ISO → "il y a X" (ou vide si illisible)
   elif [ "$d" -lt 86400 ]; then printf 'il y a %dh'   $(( d/3600 ))
   else                          printf 'il y a %dj'   $(( d/86400 )); fi
 }
+_ago_epoch() {   # $1 = epoch → "il y a X" (ou vide)
+  local now d; case "${1:-}" in ''|*[!0-9]*) return 0;; esac
+  now=$(date +%s); d=$(( now - $1 )); [ "$d" -lt 0 ] && d=0
+  if   [ "$d" -lt 3600 ];  then printf 'il y a %dmin' $(( d/60 ))
+  elif [ "$d" -lt 86400 ]; then printf 'il y a %dh'   $(( d/3600 ))
+  else                          printf 'il y a %dj'   $(( d/86400 )); fi
+}
+# HEADLINE d'une équipe = corps du `resume` partagé (root $1, clé $2), replié sur 1 ligne.
+# Lu depuis le root courant → marche pour le local ET le miroir de flotte.
+_resume_of()     { local f="$1/resume/$2.md"; [ -f "$f" ] && tail -n +2 "$f" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g; s/ *$//'; }
+_resume_epoch()  { local f="$1/resume/$2.md"; [ -f "$f" ] && head -n1 "$f" 2>/dev/null | cut -f1; }
+# nb de blocages OUVERTS (open sans done) — ce qu'un chef veut voir en premier
+_bloc_open_of()  {
+  local f="$1/blocage/$2.md"; [ -f "$f" ] || { printf 0; return; }
+  awk -F'\t' '$3=="open"&&$4!=""{o[$4]=1} $3=="done"&&$4!=""{o[$4]=0} END{n=0;for(k in o)if(o[k])n++;print n}' "$f"
+}
 
 # titre conscient du sommet + racines a lire (local + chaque machine remontee)
 me="$(machine_self)"
 sommet="$(grep -vE '^\s*#|^\s*$' "$HOME/.config/thedev-sommet" 2>/dev/null | head -n1 | tr -d '[:space:]')"
+
+# ── Vue de flotte depuis une FEUILLE ────────────────────────────────────────────
+# La vue COMPLÈTE (toutes les machines) vit sur le SOMMET, qui tient le miroir. Si on
+# n'est PAS le sommet et qu'il est déclaré, on lui demande l'arbre entier (lecture
+# seule, ssh borné, `bash -lc` pour le PATH, jamais `-p`). Ainsi le chef distant est
+# visible depuis n'importe quelle machine. Fallback silencieux sur la vue locale si le
+# sommet est injoignable. `--local` court-circuite (et évite toute récursion côté sommet).
+if [ "$LOCAL" = 0 ] && [ -n "$sommet" ] && [ "$me" != "$sommet" ] && [ "$(hostname -s)" != "$sommet" ]; then
+  # résilient au rollout : le sommet peut encore avoir l'ancien nom `carte` (avant maj).
+  _rq='arbre --local || carte'; [ "$DATA" = 1 ] && _rq='arbre --data --local || carte --data'
+  remote="$(ssh -o ConnectTimeout=6 -o BatchMode=yes "$sommet" "bash -lc '$_rq'" 2>/dev/null)"
+  [ -n "$remote" ] && { printf '%s\n' "$remote"; exit 0; }
+fi
 if [ -n "$sommet" ] && { [ "$me" = "$sommet" ] || [ "$(hostname -s)" = "$sommet" ]; }; then
   title="⌘ général — $me  ·  tu es au sommet"
 elif [ -n "$sommet" ]; then
@@ -101,6 +133,9 @@ for r in "${roots[@]}"; do
     eq=$(_fm "$f" equipe); dom=$(_fm "$f" domaine); st=$(_fm "$f" statut)
     mc=$(_fm "$f" machine); cwd=$(_fm "$f" cwd)
     [ -n "$eq" ]  || eq="$key"
+    # override de regroupement (écrit par `partition`) : prime sur le domaine déclaré.
+    # Lu depuis $r → local ET flotte.
+    [ -f "$r/grouping/$key" ] && { g=$(head -n1 "$r/grouping/$key" 2>/dev/null); [ -n "$g" ] && dom="$g"; }
     [ -n "$dom" ] || dom="(sans domaine)"
     [ -n "$st" ]  || st="actif"
     [ -n "$mc" ]  || mc="$me"
@@ -122,6 +157,14 @@ for r in "${roots[@]}"; do
         ago=$(_ago "$(_fm "$last" quand)")
       fi
     fi
+    # ── Rebranchement 3-temps : le HEADLINE vient du `resume` partagé (le présent
+    # authored) s'il existe → il prime sur le sujet de pane / le débrief mort. Les
+    # blocages ouverts s'affichent en tête (⚠N). Fraîcheur = epoch du resume si l'équipe
+    # est fermée/distante. Lu depuis $r → local ET flotte, sans distinction.
+    rz=$(_resume_of "$r" "$key"); [ -n "$rz" ] && etat="$rz"
+    if [ "$live" = 0 ]; then rza=$(_ago_epoch "$(_resume_epoch "$r" "$key")"); [ -n "$rza" ] && ago="$rza"; fi
+    nbloc=$(_bloc_open_of "$r" "$key")
+    [ "${nbloc:-0}" -gt 0 ] 2>/dev/null && etat="⚠${nbloc} · ${etat}"
     # live en 1er : le seul champ possiblement VIDE (ago) reste en DERNIER, où le
     # collapse de champ vide par `read` (tab = whitespace) est sans conséquence.
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$live" "$mc" "$dom" "$eq" "$st" "$etat" "$ago" >> "$tmp"

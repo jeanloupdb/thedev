@@ -4,6 +4,14 @@ Implémentation de la doctrine [`VISION.md`](../VISION.md) §« Diriger une arm�
 d'agents » et du vocabulaire [`NAMING.md`](../NAMING.md). On construit l'arbre
 **par les racines**, pas par la cime.
 
+> **Mise à jour — juillet 2026.** Depuis la rédaction initiale :
+> - la commande `carte` a été **renommée `arbre`** (plus explicite) — lire « arbre »
+>   partout où ce doc dit « carte » *la commande* (« carte d'équipe » reste le concept).
+> - Le **débrief-au-quit est SUPPRIMÉ** : le contexte ne se résume plus à la fermeture,
+>   il **remonte en continu** (brique 4 ci-dessous).
+> - **Briques 4 (mémoire à 3 temps) et 5 (chef convocable + partition) posées** — voir
+>   en bas. La remontée est **event-driven à la fin de tour** (plus le timer systemd).
+
 ## Le modèle, en une page
 
 La hiérarchie est un **arbre n-aire auto-équilibré** (un B-tree *sémantique*) :
@@ -421,11 +429,70 @@ commande **`reorg`**.
    *visible* dès maintenant : déclarer des `domaine:` communs dans
    `.thedev/equipe.md` (≥2 équipes même domaine → sous-chef `⬡`).
 
+## Brique 4 — la mémoire hiérarchique, les 3 temps *(posée)*
+
+Remplace le débrief-au-quit. Principe : **les faits remontent tout seuls (mécanique,
+0 token) ; l'intelligence ne se paie qu'à la lecture (IA, lazy)**. Chaque nœud a un
+contexte **borné** ; le chargement borné × span ≤ 7 = contexte de chef borné.
+
+Quatre commandes, chacune un **temps** distinct, toutes signées + datées :
+
+- **`note`** — *le présent* (état courant, mutable). **1 fichier par soldat**
+  (`command/notes/<équipe>/<sid>.md`) → zéro contention, auto-signé depuis le pane.
+  `add`/`ls [--all|<sig>]`/`get`/`set`/`rm` (lot + plages). Quota par soldat + conseil
+  de dosage (`↻` au-delà de ~7 lignes). **`note gc`** purge les soldats *vraiment*
+  quittés (cohorte `reg-soldat`, jamais sur `SessionEnd`, jamais l'équipe fermée).
+- **`resume`** — *le headline PARTAGÉ de l'équipe*, ce que voit le chef. Un objet
+  commun, n'importe quel soldat l'édite (écriture atomique, dernier gagne + garde
+  optimiste). **Récursif** : chaque nœud a un `resume` (équipe → co-écrit par ses
+  soldats ; chef → écrit par la session chef). Un chef **concatène les `resume`
+  bornés** de ses enfants = son contexte, borné.
+- **`jalon`** — *le passé* (append-only, horodaté, jamais réécrit). **Fil complet
+  reconstructible** : fusionne jalons manuels ⊕ commits git ⊕ événements `blocage`
+  ⊕ changements `resume`, triés par date. Remontée triviale = tri par epoch.
+- **`blocage`** — *l'attente* (log append-only, `open`/`done`). Ouverts d'abord, les
+  plus vieux en tête (rouge). N'importe qui résout.
+
+**Le réflexe est IMPÉRATIF, pas une invitation** (leçon : un rappel mou ne change pas
+le comportement — le concepteur lui-même l'a ignoré). Briefing (`thedev-prompt.md`) en
+règle dure : *après un commit / un livrable, le `resume` doit bouger*. Nudge `[resume]`
+**déclenché sur commit** (HEAD changé + resume pas touché). `resume --suggest` pré-remplit
+un brouillon (friction en moins).
+
+**Remontée (event-driven, gratuite).** `remonter` = `rsync -az --delete` de **tout**
+`~/.cache/thedev/command/` → le sommet stocke **l'arbre mémoire complet** (pas juste les
+façades : tiny, texte). Déclenché à la **fin de tour** (hook `Stop`, débouncé 45 s) +
+flush au close. **Stocke tout, charge borné, descends dans le miroir toujours joignable**
+→ le grand chef sur jlax répond au survol *et* au détail, machine éteinte ou pas.
+
+## Brique 5 — le chef convocable + la partition sémantique *(posée)*
+
+- **`chef [<machine>|<machine>/<domaine>]`** — convoque un Claude **interactif**
+  (abonnement, jamais `-p`) briefé avec le contexte agrégé du périmètre (via `arbre`,
+  qui lit local + miroir). Réconcilié avec la fonction shell historique : **sans arg =
+  le général** (persistant, sur le sommet, briefé `arbre` → voit tout via le miroir) ;
+  **avec arg = brief LOCAL** de cette machine/domaine. Ouvrable depuis la page
+  Commandement (`↵` sur un nœud → décision `CHEF`, `dev()` lance dans le pane courant).
+- **`partition`** — la **seule étape intelligente** de l'arbre (résout le `⚠ réorg`).
+  `status`/`prep`/`apply`. La **décision** (regrouper N équipes par thème, ≤ span
+  domaines bien nommés) est faite par le Claude qui lance `apply` (abonnement) ; le
+  binaire fournit la matière + l'écriture sûre (**verrou par nœud + re-check du
+  snapshot**). Résultat = override `grouping/<clé>`, lu par `arbre`, non intrusif.
+  État dérivé **persistant** : le nudge `[reorg]` remonte à chaque session tant que la
+  machine déborde (état auto-clearing, pas de file).
+
+**Page Commandement** (`etat-major`) — gauche = **commandement pur** (général → chefs →
+sous-chefs, jamais les feuilles) ; droite = **enfants directs** du nœud (sous-chefs ou
+sessions) ; 1ʳᵉ ligne `‹ Retour` ; blocages en **rouge** ; sélection douce. Depuis une
+feuille, `arbre` interroge le sommet → la **flotte complète visible de partout**.
+
 ## Suite
 
-- **Le chef-agent convocable** — une vraie session Claude briefée qui tient le
-  contexte agrégé de *sa* branche, répond sans réveiller ses feuilles, et
-  re-partitionne sémantiquement (résout le ⚠). Même moule que le `chef`/général
-  déjà bâti (`dev-launcher.sh`), pointé sur un sous-arbre.
-- **`equipe forget`** — retirer une équipe (supprimer sa carte) pour que la
-  **fusion** puisse souffler.
+- **`equipe forget`** — retirer une équipe (supprimer sa carte) pour que la **fusion**
+  d'étages puisse souffler (aujourd'hui la respiration ne va que dans le sens scission).
+- **Automatiser un chef** (déféré, event-driven quand ce sera fait) : lecture périodique
+  du contexte agrégé → rapport Telegram / relance de sessions. Le socle (mémoire remontée
+  + chef convocable) est prêt ; ne reste qu'un déclencheur — **jamais** `claude -p`.
+- **Descente fine distante** : depuis un chef local, `note ls --all` d'une équipe *sur
+  une autre machine* n'est pleine que via le sommet (le miroir a le détail) — ouvrir le
+  chef *sur* le sommet pour creuser plus loin.

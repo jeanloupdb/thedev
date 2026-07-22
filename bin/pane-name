@@ -6,7 +6,7 @@
 #
 # À utiliser à la place de `zellij action rename-pane` brut quand tu (soldat)
 # nommes ton propre pane « <sujet> » (sans glyphe : le losange ◆ est ajouté
-# automatiquement quand tu travailles, retiré au repos). Voir zellij-pane-prompt.md.
+# automatiquement quand tu travailles, retiré au repos). Voir thedev-prompt.md.
 
 # Assainit : le registre est du TSV (1 ligne par soldat) → tab/newline interdits
 # dans le label, sinon la ligne se corrompt.
@@ -39,5 +39,14 @@ fi
 
 # Persiste le nom pour CETTE conversation (id exposé par Claude dans l'env).
 [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && reg-soldat setname "$CLAUDE_CODE_SESSION_ID" "$name" 2>/dev/null
+
+# Rafraîchit sid → pane_id (posé au SessionStart par soldat-track). Utile aux
+# soldats déjà ouverts AVANT l'arrivée de ce marqueur : le premier renommage
+# suffit à les rendre joignables depuis la colonne de gauche.
+if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && [ -n "${ZELLIJ_PANE_ID:-}" ]; then
+  mkdir -p "$HOME/.cache/soldat-panes" 2>/dev/null
+  printf '%s\t%s\n' "$ZELLIJ_PANE_ID" "${ZELLIJ_SESSION_NAME:-}" \
+    > "$HOME/.cache/soldat-panes/$CLAUDE_CODE_SESSION_ID" 2>/dev/null
+fi
 
 exit 0

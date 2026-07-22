@@ -191,6 +191,8 @@ keybinds clear-defaults=true {
                 floating true
                 close_on_exit true
                 name "quitter"
+                width "52"
+                height "9"
             }
         }
 

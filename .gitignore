@@ -2,3 +2,6 @@
 thedev-machines
 claude/vps-context/
 *.bak.*
+
+# artefacts Python (bin/ contient des scripts .py sans extension)
+__pycache__/

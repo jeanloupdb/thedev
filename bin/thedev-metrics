@@ -16,6 +16,40 @@ ram_pct()  { awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} END{ if(t) printf "%
 disk_pct() { df -P "$1" 2>/dev/null | awk 'NR==2{gsub(/%/,"",$5); print $5}'; }
 load1()    { awk '{print $1}' /proc/loadavg 2>/dev/null; }
 
+# Batterie (portable uniquement — silencieux sur serveur sans BAT*).
+# BAT_PCT=% · BAT_ST=dis|chg|full · BAT_TIME=XhMM restant (avant vide si décharge,
+# avant pleine charge si charge ; vide si courant nul/inconnu). Interfaces sysfs :
+# charge_now/current_now (µAh/µA) OU energy_now/power_now (µWh/µW) selon le firmware.
+BAT_PCT="" BAT_ST="" BAT_TIME=""
+for _b in /sys/class/power_supply/BAT*; do
+  [ -e "$_b/capacity" ] || continue
+  BAT_PCT=$(cat "$_b/capacity" 2>/dev/null)
+  case "$(cat "$_b/status" 2>/dev/null)" in
+    Discharging) BAT_ST=dis;;
+    Charging)    BAT_ST=chg;;
+    Full)        BAT_ST=full;;
+  esac
+  now=""; full=""; rate=""
+  if [ -e "$_b/charge_now" ]; then
+    now=$(cat "$_b/charge_now" 2>/dev/null); full=$(cat "$_b/charge_full" 2>/dev/null)
+    rate=$(cat "$_b/current_now" 2>/dev/null)
+  elif [ -e "$_b/energy_now" ]; then
+    now=$(cat "$_b/energy_now" 2>/dev/null); full=$(cat "$_b/energy_full" 2>/dev/null)
+    rate=$(cat "$_b/power_now" 2>/dev/null)
+  fi
+  if [ -n "$rate" ] && [ "$rate" -gt 0 ] 2>/dev/null && [ -n "$now" ]; then
+    secs=""
+    case "$BAT_ST" in
+      dis) secs=$(( now * 3600 / rate ));;
+      chg) [ -n "$full" ] && secs=$(( (full - now) * 3600 / rate ));;
+    esac
+    if [ -n "$secs" ] && [ "$secs" -gt 0 ] 2>/dev/null; then
+      BAT_TIME=$(printf '%dh%02d' $(( secs / 3600 )) $(( (secs % 3600) / 60 )))
+    fi
+  fi
+  break   # première batterie seulement
+done
+
 RAM=$(ram_pct)
 DISKS=()
 for m in / /data; do
@@ -45,6 +79,7 @@ if [ "${1:-}" = "--raw" ]; then
   [ -n "$RAM" ] && printf 'RAM\t%s\n' "$RAM"
   for d in "${DISKS[@]}"; do printf 'DISK\t%s\t%s\n' "${d%%:*}" "${d##*:}"; done
   [ -n "$LOAD" ] && printf 'LOAD\t%s\t%s\n' "$LOAD" "$ncpu"
+  [ -n "$BAT_PCT" ] && printf 'BAT\t%s\t%s\t%s\n' "$BAT_PCT" "$BAT_ST" "$BAT_TIME"
   exit 0
 fi
 
@@ -55,16 +90,37 @@ col_pct() { if   [ "${1:-0}" -lt 70 ] 2>/dev/null; then printf '%s' "$G"
            else printf '%s' "$R"; fi; }
 out=""
 add() { [ -n "$out" ] && out+="${D} │ ${Z}"; out+="$1"; }   # colonnes │ ; libellé DIM, valeur COLORÉE
-[ -n "$CLAUDE5H" ] && add "${D}\$ ${CLAUDE5H_EL:+$CLAUDE5H_EL/5h }${Z}$(col_pct "$CLAUDE5H")${CLAUDE5H}%${Z}"
-[ -n "$RAM" ] && add "${D}RAM ${Z}$(col_pct "$RAM")${RAM}%${Z}"
-for d in "${DISKS[@]}"; do
-  m="${d%%:*}"; p="${d##*:}"
-  [ "$m" = "/" ] || continue          # bande compacte : disque racine seulement (/data → écran Infos)
-  add "${D}disque ${Z}$(col_pct "$p")${p}%${Z}"
-done
-if [ -n "$LOAD" ]; then
-  lc=$(awk -v l="$LOAD" -v n="$ncpu" 'BEGIN{ if(l<n*0.7)print"g"; else if(l<n)print"y"; else print"r" }')
-  case "$lc" in g) c=$G;; y) c=$Y;; *) c=$R;; esac
-  add "${D}load ${Z}${c}${LOAD}${Z}"
+
+# `--minimal` = HEURE + BATTERIE, rien d'autre. Les jauges détaillées (fenêtre
+# Claude, RAM, disque, charge) vivent désormais dans la colonne de gauche du
+# front (`sidebar`), où elles sont visibles en permanence pendant le travail : les
+# répéter dans la barre du bas ne ferait que charger l'écran.
+if [ "${1:-}" = "--minimal" ]; then
+  add "${D}$(date +%H:%M)${Z}"
+else
+  [ -n "$CLAUDE5H" ] && add "${D}\$ ${CLAUDE5H_EL:+$CLAUDE5H_EL/5h }${Z}$(col_pct "$CLAUDE5H")${CLAUDE5H}%${Z}"
+  [ -n "$RAM" ] && add "${D}RAM ${Z}$(col_pct "$RAM")${RAM}%${Z}"
+  for d in "${DISKS[@]}"; do
+    m="${d%%:*}"; p="${d##*:}"
+    [ "$m" = "/" ] || continue        # bande compacte : disque racine seulement (/data → écran Infos)
+    add "${D}disque ${Z}$(col_pct "$p")${p}%${Z}"
+  done
+  if [ -n "$LOAD" ]; then
+    lc=$(awk -v l="$LOAD" -v n="$ncpu" 'BEGIN{ if(l<n*0.7)print"g"; else if(l<n)print"y"; else print"r" }')
+    case "$lc" in g) c=$G;; y) c=$Y;; *) c=$R;; esac
+    add "${D}load ${Z}${c}${LOAD}${Z}"
+  fi
+fi
+if [ -n "$BAT_PCT" ]; then
+  # Jauge INVERSE (bas = danger) : vert≥40 · jaune≥15 · rouge sinon. ↑ = en charge
+  # (temps → pleine charge), ↓ = décharge (temps → extinction). Rien si full/inconnu.
+  if   [ "$BAT_PCT" -ge 40 ] 2>/dev/null; then bc=$G
+  elif [ "$BAT_PCT" -ge 15 ] 2>/dev/null; then bc=$Y
+  else bc=$R; fi
+  [ "$BAT_ST" = chg ] && bc=$G
+  ba=""; case "$BAT_ST" in chg) ba="↑";; dis) ba="↓";; esac
+  seg="${D}bat${ba} ${Z}${bc}${BAT_PCT}%${Z}"
+  [ -n "$BAT_TIME" ] && seg+="${D} ${BAT_TIME}${Z}"
+  add "$seg"
 fi
 printf '%s' "$out"

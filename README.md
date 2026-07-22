@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚔️ thedev
+# thedev
 
 ### Pars à la conquête du monde avec une armée d'agents.
 

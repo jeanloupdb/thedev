@@ -20,9 +20,19 @@ render() {
     # sélectionné : pas de métriques (bruit), action claire et surlignée
     printf '\r\033[K %s%s  ＋  Nouveau soldat  —  Entrée pour ouvrir  %s' "$rev" "$g" "$r"
   else
-    # au repos : action discrète + métriques limitantes à droite (source thedev-metrics)
-    local metrics; metrics="$(thedev-metrics 2>/dev/null)"
-    printf '\r\033[K %s＋ Nouveau soldat%s  %s[Entrée]%s   %s' "$g" "$r" "$d" "$r" "$metrics"
+    # au repos : action discrète + métriques limitantes COLLÉES au bord droit
+    # (source thedev-metrics). Largeur visible = métriques sans les ANSI ;
+    # si le pane est trop étroit pour l'alignement, retour à l'affichage inline.
+    local metrics plain w col
+    metrics="$(thedev-metrics --minimal 2>/dev/null)"
+    plain=$(printf '%s' "$metrics" | sed 's/\x1b\[[0-9;]*m//g')
+    w=$(tput cols 2>/dev/null); w=${w:-${COLUMNS:-80}}
+    col=$(( w - ${#plain} ))
+    printf '\r\033[K %s＋ Nouveau soldat%s  %s[Entrée]%s' "$g" "$r" "$d" "$r"
+    if [ -n "$metrics" ]; then
+      if [ "$col" -gt 32 ]; then printf '\033[%dG%s' "$col" "$metrics"
+      else printf '   %s' "$metrics"; fi
+    fi
   fi
 }
 

@@ -173,11 +173,61 @@ cmd_etat() {
   echo "✓ état de suivi mis à jour."
 }
 
+# ── equipe sweep : matérialise les cartes MANQUANTES des équipes locales récentes ─
+# La carte est l'unité qui REMONTE au sommet (donc à l'accueil/Commandement). Or elle
+# n'était créée qu'au SessionStart d'un soldat géré : une équipe créée hors de ce
+# chemin (ou avant l'arrivée du commandement) reste SANS carte → absente de l'arbre,
+# « sous la tutelle d'aucun chef ». Le sweep aligne l'arbre sur la liste ÉQUIPES de
+# l'accueil (même source : `engine list`) : toute équipe active depuis ≤ N jours et
+# dont le dossier existe reçoit une carte minimale sous son chef-machine (1 machine =
+# 1 chef). Idempotent (ne touche pas les cartes existantes → resume/domaine préservés).
+# Best-effort ; appelé au SessionStart (arrière-plan) et lançable à la main.
+cmd_sweep() {
+  local days="${THEDEV_ARBRE_DAYS:-10}" me eng now cwd mts base key out branch dom g ts
+  me="$(machine_name)"
+  eng="$(cd "$(dirname "$(readlink -f -- "$0")")" 2>/dev/null && pwd)/engine"
+  [ -x "$eng" ] || eng="$(command -v engine 2>/dev/null)"
+  [ -n "$eng" ] && [ -x "$eng" ] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  mkdir -p "$ROOT/equipes" || return 0
+  now="$(date +%s)"
+  "$eng" list --all --json 2>/dev/null \
+    | jq -rc 'select(.cwd) | [.cwd, (.mtime // "")] | @tsv' 2>/dev/null \
+    | while IFS=$'\t' read -r cwd mts; do
+        [ -n "$cwd" ] && [ -d "$cwd" ] || continue
+        base="$(basename "$cwd")"
+        key="$(printf '%s__%s' \
+                 "$(printf '%s' "$me"   | tr -c 'A-Za-z0-9._-' '_')" \
+                 "$(printf '%s' "$base" | tr -c 'A-Za-z0-9._-' '_')")"
+        out="$ROOT/equipes/$key.md"
+        [ -f "$out" ] && continue                       # déjà cartée → on ne touche pas
+        ts="$(date -d "$mts" +%s 2>/dev/null || echo 0)"
+        [ $(( (now - ts) / 86400 )) -le "$days" ] || continue
+        branch="$(git -C "$cwd" symbolic-ref --quiet --short HEAD 2>/dev/null)"; [ -n "$branch" ] || branch="-"
+        dom="$base"                                     # défaut singleton ; override `partition` respecté
+        [ -f "$ROOT/grouping/$key" ] && { g="$(head -n1 "$ROOT/grouping/$key" 2>/dev/null)"; [ -n "$g" ] && dom="$g"; }
+        {
+          printf -- '---\n'
+          printf 'equipe: %s/%s\n' "$me" "$base"
+          printf 'machine: %s\n'   "$me"
+          printf 'cwd: %s\n'       "$cwd"
+          printf 'branche: %s\n'   "$branch"
+          printf 'domaine: %s\n'   "$dom"
+          printf 'statut: actif\n'
+          printf 'chef:\n'
+          printf 'carte_declaree: non\n'
+          printf 'genere_le: %s\n' "$(date -Iseconds)"
+          printf -- '---\n\n'
+        } > "$out" 2>/dev/null && printf 'carte créée : %s\n' "$key"
+      done
+}
+
 cmd="${1:-}"; shift 2>/dev/null || true
 case "$cmd" in
   card)    cmd_card    "$@" ;;
   show)    cmd_show    "$@" ;;
   debrief) cmd_debrief "$@" ;;
   etat)    cmd_etat    "$@" ;;
-  *) echo "usage: equipe card|show|debrief|etat …" >&2; exit 1 ;;
+  sweep)   cmd_sweep   "$@" ;;
+  *) echo "usage: equipe card|show|debrief|etat|sweep …" >&2; exit 1 ;;
 esac

@@ -1,0 +1,265 @@
+#!/usr/bin/env bash
+# @thedev ui landing animée du boot d'un pane claude — île nature + oiseaux
+# Scène générée à CHAQUE lancement : une ÎLE verte flottante, centrée dans
+# l'océan noir de l'écran (relief, arbres façon Minecraft, herbe), dans le code
+# couleur du logo (dégradé de verts). Vivante : deux oiseaux traversent le ciel
+# en battant des ailes, l'herbe ondule, les feuillages frémissent, les étoiles
+# scintillent. Citation de stratège en pied, tirée au hasard. Tourne jusqu'à
+# être tué (soldat-pane l'arrête quand claude prend l'écran) ; pane trop petit
+# → spinner minimal.
+set -u
+
+L1='▀█▀ █ █ █▀▀ █▀▄ █▀▀ █ █'
+L2=' █  █▀█ █▀▀ █ █ █▀▀ ▀▄▀'
+L3=' ▀  ▀ ▀ ▀▀▀ ▀▀  ▀▀▀  ▀ '
+LG=(151 108 65)            # dégradé du logo, haut → bas
+GREENS=(65 108 151)        # verts de la nature = EXACTEMENT ceux du logo (pâles)
+BROWN=94
+Z=$'\033[0m'; D=$'\033[2m'
+
+QUOTES=(
+'« La rapidité est l’essence de la guerre. » — Sun Tzu'
+'« L’art suprême de la guerre est de soumettre l’ennemi sans combattre. » — Sun Tzu'
+'« Qui veut la paix prépare la guerre. » — Végèce'
+'« N’interrompez jamais un ennemi qui est en train de faire une erreur. » — Napoléon'
+'« La stratégie est un système d’expédients. » — Moltke'
+)
+quote=${QUOTES[RANDOM % ${#QUOTES[@]}]}
+
+at() { printf '\033[%d;%dH%s' "$1" "$2" "$3"; }   # row col str
+fg() { printf '\033[38;5;%dm' "$1"; }
+
+cols=0; lines=0; GTOP=0; IX0=0; IX1=0; IW=0; LT=0; LC=0
+declare -a GH TX TST FX FY GRX GRT SX SY BX BY0 BYC
+
+dims() {  # exit ≠ 0 tant que le pty n'a pas de taille utilisable (boot du pane : 0×0)
+  local d; d=$(stty size </dev/tty 2>/dev/null)
+  lines=${d%% *}; cols=${d##* }
+  [ -n "$cols" ] && [ -n "$lines" ] || { cols=$(tput cols 2>/dev/null); lines=$(tput lines 2>/dev/null); }
+  [ -n "$cols" ] || cols=80; [ -n "$lines" ] || lines=24
+  [ "$cols" -ge 4 ] 2>/dev/null && [ "$lines" -ge 2 ] 2>/dev/null
+}
+
+logo_draw() {  # $1 = tick — reflet lumineux qui balaie le logo (l'animation de
+  # chargement) : fenêtre de 4 colonnes en vert très pâle qui traverse les
+  # lettres de gauche à droite (~6 s), puis ~2 s de repos. Cycle de 40 ticks.
+  local p=$(( $1 % 40 )) rows r row seg x ch
+  rows=("$L1" "$L2" "$L3")
+  for r in 0 1 2; do
+    row=${rows[r]}; seg=""
+    for ((x=0; x<${#row}; x++)); do
+      ch=${row:x:1}
+      if [ "$ch" = " " ]; then seg+=" "
+      elif (( p < 29 && x >= p - 3 && x <= p )); then seg+=$'\033[1;38;5;194m'"$ch"
+      else seg+=$'\033[1;38;5;'"${LG[r]}m$ch"
+      fi
+    done
+    at $(( LT + r )) "$LC" "$seg$Z"
+  done
+}
+
+grass_draw() {  # $1 = phase du vent (0/1) — touffes qui alternent , et ' ;
+  # herbes HAUTES (2 cases) dont la pointe se couche avec le vent (| ↔ /)
+  local i x st ch
+  for i in "${!GRX[@]}"; do
+    x=${GRX[i]}; st=$(( GTOP - GH[x] ))
+    if (( GRT[i] )); then
+      ch='|'; (( (x + $1) % 2 )) && ch='/'
+      at $(( st - 2 )) "$x" "$(fg 108)${ch}${Z}"
+      at $(( st - 1 )) "$x" "$(fg 65)|${Z}"
+    else
+      ch=","; (( (x + $1) % 2 )) && ch="'"
+      at $(( st - 1 )) "$x" "$(fg 108)${ch}${Z}"
+    fi
+  done
+}
+
+canopy_draw() {  # $1 = phase du vent (0/1) — la CIME penche d'une case avec le
+  # vent et le feuillage remélange ses verts (bruissement). Recale FX/FY (cellules
+  # vivantes du feuillage) pour le frémissement du tick courant.
+  local sway=$1 i tx st cy w off cx r
+  FX=(); FY=()
+  for i in "${!TX[@]}"; do
+    tx=${TX[i]}; st=${TST[i]}
+    for ((r=st-5; r<=st-3; r++)); do             # efface l'ancienne canopée (±3)
+      for ((cx=tx-3; cx<=tx+3; cx++)); do
+        (( cx < 1 || cx > cols )) && continue
+        at "$r" "$cx" " "
+      done
+    done
+    for cy in 3 4 5; do                          # rangs 3-5-3 ; la cime penche
+      w=1; off=0
+      (( cy == 4 )) && w=2
+      (( cy == 5 )) && off=$sway
+      for ((cx=tx-w+off; cx<=tx+w+off; cx++)); do
+        (( cx < 1 || cx > cols )) && continue
+        at $(( st - cy )) "$cx" "$(fg "${GREENS[RANDOM % 3]}")█$Z"
+        FX+=("$cx"); FY+=("$(( st - cy ))")
+      done
+    done
+  done
+}
+
+scene() {  # (re)génère l'île + dessine tout le statique pour cols×lines
+  printf '\033[2J'
+  # — composition CENTRÉE en Y : bloc = logo (3) + ciel (gap) + arbres/île (11)
+  local gap=$(( (lines - 18) / 3 ))
+  (( gap < 4 )) && gap=4; (( gap > 12 )) && gap=12
+  local bh=$(( gap + 13 ))
+  LT=$(( (lines - bh) / 2 )); (( LT < 2 )) && LT=2
+  GTOP=$(( LT + gap + 10 ))                 # surface de l'île (logo 3 + gap + arbre 7)
+  (( GTOP > lines - 5 )) && GTOP=$(( lines - 5 ))
+  # — logo, dégradé de verts (le reflet de chargement est animé par logo_draw)
+  local lc=$(( (cols - ${#L1}) / 2 )); (( lc < 1 )) && lc=1
+  LC=$lc
+  logo_draw 39                              # p=39 → pas de reflet sur la 1re frame
+  # — l'île : bande centrée (~55 % du pane)
+  IW=$(( cols * 40 / 100 )); (( IW < 34 )) && IW=34; (( IW > cols - 8 )) && IW=$(( cols - 8 ))
+  IX0=$(( (cols - IW) / 2 )); IX1=$(( IX0 + IW - 1 ))
+  # relief : marche aléatoire douce, effilée vers 0 aux deux rives
+  local h=0 x r s top hmax
+  GH=()
+  for ((x=IX0; x<=IX1; x++)); do
+    if (( RANDOM % 7 == 0 )); then
+      (( RANDOM % 2 )) && h=$(( h + 1 )) || h=$(( h - 1 ))
+      (( h < 0 )) && h=0; (( h > 2 )) && h=2
+    fi
+    hmax=$(( (x - IX0) / 3 )); (( (IX1 - x) / 3 < hmax )) && hmax=$(( (IX1 - x) / 3 ))
+    (( hmax > 2 )) && hmax=2
+    (( h > hmax )) && h=$hmax
+    GH[x]=$h
+  done
+  # corps de l'île : surface ▄, damier de verts, dessous en gradins qui
+  # s'effilent et s'assombrissent (l'île FLOTTE dans le noir)
+  local i2=$(( IW / 10 + 2 )) i3=$(( IW / 4 ))
+  for ((r=GTOP-2; r<=GTOP+2; r++)); do
+    s=""
+    for ((x=IX0; x<=IX1; x++)); do
+      top=$(( GTOP - GH[x] ))
+      if   (( r <= GTOP )); then
+        if   (( r <  top )); then s+=" "
+        elif (( r == top )); then s+="${D}$(fg 108)▄${Z}"
+        else s+="${D}$(fg 65)█${Z}"
+        fi
+      elif (( r == GTOP+1 )); then
+        if (( x >= IX0 + i2 && x <= IX1 - i2 )); then s+="${D}$(fg 65)█${Z}"; else s+=" "; fi
+      else
+        if (( x >= IX0 + i3 && x <= IX1 - i3 )); then s+="${D}$(fg 65)▀${Z}"; else s+=" "; fi
+      fi
+    done
+    at "$r" "$IX0" "$s$Z"
+  done
+  # — l'arbre (unique), tronc brun + canopée en blocs de verts mélangés
+  local tx st
+  tx=$(( IX0 + 8 + RANDOM % (IW - 16) ))
+  st=$(( GTOP - GH[tx] ))
+  TX=("$tx"); TST=("$st")
+  at $(( st - 1 )) "$tx" "${D}$(fg $BROWN)█${Z}"
+  at $(( st - 2 )) "$tx" "${D}$(fg $BROWN)█${Z}"
+  canopy_draw 0                          # canopée : rangs 3-5-3, remplit FX/FY
+  # — herbe : touffes + herbes HAUTES clairsemées, jamais collées au tronc
+  GRX=(); GRT=()
+  local ng=$(( IW / 5 )) i ok cx
+  for ((i=0; i<ng; i++)); do
+    x=$(( IX0 + 2 + RANDOM % (IW - 4) )); ok=1
+    for cx in "${TX[@]:-}"; do [ -n "$cx" ] && (( x > cx - 3 && x < cx + 3 )) && ok=0; done
+    (( ok )) || continue
+    GRX+=("$x"); GRT+=("$(( RANDOM % 5 < 2 ? 1 : 0 ))")   # ~40 % d'herbes hautes
+  done
+  grass_draw 0
+  # — étoiles (tout le ciel au-dessus de l'île, hors du logo)
+  SX=(); SY=()
+  local rmax=$(( GTOP - 9 )); (( rmax < 3 )) && rmax=3
+  for ((i=0; i<5; i++)); do
+    x=$(( 2 + RANDOM % (cols - 3) )); r=$(( 2 + RANDOM % (rmax - 1) ))
+    (( r >= LT && r <= LT + 2 && x >= lc - 1 && x <= lc + ${#L1} + 1 )) && r=$(( LT + 4 ))
+    SX+=("$x"); SY+=("$r")
+    at "$r" "$x" "${D}·${Z}"
+  done
+  # — citation de stratège, en pied
+  local q=$quote
+  (( ${#q} > cols - 2 )) && q=${q:0:cols-2}
+  local qc=$(( (cols - ${#q}) / 2 )); (( qc < 1 )) && qc=1
+  at $(( lines - 1 )) "$qc" "${D}${q}${Z}"
+  # — oiseaux : bande de ciel STRICTEMENT au-dessus des cimes (l'effacement de
+  # l'oiseau ne doit jamais trouer une canopée ni le logo)
+  local bymin=$(( LT + 4 )) bymax=$(( GTOP - 10 )) by
+  (( bymax < bymin )) && bymax=$bymin
+  BX=(); BY0=(); BYC=()
+  for i in 0 1; do
+    by=$(( bymin + RANDOM % (bymax - bymin + 1) ))
+    BX+=("$(( 2 + RANDOM % (cols - 4) ))"); BY0+=("$by"); BYC+=("$by")
+  done
+}
+
+t=0; pc=0; pl=0; wind=0
+ST_ON=0; ST_NEXT=3; ST_X=2; ST_ROW=0     # étoile filante : état + prochain tir
+printf '\033[?25l\033[2J'
+while :; do
+  dims || { sleep 0.15; continue; }           # pty pas encore dimensionné → attendre
+  if (( lines < 23 || cols < 52 )); then      # repli minimal
+    frames='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'; ch=${frames:t%10:1}; text="$ch  thedev"
+    row=$(( lines / 2 )); (( row < 1 )) && row=1
+    col=$(( (cols - ${#text}) / 2 )); (( col < 1 )) && col=1
+    at "$row" "$col" "$(fg 108)${text}${Z}"
+    t=$(( t + 1 )); sleep 0.12; continue
+  fi
+  if [ "$cols" != "$pc" ] || [ "$lines" != "$pl" ]; then
+    pc=$cols; pl=$lines; scene
+  fi
+  # — reflet de chargement sur le logo
+  logo_draw "$t"
+  # — oiseaux : avance, léger vol ondulant, battement d'ailes ^/v
+  for b in 0 1; do
+    at "${BYC[b]}" "${BX[b]}" " "                      # efface l'ancienne position
+    for i in "${!SX[@]}"; do                           # ré-allume une étoile écrasée
+      (( SX[i] == BX[b] && SY[i] == BYC[b] )) && at "${SY[i]}" "${SX[i]}" "${D}·${Z}"
+    done
+    BX[b]=$(( BX[b] + 1 )); (( BX[b] > cols - 1 )) && BX[b]=2
+    BYC[b]=$(( BY0[b] + (t / 4 + b) % 2 ))
+    wing='v'; (( (t / 2 + b) % 2 )) && wing='^'
+    at "${BYC[b]}" "${BX[b]}" "$(fg 250)${wing}${Z}"
+  done
+  # — le vent passe (toutes les ~1,2 s) : l'herbe ondule, la cime de l'arbre
+  # penche et son feuillage bruisse (verts remélangés)
+  if (( t % 6 == 0 )); then
+    wind=$(( 1 - wind ))
+    grass_draw "$wind"
+    canopy_draw "$wind"
+  fi
+  # — frémissement d'une feuille de canopée
+  if (( ${#FX[@]} && t % 2 == 0 )); then
+    j=$(( RANDOM % ${#FX[@]} ))
+    at "${FY[j]}" "${FX[j]}" "$(fg "${GREENS[RANDOM % 3]}")█$Z"
+  fi
+  # — scintillement d'une étoile
+  if (( ${#SX[@]} && t % 8 == 0 )); then
+    j=$(( RANDOM % ${#SX[@]} ))
+    if (( RANDOM % 2 )); then at "${SY[j]}" "${SX[j]}" "${D}·${Z}"
+    else at "${SY[j]}" "${SX[j]}" "$(fg 151)·${Z}"; fi
+  fi
+  # — ÉTOILE FILANTE : file dans le ciel (tête ✦ + traînée en dégradé), de temps
+  # en temps ; première dès l'ouverture. Efface l'ancienne position en restaurant
+  # les étoiles de fond, avance de 3 cases/tick, disparaît au bord droit.
+  if (( ST_ON )); then
+    for k in 0 1 2 3 4 5; do
+      ex=$(( ST_X - k )); (( ex < 1 || ex > cols )) && continue
+      sbg=" "
+      for i in "${!SX[@]}"; do (( SX[i] == ex && SY[i] == ST_ROW )) && sbg="${D}·${Z}"; done
+      at "$ST_ROW" "$ex" "$sbg"
+    done
+    ST_X=$(( ST_X + 3 ))
+    if (( ST_X > cols - 2 )); then
+      ST_ON=0; ST_NEXT=$(( t + 25 + RANDOM % 45 ))
+    else
+      SGRAD=( "$(fg 231)✦$Z" "$(fg 151)✧$Z" "$(fg 151)•$Z" "$(fg 108)·$Z" "$(fg 65)·$Z" "${D}·${Z}" )
+      for k in 0 1 2 3 4 5; do
+        cx=$(( ST_X - k )); (( cx < 1 || cx > cols )) && continue
+        at "$ST_ROW" "$cx" "${SGRAD[k]}"
+      done
+    fi
+  elif (( t >= ST_NEXT )); then
+    ST_ON=1; ST_X=2; ST_ROW=$(( LT + 3 + RANDOM % 3 ))
+  fi
+  t=$(( t + 1 )); sleep 0.2
+done

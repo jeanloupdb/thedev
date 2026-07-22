@@ -64,7 +64,18 @@ if [ -n "$float" ]; then
   exit 0
 fi
 
-# S'empile dans la stack du pane focus (au-dessus de la barre ＋, qui est un pane
+# `--stacked` s'empile sur le pane FOCUS. Or le focus peut être ailleurs — dans
+# la colonne de gauche (sidebar), par exemple : le nouveau soldat atterrissait
+# alors à GAUCHE au lieu de rejoindre ses pairs. On vise donc explicitement
+# l'ancre posée par le soldat principal (bin/soldat-pane) avant d'empiler.
+# Pas d'ancre (vieille session, layout tiers) → on retombe sur le focus courant.
+_anchor="$HOME/.cache/thedev/front-stack/$(printf '%s' "${ZELLIJ_SESSION_NAME:-$(basename "$(pwd -P)")}" | tr -c 'A-Za-z0-9._-' '_')"
+if [ -r "$_anchor" ]; then
+  _pid=$(head -n1 "$_anchor" 2>/dev/null)
+  [ -n "$_pid" ] && zellij action focus-pane-id "$_pid" 2>/dev/null
+fi
+
+# S'empile dans la stack des soldats (au-dessus de la barre ＋, qui est un pane
 # fixe à part). La barre étant structurellement sous la stack, le ＋ reste
 # toujours en dessous de tous les claudes — pas besoin de repositionner.
 zellij run --stacked --close-on-exit --name "$name" --cwd "$dir" -- bash -lc "$WRAP"

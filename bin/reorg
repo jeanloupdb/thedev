@@ -20,9 +20,9 @@ HALF="${THEDEV_SPAN_LOW:-3}"   # plancher de fusion (~N/2) ; bande HALF<L<=N = c
 machine_self() { local m; m="$(head -n1 "$HOME/.config/dev-vps" 2>/dev/null)"; [ -n "$m" ] || m="$(hostname -s)"; printf '%s' "$m"; }
 me="$(machine_self)"
 
-# Compte les equipes de `me` — via `carte --data`, source UNIQUE de la collecte
+# Compte les equipes de `me` — via `arbre --data`, source UNIQUE de la collecte
 # (meme dedup local/flotte). On ignore les lignes #meta / #etage.
-_count() { carte --data 2>/dev/null | awk -F'\t' -v m="$me" '$1!~/^#/ && $1==m {c++} END{print c+0}'; }
+_count() { arbre --data 2>/dev/null | awk -F'\t' -v m="$me" '$1!~/^#/ && $1==m {c++} END{print c+0}'; }
 _regime() { local r; r="$(cat "$ROOT/etages/$me" 2>/dev/null)"; [ "$r" = split ] && printf 'split' || printf 'flat'; }
 
 cmd_status() {

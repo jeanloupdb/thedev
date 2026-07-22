@@ -27,11 +27,16 @@ layout {
         }
     }
 
-    // Page 1 — le front : editor (nvim) | claude (stack des claudes) + barre ＋
+    // Page 1 — le front : sidebar+editor (stack) | claude (stack des claudes) + barre ＋
     tab name="le front" focus=true {
         pane split_direction="vertical" {
-            pane size="20%" name="editor" command="/home/jlal/.local/bin/editor-pane" {
-                args "."
+            // Colonne de gauche = la sidebar, SEULE. Pas de nvim empilé ici :
+            // 20 % de large, c'est ~35 colonnes — inéditable, donc le pane
+            // `editor` ne servait à rien. Un fichier s'ouvre en plein écran
+            // (pane flottant), ce qui est de toute façon la seule taille où
+            // éditer est confortable.
+            pane size="20%" name="sidebar" command="/home/jlal/.local/bin/sidebar" {
+                args "--live"
             }
             pane split_direction="horizontal" {
                 pane stacked=true {

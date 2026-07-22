@@ -6,7 +6,7 @@
 # briefing du matin. Sens phone->thedev (ordres) = bot officiel + carte/mission.
 set -u
 TG="$HOME/.local/bin/tg";       [ -x "$TG" ]    || TG=tg
-CARTE="$HOME/.local/bin/carte"; [ -x "$CARTE" ] || CARTE=carte
+CARTE="$HOME/.local/bin/arbre"; [ -x "$CARTE" ] || CARTE=arbre
 
 command -v "$TG" >/dev/null 2>&1 || { echo "briefing: 'tg' introuvable (canal telegram non configure)"; exit 1; }
 

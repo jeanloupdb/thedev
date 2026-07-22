@@ -1,11 +1,11 @@
 # thedev — manifest
 
 > **Généré** par `thedev-manifest` depuis les tags `# @thedev` des scripts `bin/`.
-> Ne pas éditer à la main. Régénérer : `thedev-manifest --write`. 40 commandes.
+> Ne pas éditer à la main. Régénérer : `thedev-manifest --write`. 44 commandes.
 
 ## Modèle mental
 
-**machine** → **equipe** (1 projet × 1 machine, tous pairs) → **pages** (`le front` = nvim + stack de Claude · `le camp` = territoire agents/soutiens · `la tente` = terminaux humains) → **panes**.
+**machine** → **equipe** (1 projet × 1 machine, tous pairs) → **pages** (`le front` = la sidebar + la stack des soldats · `le camp` = territoire la garde/soutiens · `la tente` = terminaux humains) → **panes**.
 Un **soutien** = un pane long-running lancé dans le camp. Les equipes s'échangent des **missions** cross-machine (interactif, sur l'abonnement). Vocabulaire complet : `NAMING.md` · liens : `plans/thedev-liens.md`.
 
 ## Commandes
@@ -23,6 +23,7 @@ Un **soutien** = un pane long-running lancé dans le camp. Les equipes s'échang
 - **lever-equipe** — crée un nouveau projet en déléguant le bootstrap à un soldat distant (VPS auto)
 - **renfort** — ouvre un soldat secondaire empile (aside) sans toucher la session
 - **shell-pane** — pane shell perso de my space (badge VPS)
+- **sidebar** — sidebar — colonne gauche du front : menu cliquable (accueil, files, soldats, sessions…)
 - **soldat-pane** — lance le soldat principal d'un pane (surcouche prompt, remote-control, auto-open liens)
 - **team-open** — ouvre un equipe (local ou distant) DÉTACHÉ avec un soldat déjà briefé (prompt injecté)
 
@@ -57,16 +58,19 @@ Un **soutien** = un pane long-running lancé dans le camp. Les equipes s'échang
 - **thedev-doctor** — diagnostic d'installation : deps, scripts symlinkés, engine, hooks, lancement
 - **thedev-manifest** — genere le manifest de thedev depuis les tags @thedev des scripts bin/
 - **thedev-metrics** — métriques limitantes locales (RAM/disque/load) — source unique
-- **thedev-propose** — proposeur de tâches par signaux (parc git + todos + la garde) — zéro IA, zéro coût
 
 ### Autres
+- **arbre** (commandement) — arbre de commandement : l'arbre des equipes, groupe par domaine
 - **briefing** (commandement) — pousse le briefing (l'arbre carte) sur Telegram via tg
-- **carte** (commandement) — carte d'etat-major : l'arbre des equipes, groupe par domaine
+- **commandement-driver** (commandement) — pane de droite du cockpit commandement (lance le Claude chef briefé)
+- **commandement-nav** (commandement) — navigateur de gauche du cockpit commandement (arbre → ouvre le chef à droite)
 - **equipe** (commandement) — carte d'equipe + debrief-au-quit (brique 1 du plan commandement)
 - **ordre** (commandement) — ordre — commande VERTICALE du général vers une équipe
 - **ordres** (commandement) — ordres — les ordres REÇUS du général (côté machine cible)
 - **remonter** (commandement) — remonte les cartes+debriefs locaux vers le sommet (VPS)
+- **reorg** (commandement) — reorg — la respiration : scission/fusion d'etages (brique 3)
 - **engine** (moteur) — façade moteur-agnostique : lance/liste/lit/observe un agent (voir ENGINE-ADAPTER.md)
+- **thedev-landing** (ui) — landing animée du boot d'un pane claude — île nature + oiseaux
 - **feed** (veille) — déclenche un feed (cron-as-mission) : dépose une mission locale dans l'inbox
 - **tg** (veille) — envoie texte/photo sur Telegram (Bot API, curl) — livraison des feeds & alertes
 

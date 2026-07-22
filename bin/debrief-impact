@@ -6,7 +6,6 @@ set -u
 eq="${1:-}"; [ -n "$eq" ] || exit 0
 ROOT="$HOME/.cache/thedev"
 R=$'\033[0m'; D=$'\033[2m'; MAG=$'\033[1;35m'; RED=$'\033[1;31m'; GRN=$'\033[1;32m'
-IND='              '   # indentation : aligne sous le mot « FERMER » du menu
 
 join_dot(){ local out="" p; for p in "$@"; do out="${out:+$out · }$p"; done; printf '%s' "$out"; }
 
@@ -41,9 +40,13 @@ fi
 
 [ ${#kill_parts[@]} -eq 0 ] && [ ${#autos[@]} -eq 0 ] && exit 0
 
-[ ${#kill_parts[@]} -gt 0 ] && \
-  printf '%s%s✗%s %s%s%s\n' "$IND" "$RED" "$R" "$RED" "$(join_dot "${kill_parts[@]}")" "$R"
+# Sortie TSV : « <texte_visible>\t<rendu_ANSI> ». debrief-menu gère l'indentation
+# et l'alignement — ici on ne fait que fournir le texte et sa version colorée.
+if [ ${#kill_parts[@]} -gt 0 ]; then
+  j=$(join_dot "${kill_parts[@]}")
+  printf '%s\t%s\n' "✗ $j" "${RED}✗${R} ${RED}${j}${R}"
+fi
 for a in "${autos[@]}"; do
   IFS=$'\t' read -r ic col name <<<"$a"
-  printf '%s%s%s%s %s%s%s\n' "$IND" "$col" "$ic" "$R" "$MAG" "$name" "$R"
+  printf '%s\t%s\n' "$ic $name" "${col}${ic}${R} ${MAG}${name}${R}"
 done
