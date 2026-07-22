@@ -2338,7 +2338,7 @@ class Picker:
                 return
             if ch == -1:                            # timeout : simple redraw
                 continue
-            # Alt+R = top 10 RAM (même geste qu'Alt+R dans zellij). Le terminal
+            # Alt+R = l'écran INFOS (même geste qu'Alt+R dans zellij). Le terminal
             # envoie ESC puis 'r' ; comme ESC seul = retour/quitter ici, on lève
             # l'ambiguïté en regardant la touche suivante. Si ce n'est pas 'r',
             # on la remet dans la file et l'ESC reprend son sens normal.
@@ -2346,13 +2346,7 @@ class Picker:
                 self.scr.timeout(60)
                 nxt = self.scr.getch()
                 if nxt in (ord("r"), ord("R")):
-                    try:
-                        curses.endwin()
-                        subprocess.run([os.path.expanduser("~/.local/bin/dev-ram-menu")])
-                    except Exception:
-                        pass
-                    finally:
-                        self.scr.clear(); self.scr.refresh()
+                    self.enter_infos()
                     continue
                 if nxt != -1:
                     curses.ungetch(nxt)

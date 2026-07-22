@@ -305,17 +305,18 @@ def parse_metrics(out):
 
 class Sidebar:
     # (touche, icône, libellé, id d'action)
-    # (icône, libellé, id d'action). Pas de numéro : sept entrées se pointent
-    # à la souris ou se parcourent aux flèches, un chiffre devant n'aide pas et
-    # alourdit la colonne.
+    # (icône, libellé, id d'action, raccourci global). Pas de numéro : sept
+    # entrées se pointent à la souris ou se parcourent aux flèches, un chiffre
+    # devant n'aide pas. Le raccourci, lui, est rappelé à droite quand l'entrée
+    # est AUSSI joignable au clavier depuis n'importe où dans thedev.
     ENTRIES = [
-        ("←", "accueil",         "accueil"),
-        ("⌂", "files",           "files"),
-        ("⚑", "soldats",         "soldats"),
-        ("⧉", "sessions",        "sessions"),
-        ("ⓘ", "infos",           "infos"),
-        ("⟳", "automatisations", "autos"),
-        ("＋", "soldat",          "aside"),
+        ("←", "accueil",         "accueil",  "ctrl q"),
+        ("⌂", "files",           "files",    ""),
+        ("⚑", "soldats",         "soldats",  ""),
+        ("⧉", "sessions",        "sessions", ""),
+        ("ⓘ", "infos",           "infos",    "alt r"),
+        ("⟳", "automatisations", "autos",    ""),
+        ("＋", "soldat",          "aside",    ""),
     ]
     VIEWS = {"files": "⌂ files", "soldats": "⚑ soldats", "sessions": "⧉ sessions"}
 
@@ -336,6 +337,7 @@ class Sidebar:
         self.metrics = None
         self.stop = threading.Event()
         self.rows = []
+        self.band = BAND        # largeur de dessin réelle, posée par draw()
         self._colors()
         threading.Thread(target=self._metrics_worker, daemon=True).start()
 
@@ -417,9 +419,16 @@ class Sidebar:
         elif self.view is None:
             R.append(([("  ", 0), (self.equipe, curses.A_BOLD)], None))
             R.append(([("", 0)], None))
-            for icon, label, act in self.ENTRIES:
+            for icon, label, act, key in self.ENTRIES:
                 segs = [("  ", 0), ("%s " % icon, self.CYAN), (label, 0)]
                 segs.extend(self.badge(act))
+                if key:
+                    # Le raccourci est collé au bord droit : il se lit comme une
+                    # colonne, sans décaler les libellés entre eux.
+                    pad = self.band - 1 - sum(dwidth(t) for t, _ in segs) - dwidth(key)
+                    if pad > 1:
+                        segs.append((" " * pad, 0))
+                        segs.append((key, self.DIM))
                 R.append((segs, ("entry", act)))
         else:
             # Vue liste : la colonne est prise entièrement par la liste, et la
@@ -578,7 +587,7 @@ class Sidebar:
     def draw(self):
         self.scr.erase()
         h, w = self.scr.getmaxyx()
-        band = min(w, BAND)
+        band = self.band = min(w, BAND)   # build() aligne les raccourcis dessus
         self.build()
         mrows = self.metrics_rows()
         # Hauteur réservée en bas : séparateur + bandeau, et la ligne de statut

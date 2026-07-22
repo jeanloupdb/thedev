@@ -165,13 +165,18 @@ keybinds clear-defaults=true {
         bind "Alt o" { MoveTab "right"; }
         bind "Alt p" { TogglePaneInGroup; }
         bind "Alt Shift p" { ToggleGroupMarking; }
-        // Alt+R : petit modal flottant — top 10 des logiciels par RAM, barres
-        // de progression. Toute touche referme.
+        // Alt+R : l'écran INFOS en plein écran (RAM, disque, charge, fenêtre
+        // Claude, parc, usage). Il remplace l'ancien mini-modal « top 10 RAM » :
+        // une seule page de ressources, la même que celle de l'accueil et celle
+        // de la colonne de gauche. Retour/Échap referme le pane.
         bind "Alt r" {
-            Run "dev-ram-menu" {
+            Run "etat-major" {
+                args "--page" "infos"
                 floating true
                 close_on_exit true
-                name "ram"
+                name "infos"
+                width "100%"
+                height "100%"
             }
         }
         // Alt+W : saute au pane Claude qui « t'attend » (bloqué sur un QCM). Pane
