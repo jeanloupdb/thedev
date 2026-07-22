@@ -419,6 +419,12 @@ class Sidebar:
                       ("soldat", sid)))
         if not R:
             R.append(([("  aucun soldat ouvert", self.DIM)], None))
+        # Ajouter et réveiller sont les deux façons d'avoir un soldat de plus :
+        # elles se suivent, juste après les présents. Placé ICI et pas en fin de
+        # liste, sinon douze conversations dormantes le repoussent hors écran.
+        R.append(([("", 0)], None))
+        R.append(([("  ", 0), ("＋", self.GREEN), (" ajouter un soldat", 0)],
+                  ("entry", "aside")))
         # Les conversations terminées de cette equipe : plus de pane, mais elles
         # existent toujours. Tout en atténué — ce sont des soldats qu'on PEUT
         # réveiller, pas des soldats présents. Ne pas les confondre d'un coup
@@ -750,10 +756,17 @@ class Sidebar:
                             "--", "debrief-menu"], capture_output=True)
             return
         if what == "aside":
+            if not self.live:
+                self.status = "⌁ ajoute un soldat dans la stack"
+                return
             r = subprocess.run(["renfort"], capture_output=True, text=True,
                                cwd=self.cwd)
-            self.status = ("" if r.returncode == 0
-                           else "✗ %s" % (r.stderr or "échec").strip()[:38])
+            if r.returncode == 0:
+                # Le nouveau soldat ne s'inscrit au registre qu'à son
+                # SessionStart : `r` pour le voir arriver dans la liste.
+                self.status = "＋ soldat lancé"
+            else:
+                self.status = "✗ %s" % (r.stderr or "échec").strip()[:38]
             return
         if what == "open":
             i, j = val
