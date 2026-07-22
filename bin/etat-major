@@ -548,6 +548,9 @@ class Picker:
         self.metrics = None           # RAM/disque/load (thedev-metrics) → bande du bas
         threading.Thread(target=self._metrics_worker, daemon=True).start()
         self.infos_data = None        # écran « infos » : rempli en fond à l'ouverture
+        self.ii = 0                   # carte sélectionnée dans l'écran Infos
+        self.infos_zoom = None        # carte dépliée en grand (None = vue d'ensemble)
+        self.infos_panels = []        # titres des cartes, dans l'ordre de navigation
         curses.curs_set(0)
         curses.use_default_colors()
         for i, fg in enumerate((curses.COLOR_GREEN, curses.COLOR_CYAN,
@@ -646,6 +649,8 @@ class Picker:
 
     def enter_infos(self):
         self.mode = "infos"
+        self.ii = 0                 # carte sélectionnée
+        self.infos_zoom = None      # carte dépliée en grand (None = vue d'ensemble)
         self.infos_data = None
         threading.Thread(target=self._gather_infos, daemon=True).start()
 
@@ -1794,7 +1799,123 @@ class Picker:
             pass
         self.scr.refresh()
 
+    def ram_top(self, n=14):
+        """RSS cumulée par logiciel → [(nom, kio)], du plus gros au plus petit.
+
+        Somme par `comm` : un navigateur ou un node éclaté en vingt process
+        compte pour UN logiciel — c'est la seule lecture qui permet de décider
+        quoi fermer. `ps` une fois, agrégation en Python."""
+        try:
+            out = subprocess.run(["ps", "-eo", "rss=,comm="],
+                                 capture_output=True, text=True, timeout=6).stdout
+        except Exception:
+            return []
+        agg = {}
+        for line in out.splitlines():
+            parts = line.split(None, 1)
+            if len(parts) != 2:
+                continue
+            try:
+                agg[parts[1].strip()] = agg.get(parts[1].strip(), 0) + int(parts[0])
+            except ValueError:
+                continue
+        return sorted(agg.items(), key=lambda kv: -kv[1])[:n]
+
+    def draw_infos_zoom(self):
+        """Vue GRANDE d'une carte de l'écran Infos.
+
+        Le survol (l'écran Infos) répond « combien » ; ici on répond « à cause
+        de quoi ». Pour l'instant seule « système » a un vrai détail (la RAM
+        par logiciel) ; les autres cartes s'affichent en pleine largeur, ce qui
+        suffit déjà quand leur contenu est tronqué dans la colonne."""
+        self.scr.erase()
+        H, W = self.scr.getmaxyx()
+        DIM = curses.A_DIM
+        G, Y, R, C = self.GREEN, self.YEL, self.RED, self.CYAN
+        title = self.infos_zoom or ""
+        self.scr.addnstr(0, 2, "ⓘ %s" % title.upper(), W - 4, G | curses.A_BOLD)
+        back = "[ ‹ Retour ]"
+        try:
+            self.scr.addnstr(0, max(8, W - 2 - len(back)), back, len(back),
+                             C | curses.A_REVERSE | curses.A_BOLD)
+            self.scr.addnstr(1, 2, "─" * (W - 4), W - 4, DIM)
+        except curses.error:
+            pass
+
+        y = 3
+        if title == "système":
+            tot = avail = 0
+            try:
+                with open("/proc/meminfo") as f:
+                    for line in f:
+                        if line.startswith("MemTotal:"):
+                            tot = int(line.split()[1])
+                        elif line.startswith("MemAvailable:"):
+                            avail = int(line.split()[1])
+            except OSError:
+                pass
+            used = tot - avail
+            if tot:
+                pct = 100.0 * used / tot
+                col = G if pct < 70 else (Y if pct < 88 else R)
+                barw = min(40, max(10, W - 34))
+                fill = int(round(pct / 100 * barw))
+                put = [(" RAM   ", DIM), ("█" * fill, col), ("░" * (barw - fill), DIM),
+                       (" %3.0f%% " % pct, col | curses.A_BOLD),
+                       (" %.1f / %.1f Go" % (used / 1048576.0, tot / 1048576.0), DIM)]
+                x = 2
+                for t, a in put:
+                    try:
+                        self.scr.addnstr(y, x, t, max(0, W - 1 - x), a)
+                    except curses.error:
+                        pass
+                    x += len(t)
+            y += 2
+            try:
+                self.scr.addnstr(y, 2, "par logiciel  (toutes instances cumulées)",
+                                 W - 4, DIM)
+            except curses.error:
+                pass
+            y += 1
+            rows = self.ram_top(max(3, H - y - 3))
+            top_kb = rows[0][1] if rows else 1
+            for name, kb in rows:
+                if y >= H - 2:
+                    break
+                barw = min(30, max(8, W - 46))
+                fill = int(round(barw * kb / max(1, top_kb)))
+                share = 100.0 * kb / tot if tot else 0
+                segs = [(" %-18s " % name[:18], 0),
+                        ("█" * fill, C), ("░" * (barw - fill), DIM),
+                        (" %7.0f Mo" % (kb / 1024.0), C | curses.A_BOLD),
+                        ("  %4.1f%%" % share, DIM)]
+                x = 2
+                for t, a in segs:
+                    try:
+                        self.scr.addnstr(y, x, t, max(0, W - 1 - x), a)
+                    except curses.error:
+                        pass
+                    x += len(t)
+                y += 1
+        else:
+            try:
+                self.scr.addnstr(y, 2, "pas encore de détail pour cette carte.",
+                                 W - 4, DIM)
+            except curses.error:
+                pass
+
+        try:
+            self.scr.addnstr(H - 2, 2, "Échap · ↵  retour aux cartes", W - 4, DIM)
+        except curses.error:
+            pass
+        self.draw_status(H, W)
+        self.scr.noutrefresh()
+        curses.doupdate()
+
     def draw_infos(self):
+        if self.infos_zoom:
+            self.draw_infos_zoom()
+            return
         self.scr.erase()
         H, W = self.scr.getmaxyx()
         DIM = curses.A_DIM
@@ -1821,16 +1942,21 @@ class Picker:
                 except curses.error:
                     pass
                 x += len(t)
-        def box(top, left, w, h, title):          # panneau encadré, titre dans le bord haut
+        def box(top, left, w, h, title, sel=False):   # panneau encadré, titre dans le bord haut
+            # Carte SÉLECTIONNÉE : bordure vive + titre inversé. C'est le seul
+            # repère de navigation de l'écran, il doit se voir de loin.
+            bd = C if sel else DIM
             try:
-                self.scr.addnstr(top, left, "╭─ ", w, DIM)
-                self.scr.addnstr(top, left + 3, title, w, C | curses.A_BOLD)
+                self.scr.addnstr(top, left, "╭─ ", w, bd)
+                self.scr.addnstr(top, left + 3, title, w,
+                                 (C | curses.A_REVERSE | curses.A_BOLD) if sel
+                                 else (C | curses.A_BOLD))
                 tx = left + 3 + len(title)
-                self.scr.addnstr(top, tx, " " + "─" * max(0, left + w - 2 - tx) + "╮", max(0, left + w - tx), DIM)
+                self.scr.addnstr(top, tx, " " + "─" * max(0, left + w - 2 - tx) + "╮", max(0, left + w - tx), bd)
                 for r in range(1, h - 1):
-                    self.scr.addnstr(top + r, left, "│", 1, DIM)
-                    self.scr.addnstr(top + r, left + w - 1, "│", 1, DIM)
-                self.scr.addnstr(top + h - 1, left, "╰" + "─" * (w - 2) + "╯", w, DIM)
+                    self.scr.addnstr(top + r, left, "│", 1, bd)
+                    self.scr.addnstr(top + r, left + w - 1, "│", 1, bd)
+                self.scr.addnstr(top + h - 1, left, "╰" + "─" * (w - 2) + "╯", w, bd)
             except curses.error:
                 pass
 
@@ -1924,6 +2050,12 @@ class Picker:
                  ("système", items_to_rows(sec.get("système", []), contentw)),
                  ("usage", items_to_rows(sec.get("usage", []), contentw))]
 
+        # Ordre de navigation : colonne gauche de haut en bas, puis la droite.
+        # Mémorisé pour que les touches et le rendu parlent des mêmes cartes.
+        self.infos_panels = [t for t, _ in left] + [t for t, _ in right]
+        self.ii = max(0, min(self.ii, len(self.infos_panels) - 1))
+        selected = self.infos_panels[self.ii]
+
         def layout_col(x, panels):
             n = len(panels)
             if n == 0:
@@ -1936,12 +2068,17 @@ class Picker:
                 h = len(rows) + 2 + per + (1 if idx < rem else 0)
                 if top + h > boty:
                     h = max(len(rows) + 2, boty - top)
-                box(top, x, colw, h, title)
+                box(top, x, colw, h, title, sel=(title == selected))
                 for i, segs in enumerate(rows):
                     put(top + 1 + i, x + 2, segs, x + colw - 1)
                 top += h + gap
         layout_col(leftx, left)
         layout_col(rightx, right)
+        try:
+            self.scr.addnstr(H - 2, 2, "↑↓ carte · ↵ détail · Échap retour",
+                             W - 4, DIM)
+        except curses.error:
+            pass
 
         self.draw_status(H, W)
         self.scr.noutrefresh()
@@ -2429,10 +2566,23 @@ class Picker:
                     if self._open_chef() == "quit":   # convoque un chef → décision CHEF, dev() lance
                         return
                 continue
-            if self.mode == "infos":                # écran infos : bouton Retour (↵) ou Esc
-                if ch in (27, curses.KEY_ENTER, 10, 13):
+            if self.mode == "infos":
+                # Vue d'ensemble : ↑↓ change de carte, ↵ déplie. Vue dépliée :
+                # ↵/Échap replie. Échap sur la vue d'ensemble = quitter l'écran.
+                if self.infos_zoom:
+                    if ch in (27, curses.KEY_ENTER, 10, 13):
+                        self.infos_zoom = None
+                elif ch == 27:
                     if self.back_page():
                         return
+                elif ch in (curses.KEY_UP, ord("k")):
+                    self.ii -= 1
+                elif ch in (curses.KEY_DOWN, ord("j")):
+                    self.ii += 1
+                elif ch in (curses.KEY_ENTER, 10, 13):
+                    panels = getattr(self, "infos_panels", [])
+                    if panels:
+                        self.infos_zoom = panels[max(0, min(self.ii, len(panels) - 1))]
                 continue
             self.msg = ""
             if ch in (curses.KEY_UP,):
