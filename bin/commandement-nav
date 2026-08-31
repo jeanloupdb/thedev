@@ -104,6 +104,28 @@ def select(node_arg):
 def main(scr):
     curses.curs_set(0)
     curses.use_default_colors()
+    # ncurses attend l'ESCDELAY (1 s par défaut) avant de livrer un ESC, puisque
+    # c'est aussi le début d'une séquence de touche : 25 ms suffisent à trancher.
+    if hasattr(curses, "set_escdelay"):
+        curses.set_escdelay(25)
+    # Focus reporting (mode ?1004) : zellij envoie CSI I / CSI O quand ce pane
+    # prend ou perd le focus — c'est ce qui permet d'éteindre le surlignage quand
+    # l'utilisateur travaille dans le chef, à droite.
+    os.write(1, b"\x1b[?1004h")
+    # Le terminfo xterm* décrit ces séquences (kxIN/kxOUT), donc ncurses les rend
+    # comme des touches — mais ÉTENDUES, sans constante KEY_* : leur numéro est
+    # attribué à l'exécution, on le retrouve par son nom. Introuvable = terminfo
+    # sans ces capacités, et c'est focus_seq qui les rattrape après l'ESC.
+    KIN = KOUT = None
+    for _c in range(256, 1024):
+        try:
+            _n = curses.keyname(_c)
+        except Exception:
+            continue
+        if _n == b"kxIN":
+            KIN = _c
+        elif _n == b"kxOUT":
+            KOUT = _c
     for i in range(1, 8):
         try:
             curses.init_pair(i, i, -1)
@@ -139,6 +161,41 @@ def main(scr):
     spin = 0
     SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
     curses.halfdelay(2)          # tick ~0,2 s : spinner fluide, entrées réactives
+
+    # Surlignage de la ligne courante = « je t'écoute ». Le garder allumé pendant
+    # que l'utilisateur tape dans le chef à droite promet une touche qui n'arrivera
+    # pas, et deux curseurs à l'écran font douter de celui qui répond. Vrai au
+    # départ : ce panneau est le PREMIER pane de son layout, donc zellij lui donne
+    # le focus au lancement (et enverra CSI O dès qu'il le perd).
+    focused = True
+    pending = []                 # octets relus après un ESC qui n'en était pas un
+
+    def getch():
+        return pending.pop(0) if pending else scr.getch()
+
+    def focus_seq():
+        """ESC reçu : début d'un CSI I / CSI O (focus du pane) ou vrai Échap ?
+        Renvoie True/False, ou None pour un vrai Échap — les octets lus au passage
+        sont remis dans la file. Sans ce filtre, un simple changement de pane
+        DÉTACHERAIT la session : ici Échap détache."""
+        scr.nodelay(True)
+        try:
+            a = scr.getch()
+            if a == -1:
+                return None
+            if a != ord("["):
+                pending.append(a)
+                return None
+            b = scr.getch()
+            if b in (ord("I"), ord("O")):
+                return b == ord("I")
+            pending.append(ord("["))
+            if b != -1:
+                pending.append(b)
+            return None
+        finally:
+            scr.nodelay(False)
+            curses.halfdelay(2)
 
     def selectable(nodes):
         # index des lignes RÉELLEMENT sélectionnables (une ligne « en chargement » ou
@@ -192,7 +249,10 @@ def main(scr):
                 if not sel_ok:
                     col = DIM
                 line = "%s%s%s" % (marker, nd["prefix"], nd["label"])
-                attr = col | (curses.A_REVERSE if (i == sel and sel_ok) else 0)
+                # Le « ► » du nœud ouvert à droite reste, lui, en toutes
+                # circonstances : c'est un ÉTAT, pas un curseur.
+                attr = col | (curses.A_REVERSE
+                              if (i == sel and sel_ok and focused) else 0)
                 scr.addnstr(y, 1, line[:W - 2], W - 2, attr)
                 x = 1 + len(line)
                 if not sel_ok:
@@ -216,7 +276,7 @@ def main(scr):
         scr.refresh()
 
         try:
-            ch = scr.getch()
+            ch = getch()
         except KeyboardInterrupt:
             break
         if ch == -1:
@@ -225,6 +285,22 @@ def main(scr):
             if tick % 25 == 0:        # ~5 s : rafraîchit l'arbre en fond (non bloquant)
                 kick()
             continue
+        if ch == KIN:
+            focused = True
+            continue
+        if ch == KOUT:
+            focused = False
+            continue
+        if ch == 27:
+            f = focus_seq()
+            if f is not None:
+                focused = f
+                continue
+        # Une touche du clavier ne peut arriver que si le pane a le focus : ça
+        # rattrape le cas où on aurait manqué le CSI I. Le redimensionnement,
+        # lui, est déclenché depuis un autre pane et ne prouve rien.
+        if ch != curses.KEY_RESIZE:
+            focused = True
         if ch in (ord("q"), 27):
             subprocess.run(["zellij", "action", "detach"], capture_output=True)
             break
@@ -242,6 +318,8 @@ def main(scr):
                 select(nodes[sel]["arg"])
         elif ch in (ord("r"), ord("R")):
             kick()
+
+    os.write(1, b"\x1b[?1004l")   # ne pas laisser le mode allumé derrière soi
 
 
 if __name__ == "__main__":
