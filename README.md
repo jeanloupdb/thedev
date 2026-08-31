@@ -25,14 +25,14 @@ Une armée trop libre ne sait plus où elle va, et ses soldats désertent jusqu'
 
 **Il n'y a pas d'inscription à thedev.** Pas de compte, pas de serveur à nous, pas
 d'abonnement en plus : c'est un outil qui vit sur ta machine. Le seul compte dont tu as
-besoin est celui de **Claude** — thedev pilote [Claude Code](https://claude.com/claude-code),
+besoin est celui de **Claude**. thedev pilote [Claude Code](https://claude.com/claude-code),
 donc il te faut un abonnement Claude et la CLI connectée. Tout le reste est libre et gratuit.
 
 thedev tourne sous **Linux**. Sur **Windows**, WSL fait tourner un vrai Linux à l'intérieur
 de Windows : rien à partitionner, réversible en une commande.
 
 <details>
-<summary><b>Je suis sur Windows</b> — installer Linux d'abord (2 minutes)</summary>
+<summary><b>Je suis sur Windows</b> : installer Linux d'abord (2 minutes)</summary>
 
 <br>
 
@@ -58,7 +58,7 @@ thedev est de la colle : il s'appuie sur des outils existants et n'en installe a
 sudo apt update && sudo apt install -y git python3 jq fzf inotify-tools neovim
 mkdir -p ~/.local/bin && export PATH="$HOME/.local/bin:$PATH"
 
-# zellij (le multiplexeur sur lequel thedev est bâti) — absent des dépôts Ubuntu
+# zellij (le multiplexeur sur lequel thedev est bâti), absent des dépôts Ubuntu
 curl -L https://github.com/zellij-org/zellij/releases/latest/download/zellij-x86_64-unknown-linux-musl.tar.gz \
   | tar xz -C ~/.local/bin
 
