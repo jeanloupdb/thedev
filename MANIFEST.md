@@ -1,7 +1,7 @@
 # thedev — manifest
 
 > **Généré** par `thedev-manifest` depuis les tags `# @thedev` des scripts `bin/`.
-> Ne pas éditer à la main. Régénérer : `thedev-manifest --write`. 44 commandes.
+> Ne pas éditer à la main. Régénérer : `thedev-manifest --write`. 53 commandes.
 
 ## Modèle mental
 
@@ -15,7 +15,7 @@ Un **soutien** = un pane long-running lancé dans le camp. Les equipes s'échang
 
 ### Session & panes
 - **aside-button** — barre + pour ajouter un soldat aside a la stack
-- **debrief-impact** — résumé COMPACT de ce que « fermer cette equipe » va couper (Ctrl+Q).
+- **debrief-impact** — ce que « fermer cette equipe » va COUPER (Ctrl+Q) — un fait par ligne.
 - **debrief-menu** — menu de fermeture propre de la session
 - **editor-pane** — pane nvim de la code page (badge VPS)
 - **garnison** — pane de garnison de la sandbox (badge VPS)
@@ -55,24 +55,33 @@ Un **soutien** = un pane long-running lancé dans le camp. Les equipes s'échang
 ### Infra
 - **claude-window-usage** — % d'utilisation de la fenêtre de rate-limit Max 5x (5h/7d) — GRATUIT
 - **garnison-run** — heartbeat autonome (DORMANT, coupe 2026-06 pour cout)
+- **pose** — règle la machine selon l'endroit où le PC est posé (lit / bureau)
 - **thedev-doctor** — diagnostic d'installation : deps, scripts symlinkés, engine, hooks, lancement
 - **thedev-manifest** — genere le manifest de thedev depuis les tags @thedev des scripts bin/
-- **thedev-metrics** — métriques limitantes locales (RAM/disque/load) — source unique
+- **thedev-metrics** — métriques limitantes locales (RAM/disque/load/chaleur) — source unique
 
 ### Autres
 - **arbre** (commandement) — arbre de commandement : l'arbre des equipes, groupe par domaine
+- **blocage** (commandement) — blocages d'equipe : points ouverts qui s'ouvrent et se ferment
 - **briefing** (commandement) — pousse le briefing (l'arbre carte) sur Telegram via tg
+- **chef** (commandement) — chef — ouvre un Claude interactif briefé comme CE chef (convocable)
 - **commandement-driver** (commandement) — pane de droite du cockpit commandement (lance le Claude chef briefé)
 - **commandement-nav** (commandement) — navigateur de gauche du cockpit commandement (arbre → ouvre le chef à droite)
 - **equipe** (commandement) — carte d'equipe + debrief-au-quit (brique 1 du plan commandement)
+- **jalon** (commandement) — timeline d'equipe : jalons manuels ⊕ commits git (auto)
+- **note** (commandement) — contexte d'equipe : une note = une ligne signee par un soldat
 - **ordre** (commandement) — ordre — commande VERTICALE du général vers une équipe
 - **ordres** (commandement) — ordres — les ordres REÇUS du général (côté machine cible)
+- **partition** (commandement) — partition : range les équipes d'une machine en domaines par thème
 - **remonter** (commandement) — remonte les cartes+debriefs locaux vers le sommet (VPS)
 - **reorg** (commandement) — reorg — la respiration : scission/fusion d'etages (brique 3)
+- **resume** (commandement) — resume d'equipe : LE headline partage qui remonte au chef
 - **engine** (moteur) — façade moteur-agnostique : lance/liste/lit/observe un agent (voir ENGINE-ADAPTER.md)
 - **thedev-landing** (ui) — landing animée du boot d'un pane claude — île nature + oiseaux
 - **feed** (veille) — déclenche un feed (cron-as-mission) : dépose une mission locale dans l'inbox
+- **inbox** (veille) — lit/cherche plusieurs boîtes IMAP (lecture seule, multi-comptes) — pour Claude & veilles
 - **tg** (veille) — envoie texte/photo sur Telegram (Bot API, curl) — livraison des feeds & alertes
+- **veille-tts** (veille) — synthèse vocale réaliste d'un texte via Gemini TTS (clé AI Studio)
 
 ## Dépendances externes
 

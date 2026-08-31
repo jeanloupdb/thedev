@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # @thedev session menu de fermeture propre de la session
-"""debrief-menu — modal déclenché par Ctrl+Q, et par « ← accueil » dans la
+"""debrief-menu — modal déclenché par Ctrl+Q, et par « accueil » dans la
 colonne de gauche. Lancé en pane FLOTTANT close_on_exit.
 
 Trois lignes SÉLECTIONNABLES (↑↓ ou clic, Entrée valide) :
@@ -8,16 +8,24 @@ Trois lignes SÉLECTIONNABLES (↑↓ ou clic, Entrée valide) :
     fermer     tuer la session
     annuler
 
-Pas de résumé de fin : le contexte d'équipe remonte EN CONTINU (note / resume /
-jalon / blocage) au fil du travail, il n'y a rien à capturer à la fermeture.
+Ce que « fermer » coupe (missions, soutiens, gardes qui TOURNENT) est écrit
+sous « fermer » comme une phrase en clair et en atténué — « ça coupe aussi
+2 soutiens ». C'était auparavant un « ✗ 2 soutiens » rouge, aligné nulle part :
+le glyphe et la couleur criaient l'alerte sans jamais dire ce qui se passait.
+L'information est la même, mais elle se lit.
 
-Rendu minimaliste : quelques lignes nues, alignées — pas de cadre ni de puce.
+Rendu : un bloc de quelques lignes, CENTRÉ dans le pane (le pane flottant est
+plus grand que le texte — collé en haut à gauche, le menu paraissait déréglé),
+colonnes calculées depuis les libellés, pas de cadre ni de puce. Le surlignage
+épouse le bloc et pas toute la largeur, pour ne pas peser.
+
 `d` / `f` restent des raccourcis directs pour qui les connaît.
 """
 import curses
 import os
 import subprocess
 import sys
+import textwrap
 
 
 def sh(cmd, timeout=4):
@@ -43,17 +51,19 @@ def equipe():
 
 
 def impact(eq):
-    """Ce que « fermer » va couper (missions, soutiens, gardes).
-    debrief-impact émet du TSV « texte_visible \t rendu_ANSI » ; on ne garde que
-    le texte, la couleur est refaite ici en curses."""
+    """Ce que « fermer » va couper, en morceaux de phrase prêts à assembler
+    (« 2 soutiens », « la garde « veille » »). Vide si l'equipe est inerte."""
     if not eq:
         return []
-    out = []
-    for line in sh(["debrief-impact", eq]).splitlines():
-        plain = line.split("\t")[0].strip()
-        if plain:
-            out.append(plain)
-    return out
+    return [l.strip() for l in sh(["debrief-impact", eq]).splitlines() if l.strip()]
+
+
+def enumere(parts):
+    """« a », « a et b », « a, b et c » — une énumération qui se lit à voix
+    haute. Le « · » d'avant était un séparateur de tableau posé dans une phrase."""
+    if len(parts) <= 1:
+        return "".join(parts)
+    return ", ".join(parts[:-1]) + " et " + parts[-1]
 
 
 def main(scr):
@@ -82,39 +92,63 @@ def main(scr):
     opts = [("d", "détacher", "la session reste vivante", GREEN, "detach"),
             ("f", "fermer",   "tuer la session",          RED,   "kill"),
             (None, "annuler", "",                         DIM,   None)]
+    # La colonne des descriptions se cale sur le plus long libellé — trois
+    # espaces après, jamais une tabulation devinée. Ajouter une entrée ne
+    # décale donc plus rien à la main.
+    col = max(len(o[1]) for o in opts) + 3
+    note = ("ça coupe aussi " + enumere(hits)) if hits else ""
     sel = 0
 
     while True:
         scr.erase()
         h, w = scr.getmaxyx()
+        # Le bloc est construit d'abord (lignes + largeur), puis posé centré :
+        # sa taille dépend du nom d'équipe et de l'annotation, on ne peut pas
+        # la coder en dur.
+        head = "Quitter %s" % (eq or "?")
+        # L'annotation passe à la ligne plutôt que d'être coupée : une liste
+        # tronquée à « 2 missions, 3 soutiens… » cacherait précisément ce qu'on
+        # est en train de tuer.
+        nlines = textwrap.wrap(note, max(12, min(w - 4, 48) - col)) if note else []
+        lines = [("head", None), ("blank", None)]
+        for i, o in enumerate(opts):
+            lines.append(("opt", i))
+            if o[4] == "kill":
+                lines.extend(("note", k) for k in range(len(nlines)))
+        bw = max([len(head)] + [col + len(o[2]) for o in opts]
+                 + [col + len(l) for l in nlines])
+        bw = min(bw, max(1, w - 4))
+        x = max(1, (w - bw) // 2)
+        y = max(0, (h - len(lines)) // 2)
+
         ymap = {}
-        y = 1
-        try:
-            scr.addnstr(y, 2, "Quitter", w - 4, curses.A_BOLD)
-            scr.addnstr(y, 10, eq or "?", w - 12, DIM)
-        except curses.error:
-            pass
-        y += 2
-        for i, (_k, label, desc, col, _d) in enumerate(opts):
-            ymap[y] = i
-            a = SEL if i == sel else 0
+        for kind, i in lines:
+            if y >= h:
+                break
             try:
-                if i == sel:
-                    scr.addstr(y, 0, " " * w, SEL)
-                scr.addnstr(y, 2, label, w - 4, (col | curses.A_BOLD) | a)
-                if desc:
-                    scr.addnstr(y, 14, desc, w - 16, DIM | a)
+                if kind == "head":
+                    scr.addnstr(y, x, "Quitter", max(0, w - x - 1), curses.A_BOLD)
+                    scr.addnstr(y, x + 8, eq or "?", max(0, w - x - 9), DIM)
+                elif kind == "note":
+                    scr.addnstr(y, x + col, nlines[i], max(0, w - x - col - 1), DIM)
+                elif kind == "opt":
+                    _k, label, desc, c, _d = opts[i]
+                    ymap[y] = i
+                    a = SEL if i == sel else 0
+                    if a:
+                        # Un bandeau à la taille du bloc, pas de la largeur du
+                        # pane : le pane est large, une barre pleine écraserait
+                        # les trois lignes qu'elle est censée servir.
+                        scr.addnstr(y, max(0, x - 1), " " * (bw + 2),
+                                    max(0, w - x), SEL)
+                    scr.addnstr(y, x, label, max(0, w - x - 1),
+                                (c | curses.A_BOLD) | a)
+                    if desc:
+                        scr.addnstr(y, x + col, desc, max(0, w - x - col - 1),
+                                    DIM | a)
             except curses.error:
                 pass
             y += 1
-            # L'impact se lit sous « fermer » : c'est ce que CE choix va couper.
-            if _d == "kill":
-                for t in hits:
-                    try:
-                        scr.addnstr(y, 6, t, w - 8, RED)
-                    except curses.error:
-                        pass
-                    y += 1
         scr.refresh()
 
         try:

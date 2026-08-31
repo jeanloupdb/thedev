@@ -8,16 +8,20 @@ fichier s'ouvre en plein écran (pane flottant) plutôt que dans la colonne.
 
 Écran d'accueil — sept entrées, chacune à la fois bouton et état lisible :
 
-    ←  accueil            ouvre le modal Ctrl+Q (détacher / fermer)
-    ⌂  files              arbre du dossier courant
-    ⚑  soldats      2 ⚠1  les soldats de l'équipe
-    ⧉  sessions           les équipes récentes
-    ⓘ  infos              page « infos » de l'accueil, en plein écran
-    ⟳  automatisations    page « la garde », en plein écran
-    ＋ soldat             ajoute un soldat aside
+    󰋜  accueil            ouvre le modal Ctrl+Q (détacher / fermer)
+    󰉋  files              arbre du dossier courant
+    󰚩  soldats      2 ⚠1  les soldats de l'équipe
+    󰕰  sessions           les équipes récentes
+    󰋽  infos              page « infos » de l'accueil, en plein écran
+    󰑐  automatisations    page « la garde », en plein écran
+    󰐕  soldat             ajoute un soldat aside
+
+Les icônes viennent de la Nerd Font du terminal (set Material Design, nf-md-*) :
+une seule famille, même graisse partout — pas d'Unicode « divers » dont chaque
+glyphe tombe dans une fonte de fallback différente.
 
 Les listes ne se déplient PAS sous le menu : elles REMPLACENT la colonne, seules,
-et la première entrée devient « ← retour ». Une colonne étroite ne supporte pas
+et la première entrée devient « 󰁍 retour ». Une colonne étroite ne supporte pas
 deux niveaux à l'écran en même temps. Même raison pour les choix : ouvrir une
 equipe passe par une MODALE (lignes sélectionnables + annuler), pas un dépliage.
 
@@ -32,6 +36,12 @@ est en bas, TOUJOURS visible, quelle que soit la vue. Source unique :
 chiffre est bon, un adjectif n'ajouterait rien. Elle bascule sur « étouffé » quand
 la machine est chaude SANS travailler : le PC posé sur un lit, qui se bride et cuit
 sa batterie. Le détail (ventilateur, bridages subis) est sur la page « infos ».
+
+Le surlignage n'existe QUE quand le pane a le focus. Une ligne allumée dit « je
+t'écoute » : la garder allumée pendant que l'utilisateur tape chez un soldat
+promet une touche qui n'arrivera pas, et deux curseurs à l'écran font douter de
+celui qui répond. La position est conservée — elle se rallume telle quelle au
+retour. Mécanique : mode ?1004, zellij envoie CSI I / CSI O (cf. _focus_seq).
 
 La colonne ne confirme RIEN par écrit : ouvrir un fichier, une page ou un soldat
 se voit à l'écran, l'annoncer en plus est du bruit. Une ligne n'apparaît en bas
@@ -383,7 +393,11 @@ def parse_metrics(out):
     for ln in out.splitlines():
         p = ln.split("\t")
         try:
-            if p[0] == "CLAUDE" and len(p) >= 3:
+            if p[0] == "NET" and len(p) >= 2:
+                # (état ok|noinet|down, signal %, nom du réseau, vpn, débit Mb/s)
+                m.append(("NET",) + tuple(
+                    (p[i] if len(p) > i else "") for i in range(1, 6)))
+            elif p[0] == "CLAUDE" and len(p) >= 3:
                 m.append(("CLAUDE", p[1], int(p[2]), p[3] if len(p) >= 4 else ""))
             elif p[0] == "RAM" and len(p) >= 2:
                 m.append(("RAM", int(p[1])))
@@ -409,16 +423,20 @@ class Sidebar:
     # entrées se pointent à la souris ou se parcourent aux flèches, un chiffre
     # devant n'aide pas. Le raccourci, lui, est rappelé à droite quand l'entrée
     # est AUSSI joignable au clavier depuis n'importe où dans thedev.
+    # Icônes : Nerd Font (set Material Design, nf-md-*) — UNE seule famille,
+    # même graisse et même taille partout, là où l'Unicode « divers » mélangeait
+    # des glyphes de blocs différents rendus par des fontes de fallback
+    # disparates. La fonte du terminal les embarque déjà (cf. barre zjstatus).
     ENTRIES = [
-        ("←", "accueil",         "accueil",  "ctrl q"),
-        ("⌂", "files",           "files",    ""),
-        ("⚑", "soldats",         "soldats",  ""),
-        ("⧉", "sessions",        "sessions", ""),
-        ("ⓘ", "infos",           "infos",    "alt i"),
-        ("⟳", "automatisations", "autos",    ""),
-        ("＋", "soldat",          "aside",    ""),
+        ("󰋜", "accueil",         "accueil",  "ctrl q"),   # nf-md-home
+        ("󰉋", "files",           "files",    ""),         # nf-md-folder
+        ("󰚩", "soldats",         "soldats",  ""),         # nf-md-robot
+        ("󰕰", "sessions",        "sessions", ""),         # nf-md-view-grid
+        ("󰋽", "infos",           "infos",    "alt i"),    # nf-md-information-outline
+        ("󰑐", "automatisations", "autos",    ""),         # nf-md-refresh
+        ("󰐕", "soldat",          "aside",    ""),         # nf-md-plus
     ]
-    VIEWS = {"files": "⌂ files", "soldats": "⚑ soldats", "sessions": "⧉ sessions"}
+    VIEWS = {"files": "󰉋 files", "soldats": "󰚩 soldats", "sessions": "󰕰 sessions"}
 
     def __init__(self, scr, live=False):
         self.scr = scr
@@ -438,8 +456,36 @@ class Sidebar:
         self.stop = threading.Event()
         self.rows = []
         self.band = BAND        # largeur de dessin réelle, posée par draw()
+        # Le surlignage ne s'affiche QUE si le pane a le focus : une colonne qui
+        # garde une ligne allumée pendant qu'on tape ailleurs prétend attendre
+        # une touche qui n'arrivera pas. Faux au démarrage : dans « le front »
+        # c'est le soldat qui a le focus, et zellij nous enverra CSI I si on
+        # l'obtient (cf. _focus_seq).
+        self.focused = False
+        self._pending = []      # octets relus après un ESC non consommé
+        self._focus_keys()
         self._colors()
         threading.Thread(target=self._metrics_worker, daemon=True).start()
+
+    def _focus_keys(self):
+        """Retrouve les codes que ncurses donne à la prise/perte de focus.
+
+        Le terminfo xterm* décrit ces séquences (kxIN=\\E[I, kxOUT=\\E[O), donc
+        ncurses les reconnaît lui-même et rend une touche — mais une touche
+        ÉTENDUE, sans constante KEY_* : son numéro est attribué à l'exécution
+        (590/591 ici, rien ne le garantit ailleurs). On le retrouve par son nom.
+        Introuvable = terminfo sans ces capacités : les séquences arriveront
+        alors brutes et c'est _focus_seq qui les rattrape après l'ESC."""
+        self.KIN = self.KOUT = None
+        for c in range(256, 1024):
+            try:
+                n = curses.keyname(c)
+            except Exception:
+                continue
+            if n == b"kxIN":
+                self.KIN = c
+            elif n == b"kxOUT":
+                self.KOUT = c
 
     def _colors(self):
         curses.use_default_colors()
@@ -541,7 +587,7 @@ class Sidebar:
         else:
             # Vue liste : la colonne est prise entièrement par la liste, et la
             # première entrée devient le retour. Le titre rappelle où on est.
-            R.append(([("  ", 0), ("← retour", 0),
+            R.append(([("  ", 0), ("󰁍 retour", 0),
                        ("   " + self.VIEWS[self.view], self.DIM)], ("back", None)))
             R.append(([("", 0)], None))
             R.extend(getattr(self, "rows_" + self.view)())
@@ -582,7 +628,7 @@ class Sidebar:
         # elles se suivent, juste après les présents. Placé ICI et pas en fin de
         # liste, sinon douze conversations dormantes le repoussent hors écran.
         R.append(([("", 0)], None))
-        R.append(([("  ", 0), ("＋", self.GREEN), (" ajouter un soldat", 0)],
+        R.append(([("  ", 0), ("󰐕", self.GREEN), (" ajouter un soldat", 0)],
                   ("entry", "aside")))
         # Les conversations terminées de cette equipe : plus de pane, mais elles
         # existent toujours. Tout en atténué — ce sont des soldats qu'on PEUT
@@ -664,6 +710,48 @@ class Sidebar:
         R.append(([("  ", 0), ("annuler", self.DIM)], ("choose", None)))
         return R
 
+    def net_row(self, state, pct, name, vpn, spd):
+        """La ligne réseau : « à quoi je suis connecté » à gauche, « est-ce que
+        ça passe » à droite.
+
+        Le NOM du réseau tient le libellé — savoir qu'on est sur le partage de
+        connexion d'un téléphone plutôt que sur la box change ce qu'on lance. Le
+        VPN s'y colle en un mot : « vpn » quand il est monté (accès seulement),
+        « via vpn » quand il porte la route par défaut, donc que TOUT le trafic
+        sort par là.
+
+        La valeur est un STATUT (bon · faible · mauvais · sans internet · hors
+        ligne), jamais une mesure : le signal en % ou en dBm oblige à connaître
+        l'échelle avant de savoir s'il faut s'inquiéter. Les chiffres bruts
+        (dBm, débit négocié du lien) restent dans `thedev-metrics` pour la page
+        « infos », où on a la place de les expliquer."""
+        if state == "down":
+            return [("réseau", "hors ligne", self.RED)]
+        lab = name or "réseau"
+        if dwidth(lab) > 18:                      # un SSID peut être très long
+            while lab and dwidth(lab) > 17:
+                lab = lab[:-1]
+            lab += "…"
+        lab += " via vpn" if vpn == "via" else (" vpn" if vpn else "")
+        if state == "noinet":
+            return [(lab, "sans internet", self.RED)]
+        # Un STATUT, pas un chiffre : « 40 % » demande de savoir à quoi 40 %
+        # correspond, alors que la seule question est « est-ce que ça passe ? ».
+        # Un seul vocabulaire tient donc toute l'échelle, du bon au rien — et la
+        # couleur redit la même chose sans avoir à lire le mot.
+        # Bornes converties depuis l'échelle radio (% = 2×(dBm+100), formule de
+        # NetworkManager) : bon ≥ −70 dBm · faible jusqu'à −80 · mauvais en
+        # dessous, là où ça décroche. En filaire il n'y a pas de signal — un lien
+        # négocié qui répond est « bon ».
+        if pct.isdigit():
+            p = int(pct)
+            if p >= 60:
+                return [(lab, "bon", self.GREEN)]
+            if p >= 40:
+                return [(lab, "faible", self.YEL)]
+            return [(lab, "mauvais", self.RED)]
+        return [(lab, "bon", self.GREEN)]
+
     def metrics_rows(self):
         """Bandeau du bas : une ressource par ligne, valeur alignée à droite.
         Toujours affiché — c'est le point de la colonne : voir sans demander."""
@@ -671,7 +759,9 @@ class Sidebar:
             return []
         out = []
         for it in self.metrics:
-            if it[0] == "CLAUDE":
+            if it[0] == "NET":
+                out.extend(self.net_row(*it[1:]))
+            elif it[0] == "CLAUDE":
                 win, p, el = it[1], it[2], it[3]
                 out.append(("claude %s" % (("%s/%s" % (el, win)) if el else win),
                             "%d%%" % p, self.gcol(p)))
@@ -693,12 +783,14 @@ class Sidebar:
                 out.append(("chaleur", "%d°%s" % (t, " étouffé" if etouf else ""),
                             self.RED if etouf else self.gcol(pct)))
             elif it[0] == "BAT":
-                # Jauge INVERSE (bas = danger) ; ↑ en charge, ↓ en décharge.
+                # Couleurs RÉSERVÉES : vert = en charge, rouge = batterie
+                # faible. Le reste du temps le chiffre reste neutre — un niveau
+                # normal sur batterie n'est ni une bonne ni une mauvaise
+                # nouvelle. Pas de flèche : le temps restant dit déjà le sens.
                 p, st, tm = it[1], it[2], it[3]
-                c = self.GREEN if (p >= 40 or st == "chg") else \
-                    (self.YEL if p >= 15 else self.RED)
-                lab = "batterie" + {"chg": " ↑", "dis": " ↓"}.get(st, "")
-                out.append((lab + (("  " + tm) if tm else ""), "%d%%" % p, c))
+                c = self.GREEN if st == "chg" else (self.RED if p < 15 else 0)
+                out.append(("batterie" + (("  " + tm) if tm else ""),
+                            "%d%%" % p, c))
         return out
 
     # ---------- rendu ----------
@@ -739,10 +831,10 @@ class Sidebar:
                 break
             segs, act = self.rows[i]
             self.ymap[y] = i
-            # Toute ligne activable se surligne quand elle est sélectionnée. Le
-            # fond couvre la bande entière, puis chaque segment est redessiné
-            # dans sa couleur déclinée sur ce fond.
-            sel = bool(act) and i == self.sel
+            # Toute ligne activable se surligne quand elle est sélectionnée ET
+            # que le pane a le focus. Le fond couvre la bande entière, puis
+            # chaque segment est redessiné dans sa couleur déclinée sur ce fond.
+            sel = bool(act) and i == self.sel and self.focused
             if sel:
                 try:
                     self.scr.addstr(y, 0, " " * band, self.SEL)
@@ -959,6 +1051,36 @@ class Sidebar:
 
     # ---------- boucle ----------
 
+    def _getch(self):
+        """getch, en resservant d'abord les octets relus après un faux ESC."""
+        if self._pending:
+            return self._pending.pop(0)
+        return self.scr.getch()
+
+    def _focus_seq(self):
+        """Appelé sur un ESC : zellij annonce la prise/perte de focus du pane par
+        CSI I / CSI O (mode ?1004, activé dans main). Aucune entrée terminfo ne
+        décrit ces séquences, donc ncurses les livre en ESC + '[' + lettre : il
+        faut les reconnaître à la main, sinon un simple changement de pane
+        passerait pour Échap et ferait reculer d'un cran.
+
+        Renvoie True (focus pris), False (focus perdu), ou None si c'était un
+        vrai ESC — les octets lus au passage sont remis dans la file."""
+        self.scr.timeout(0)                      # reposé au tour suivant par loop()
+        a = self.scr.getch()
+        if a == -1:
+            return None
+        if a != ord("["):
+            self._pending.append(a)
+            return None
+        b = self.scr.getch()
+        if b in (ord("I"), ord("O")):
+            return b == ord("I")
+        self._pending.append(ord("["))
+        if b != -1:
+            self._pending.append(b)
+        return None
+
     def loop(self):
         while True:
             self.draw()
@@ -966,16 +1088,34 @@ class Sidebar:
             # la liste des sessions arrive d'un thread.
             self.scr.timeout(1000 if self.metrics or self.sessions is None else 200)
             try:
-                c = self.scr.getch()
+                c = self._getch()
             except KeyboardInterrupt:
                 return
             if c == -1:
                 continue
-            if c == ord("q"):
-                return
+            if c == self.KIN:
+                self.focused = True
+                continue
+            if c == self.KOUT:
+                self.focused = False
+                continue
             if c == 27:
+                f = self._focus_seq()
+                if f is not None:
+                    self.focused = f
+                    continue
                 self.back()
                 continue
+            # Une touche du clavier ne peut arriver QUE si le pane a le focus :
+            # ça rattrape l'état initial, supposé sans focus. Deux exclusions —
+            # la souris (zellij livre les mouvements au pane sous le curseur,
+            # focus ou non : survoler la colonne ne l'allume pas) et le
+            # redimensionnement (déclenché depuis un autre pane). Un vrai clic,
+            # lui, donne le focus au pane, donc un CSI I derrière.
+            if c not in (curses.KEY_MOUSE, curses.KEY_RESIZE):
+                self.focused = True
+            if c == ord("q"):
+                return
             if c == curses.KEY_LEFT:
                 self.back()
                 continue
@@ -1024,11 +1164,22 @@ def main(scr, live):
     curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
     curses.mouseinterval(0)
     scr.keypad(True)
+    # ncurses attend l'ESCDELAY (1 s par défaut) avant de livrer un ESC, puisque
+    # c'est aussi le début d'une séquence de touche. À 1 s, l'extinction du
+    # surlignage traînerait d'une seconde après le départ du focus — et Échap
+    # aussi. 25 ms suffisent pour distinguer les deux.
+    if hasattr(curses, "set_escdelay"):
+        curses.set_escdelay(25)
+    # Focus reporting (mode ?1004) : zellij enverra CSI I / CSI O à chaque fois
+    # que ce pane prend ou perd le focus (changement de pane ET d'onglet). C'est
+    # ce qui permet d'éteindre le surlignage quand on tape ailleurs.
+    os.write(1, b"\x1b[?1004h")
     v = Sidebar(scr, live)
     try:
         v.loop()
     finally:
         v.stop.set()
+        os.write(1, b"\x1b[?1004l")   # sinon le shell de repli hérite du mode
 
 
 def fallback_shell(live):

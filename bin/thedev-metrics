@@ -158,6 +158,99 @@ else
   TEMP=""
 fi
 
+# ---------------------------------------------------------------------------
+# Réseau — « est-ce que ça passe, et par où ». TROIS états seulement, parce que
+# c'est là que l'action diffère : plus de route (rebrancher) · route mais rien ne
+# passe (box en rade, portail captif — inutile de chercher côté agent) · ça passe
+# (et alors la force du lien explique la lenteur sans que rien ne soit cassé).
+#
+# L'interface est celle qui porte la ROUTE PAR DÉFAUT, jamais une énumération de
+# /sys/class/net : docker0, virbr0, les veth et tailscale0 y sont « up » en
+# permanence, et n'importe quelle boucle naïve annoncerait « connecté » à tort.
+#
+# Le signal sort en POURCENTAGE et non en dBm (échelle négative et logarithmique,
+# illisible) : formule de NetworkManager — % = 2×(dBm+100) borné 0-100 — donc la
+# valeur COLLE à l'indicateur Wi-Fi du bureau au lieu d'inventer une échelle
+# propre à thedev. C'est une DONNÉE, pas un affichage : la colonne la traduit en
+# statut (bon/faible/mauvais), le pourcentage et le débit du lien filaire ne sont
+# lus tels quels que par la page « infos », qui a la place de les expliquer.
+NET_STATE="" NET_PCT="" NET_NAME="" NET_VPN="" NET_SPD=""
+NET_IF=$(awk 'NR>1 && $2=="00000000" && $8=="00000000"{print $7"\t"$1}' /proc/net/route \
+         2>/dev/null | sort -n | head -1 | cut -f2)
+if [ -z "$NET_IF" ]; then
+  NET_STATE=down
+else
+  NET_STATE=ok
+  if [ -d "/sys/class/net/$NET_IF/wireless" ]; then
+    # /proc/net/wireless : « wlo1: 0000  30.  -80.  -256 » → $4 = niveau (dBm).
+    _lvl=$(awk -v i="$NET_IF:" '$1==i{ sub(/\.$/,"",$4); print $4 }' /proc/net/wireless 2>/dev/null)
+    if [ -n "$_lvl" ]; then
+      NET_PCT=$(awk -v l="$_lvl" 'BEGIN{
+        if (l < 0)         p = 2*(l+100);   # dBm — le cas normal
+        else if (l <= 100) p = l;           # pilote qui rend déjà une qualité relative
+        else exit;                          # valeur inexploitable → rien
+        if (p < 0) p = 0; if (p > 100) p = 100; printf "%.0f", p }')
+    fi
+  else
+    _s=$(cat "/sys/class/net/$NET_IF/speed" 2>/dev/null)
+    [ "${_s:-0}" -gt 0 ] 2>/dev/null && NET_SPD="$_s"
+  fi
+
+  # Nom du réseau et VPN : ça ne bouge quasi jamais → relu toutes les 30 s, pas à
+  # chaque tour (le bandeau se rafraîchit toutes les 3 s). Cache invalidé si
+  # l'interface de sortie a changé.
+  _idc="${XDG_CACHE_HOME:-$HOME/.cache}/thedev/net-id"
+  _fresh=0
+  if [ -f "$_idc" ]; then
+    IFS=$'\t' read -r _ci _cn _cv < "$_idc" 2>/dev/null || true
+    _age=$(( $(date +%s) - $(stat -c %Y "$_idc" 2>/dev/null || echo 0) ))
+    [ "$_age" -lt 30 ] && [ "${_ci:-}" = "$NET_IF" ] && _fresh=1
+  fi
+  if [ "$_fresh" = 1 ]; then
+    NET_NAME="${_cn:-}"; NET_VPN="${_cv:-}"
+  else
+    if [ -d "/sys/class/net/$NET_IF/wireless" ]; then
+      NET_NAME=$(iwgetid -r 2>/dev/null)
+    else
+      NET_NAME=filaire
+    fi
+    # VPN : une interface tunnel qui porte une ADRESSE. La présence de
+    # l'interface ne suffit PAS — tailscale0 existe, garde son carrier et ses
+    # règles de routage même éteint : s'y fier annoncerait « VPN actif » à tort.
+    case "$NET_IF" in
+      tun*|tap*|wg*|tailscale*|ppp*|nordlynx|proton*|zt*) NET_VPN=via ;;
+    esac
+    if [ -z "$NET_VPN" ] && command -v ip >/dev/null 2>&1; then
+      ip -4 -o addr show 2>/dev/null | awk '{print $2}' \
+        | grep -qE '^(tun|tap|wg|tailscale|ppp|nordlynx|proton|zt)' && NET_VPN=vpn
+    fi
+    mkdir -p "$(dirname "$_idc")" 2>/dev/null
+    printf '%s\t%s\t%s' "$NET_IF" "$NET_NAME" "$NET_VPN" > "$_idc" 2>/dev/null || true
+  fi
+
+  # Est-ce que ça PASSE vraiment ? Sonde vers api.anthropic.com plutôt que
+  # 8.8.8.8 : même coût, mais une seule mesure répond aux deux questions
+  # (Internet ET le service dont dépend tout le travail). JAMAIS bloquante :
+  # dernier état connu + rafraîchissement en fond, verrou anti-stampede.
+  # THEDEV_NET_PROBE=0 la coupe (machine sans sortie, mesure de coût).
+  _pc="${XDG_CACHE_HOME:-$HOME/.cache}/thedev/net-probe"
+  _page=99999
+  if [ -f "$_pc" ]; then
+    _page=$(( $(date +%s) - $(stat -c %Y "$_pc" 2>/dev/null || echo 0) ))
+    [ "$(cat "$_pc" 2>/dev/null)" = ko ] && NET_STATE=noinet
+  fi
+  if [ "${THEDEV_NET_PROBE:-1}" = 1 ] && [ "$_page" -ge 30 ] && command -v curl >/dev/null 2>&1; then
+    mkdir -p "$(dirname "$_pc")" 2>/dev/null
+    ( flock -n 9 || exit 0
+      if curl -s -o /dev/null -m 4 https://api.anthropic.com/ 2>/dev/null; then
+        printf 'ok' > "$_pc"
+      else
+        printf 'ko' > "$_pc"
+      fi
+    ) 9>"$_pc.lock" >/dev/null 2>&1 &
+  fi
+fi
+
 RAM=$(ram_pct)
 DISKS=()
 for m in / /data; do
@@ -183,6 +276,9 @@ if [ -n "$CLAUDE5H" ] && [ -f "$CL_CACHE" ] && command -v jq >/dev/null 2>&1; th
 fi
 
 if [ "${1:-}" = "--raw" ]; then
+  # En tête : sans réseau, aucune autre jauge ne sert à quelque chose.
+  [ -n "$NET_STATE" ] && printf 'NET\t%s\t%s\t%s\t%s\t%s\n' \
+    "$NET_STATE" "$NET_PCT" "$NET_NAME" "$NET_VPN" "$NET_SPD"
   [ -n "$CLAUDE5H" ] && printf 'CLAUDE\t5h\t%s\t%s\n' "$CLAUDE5H" "$CLAUDE5H_EL"
   [ -n "$RAM" ] && printf 'RAM\t%s\n' "$RAM"
   for d in "${DISKS[@]}"; do printf 'DISK\t%s\t%s\n' "${d%%:*}" "${d##*:}"; done
@@ -227,14 +323,13 @@ else
   fi
 fi
 if [ -n "$BAT_PCT" ]; then
-  # Jauge INVERSE (bas = danger) : vert≥40 · jaune≥15 · rouge sinon. ↑ = en charge
-  # (temps → pleine charge), ↓ = décharge (temps → extinction). Rien si full/inconnu.
-  if   [ "$BAT_PCT" -ge 40 ] 2>/dev/null; then bc=$G
-  elif [ "$BAT_PCT" -ge 15 ] 2>/dev/null; then bc=$Y
-  else bc=$R; fi
-  [ "$BAT_ST" = chg ] && bc=$G
-  ba=""; case "$BAT_ST" in chg) ba="↑";; dis) ba="↓";; esac
-  seg="${D}bat${ba} ${Z}${bc}${BAT_PCT}%${Z}"
+  # Couleurs RÉSERVÉES — même règle que le bandeau de la sidebar : vert = en
+  # charge, rouge = batterie faible (<15 %), neutre sinon. Pas de flèche : le
+  # temps restant dit déjà le sens.
+  bc=""
+  if [ "$BAT_ST" = chg ]; then bc=$G
+  elif [ "$BAT_PCT" -lt 15 ] 2>/dev/null; then bc=$R; fi
+  seg="${D}bat ${Z}${bc}${BAT_PCT}%${Z}"
   [ -n "$BAT_TIME" ] && seg+="${D} ${BAT_TIME}${Z}"
   add "$seg"
 fi

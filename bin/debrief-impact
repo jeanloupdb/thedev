@@ -1,52 +1,32 @@
 #!/usr/bin/env bash
-# @thedev session résumé COMPACT de ce que « fermer cette equipe » va couper (Ctrl+Q).
-# debrief-impact <equipe> — 2 lignes max, colorées (codes de la page la garde). Rien si
-# l'equipe est inerte. L'equipe == le nom de session zellij (cf. equipe_name).
+# @thedev session ce que « fermer cette equipe » va COUPER (Ctrl+Q) — un fait par ligne.
+# debrief-impact <equipe> — texte NU : ni glyphe, ni couleur, ni ponctuation de
+# liaison. C'est l'appelant (debrief-menu) qui choisit la formulation et le rendu ;
+# ici on ne produit que des morceaux de phrase (« 2 soutiens », « la garde X »),
+# assemblables tels quels. Rien du tout si l'equipe est inerte.
+# L'equipe == le nom de session zellij (cf. equipe_name).
 set -u
 eq="${1:-}"; [ -n "$eq" ] || exit 0
 ROOT="$HOME/.cache/thedev"
-R=$'\033[0m'; D=$'\033[2m'; MAG=$'\033[1;35m'; RED=$'\033[1;31m'; GRN=$'\033[1;32m'
 
-join_dot(){ local out="" p; for p in "$@"; do out="${out:+$out · }$p"; done; printf '%s' "$out"; }
-
-# Ce qui est TUÉ : missions/crons en cours, soutiens sandbox, watcher.
-kill_parts=()
 nm=$(find "$ROOT/spaces/$eq/work" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)
-[ "${nm:-0}" -gt 0 ] && kill_parts+=("$nm mission$([ "$nm" -gt 1 ] && echo s)")
+[ "${nm:-0}" -gt 0 ] && printf '%s mission%s\n' "$nm" "$([ "$nm" -gt 1 ] && echo s)"
+
 if command -v soutien >/dev/null 2>&1; then
   na=$(soutien list 2>/dev/null | awk '/^● /{ if ($2 !~ /^link-/ && $2 !~ /^mission-/) c++ } END{print c+0}')
-  [ "${na:-0}" -gt 0 ] && kill_parts+=("$na soutien$([ "$na" -gt 1 ] && echo s)")
+  [ "${na:-0}" -gt 0 ] && printf '%s soutien%s\n' "$na" "$([ "$na" -gt 1 ] && echo s)"
 fi
 
-# Watcher vivant ? On ne le liste PAS (plomberie interne, présent dans tout thedev).
-# La garde rattachée est affichée avec son STATUT ACTUEL (● opérationnelle
-# / ► en cours / ○ arrêtée) — pas l'état post-fermeture : le « FERMER = session tuée »
-# du menu suffit à comprendre qu'on les coupe. Chaque entrée = "icon\tcouleur\tnom".
-autos=()
+# Gardes rattachées : on ne cite QUE celles qui tournent. Une garde déjà arrêtée
+# n'est pas coupée par la fermeture — la nommer ferait craindre une perte qui
+# n'existe pas. Le watcher lui-même n'est jamais listé (plomberie interne).
 if [ -f "$ROOT/links/$eq" ]; then
   wpid=$(sed -n 's/^watcher_pid=//p' "$ROOT/links/$eq" 2>/dev/null | head -1)
-  if [ -n "$wpid" ] && kill -0 "$wpid" 2>/dev/null; then
-    if command -v garde-list >/dev/null 2>&1; then
-      while IFS=$'\t' read -r state name _n _l e _cwd _desc open; do
-        [ "$e" = "$eq" ] || continue  # filtre sur l'equipe
-        if   [ "$state" = running ] && [ "$open" = 1 ]; then ic="►"; col="$GRN"
-        elif [ "$state" = active ]  && [ "$open" = 1 ]; then ic="●"; col="$GRN"
-        else                                                 ic="○"; col="$RED"; fi
-        autos+=("$ic"$'\t'"$col"$'\t'"$name")
-      done < <(garde-list 2>/dev/null)
-    fi
+  if [ -n "$wpid" ] && kill -0 "$wpid" 2>/dev/null && command -v garde-list >/dev/null 2>&1; then
+    while IFS=$'\t' read -r state name _n _l e _cwd _desc open; do
+      [ "$e" = "$eq" ] || continue
+      [ "$open" = 1 ] || continue
+      case "$state" in running|active) printf 'la garde « %s »\n' "$name";; esac
+    done < <(garde-list 2>/dev/null)
   fi
 fi
-
-[ ${#kill_parts[@]} -eq 0 ] && [ ${#autos[@]} -eq 0 ] && exit 0
-
-# Sortie TSV : « <texte_visible>\t<rendu_ANSI> ». debrief-menu gère l'indentation
-# et l'alignement — ici on ne fait que fournir le texte et sa version colorée.
-if [ ${#kill_parts[@]} -gt 0 ]; then
-  j=$(join_dot "${kill_parts[@]}")
-  printf '%s\t%s\n' "✗ $j" "${RED}✗${R} ${RED}${j}${R}"
-fi
-for a in "${autos[@]}"; do
-  IFS=$'\t' read -r ic col name <<<"$a"
-  printf '%s\t%s\n' "$ic $name" "${col}${ic}${R} ${MAG}${name}${R}"
-done
