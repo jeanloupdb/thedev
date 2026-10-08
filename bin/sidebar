@@ -5,7 +5,7 @@
 Une colonne étroite (~20 % de l'écran, ~35 colonnes), cliquable et pilotable au
 clavier. À l'usage, seul l'arbre des fichiers servait : c'est désormais la seule
 vue. En tête, un bouton « quit » (même modale que Ctrl+Q : détacher ou fermer),
-puis les fichiers ouverts (un bouton « close files » commun), le dossier du workspace et la
+puis un bouton « close files » quand un éditeur est ouvert, le dossier du workspace et la
 machine — sur un serveur, sa couleur rappelle où l'on est. Un fichier s'ouvre
 dans nvim à la place des agents, dans leur pile à droite.
 
@@ -346,13 +346,11 @@ class Sidebar:
             elif not e.get("seen") and time.time() - e["t"] < 10:
                 live.append(e)
         self.editors = live
-        for i, e in enumerate(self.editors):
-            R.append(([("  ", 0), ("✎ ", self.YEL), (os.path.basename(e["path"]), curses.A_BOLD)],
-                      ("edfocus", i)))
-        # Un seul bouton pour tout refermer : une ligne par fichier ALOURDIT la
-        # colonne sans rien apporter (on n'a qu'un éditeur à la fois en pratique).
+        # Un seul bouton discret, sans lister les fichiers : leur nom est déjà
+        # dans le titre du pane de l'éditeur, le répéter ici alourdit la colonne.
         if self.editors:
-            R.append(([("    ", 0), ("󰆓 close files", self.GREEN)], ("edcloseall", 0)))
+            R.append(([("  ", 0), ("✕ ", self.DIM), ("close files", self.DIM)],
+                      ("edcloseall", 0)))
             R.append(([("", 0)], None))
         root = os.path.basename(self.cwd.rstrip("/")) or self.cwd
         segs = [("  ", 0), ("󰉋 ", self.CYAN), (root, curses.A_BOLD)]
@@ -562,9 +560,6 @@ class Sidebar:
             return
         if kind == "dir":
             self.expanded.symmetric_difference_update({val})
-            return
-        if kind == "edfocus":
-            self.zj("focus-pane-id", self.editors[val]["pane"])
             return
         if kind == "edcloseall":
             for e in list(self.editors):
