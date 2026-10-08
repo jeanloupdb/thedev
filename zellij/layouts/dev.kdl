@@ -33,9 +33,8 @@ layout {
         pane split_direction="vertical" {
             // Colonne de gauche = la sidebar, SEULE. Pas de nvim empilé ici :
             // 20 % de large, c'est ~35 colonnes — inéditable, donc le pane
-            // `editor` ne servait à rien. Un fichier s'ouvre en plein écran
-            // (pane flottant), ce qui est de toute façon la seule taille où
-            // éditer est confortable.
+            // `editor` ne servait à rien. Un fichier s'ouvre dans la pile des
+            // agents, à droite (cf. bin/sidebar, open_file).
             pane size="20%" name="sidebar" command="~/.local/bin/sidebar" {
                 args "--live"
             }

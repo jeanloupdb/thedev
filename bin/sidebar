@@ -1,34 +1,16 @@
 #!/usr/bin/env python3
-# @thedev session sidebar: left column of the agents page, clickable menu (home, files, agents, sessions...)
-"""sidebar — la colonne de gauche de « agents ».
+# @thedev session sidebar: left column of the agents page, the file tree and a quit button
+"""sidebar — la colonne de gauche de la page agents.
 
-Menu cliquable ET clavier, dans une colonne étroite (~20 % de l'écran, ~35
-colonnes). Elle y est SEULE : à cette largeur nvim était inéditable, donc un
-fichier s'ouvre en plein écran (pane flottant) plutôt que dans la colonne.
-
-Écran d'accueil — sept entrées, chacune à la fois bouton et état lisible :
-
-    󰋜  home               ouvre le modal Ctrl+Q (detach / close)
-    󰉋  files              arbre du dossier courant
-    󰚩  agents      2 ⚠1  les agents de le workspace
-    󰕰  sessions           les workspaces récentes
-    󰋽  infos              page « infos » du home, en plein écran
-    󰑐  automations        page « automations », en plein écran
-    󰐕  spawn              ajoute un agent aside
+Une colonne étroite (~20 % de l'écran, ~35 colonnes), cliquable et pilotable au
+clavier. À l'usage, seul l'arbre des fichiers servait : c'est désormais la seule
+vue. En tête, un bouton « quit » (même modale que Ctrl+Q : détacher ou fermer),
+puis les fichiers ouverts (bouton save + close), le dossier du workspace et la
+machine — sur un serveur, sa couleur rappelle où l'on est. Un fichier s'ouvre
+dans nvim à la place des agents, dans leur pile à droite.
 
 Les icônes viennent de la Nerd Font du terminal (set Material Design, nf-md-*) :
-une seule famille, même graisse partout — pas d'Unicode « divers » dont chaque
-glyphe tombe dans une fonte de fallback différente.
-
-Les listes ne se déplient PAS sous le menu : elles REMPLACENT la colonne, seules,
-et la première entrée devient « 󰁍 back ». Une colonne étroite ne supporte pas
-deux niveaux à l'écran en même temps. Même raison pour les choix : ouvrir une
-workspace passe par une MODALE (lignes sélectionnables + annuler), pas un dépliage.
-
-La liste des agents sépare ceux qui occupent VRAIMENT un pane à droite (leur
-nom apparaît dans le layout courant) de ceux « à réveiller » — conversations
-sans pane, en atténué, qu'un Entrée rouvre en `--resume`. Elle se rafraîchit
-toute seule : la colonne vit des heures, un état figé au démarrage ment vite.
+une seule famille, même graisse partout.
 
 Le bandeau de ressources (fenêtre Claude, RAM, disque, charge, chaleur, batterie)
 est en bas, TOUJOURS visible, quelle que soit la vue. Source unique :
@@ -47,18 +29,16 @@ La colonne ne confirme RIEN par écrit : ouvrir un fichier, une page ou un agent
 se voit à l'écran, l'annoncer en plus est du bruit. Une ligne n'apparaît en bas
 que si quelque chose a ÉCHOUÉ.
 
-MODE PROTOTYPE (défaut) : navigation, données et rendu sont RÉELS ; `infos` et
-`automations` s'ouvrent pour de bon (un pane flottant ne touche pas la
-session). Les actions qui frapperaient la session — détacher, tuer, attacher —
-sont seulement AFFICHÉES : la sidebar tourne dans « jobs », un vrai `detach`
-détacherait l'utilisateur. `--live` exécute tout (une fois posée dans agents).
+MODE PROTOTYPE (défaut) : l'arbre et le rendu sont RÉELS, le bouton quit est
+seulement AFFICHÉ (un vrai detach détacherait l'utilisateur). `--live` exécute
+tout (une fois posée dans la page agents).
 
-Clavier : ↑/↓ naviguer · Entrée activer · Échap revenir d'un cran · q quitter
-          Échap ne QUITTE jamais : la colonne est permanente dans agents.
-          → sort de la colonne (vers les agents) — il n'active RIEN
-Souris  : clic = activer.
+Clavier : ↑/↓ naviguer · Entrée ouvrir · Échap replier l'arbre · r relire · q quitter
+          → sort de la colonne (vers les agents), il n'active rien
+Souris  : clic = ouvrir / déplier.
 """
 import curses
+import hashlib
 import json
 import os
 import re
@@ -160,236 +140,6 @@ def workspace_cwd(sess, fallback):
         return fallback
 
 
-def fresh_sids(path, max_age=1800):
-    """Ids de agents marqués dans un répertoire-drapeau, encore frais (mtime)."""
-    out, now = set(), time.time()
-    try:
-        with os.scandir(os.path.expanduser(path)) as it:
-            for e in it:
-                try:
-                    if now - e.stat().st_mtime < max_age:
-                        out.add(e.name)
-                except OSError:
-                    pass
-    except OSError:
-        pass
-    return out
-
-
-def live_pane_names():
-    """Noms des panes RÉELLEMENT ouverts dans la session (via le layout courant).
-
-    C'est la seule vérité terrain sur « qui occupe un pane ». Le champ `ended`
-    du registre ment dans les deux sens : un agent tué net garde `ended == 0`,
-    et un SessionEnd parasite (compactage, relance) marque terminé un agent
-    bien vivant. On lit donc le layout, en retirant le losange du pulse : c'est un
-    habillage d'activité, pas une partie du nom.
-
-    Les DEUX glyphes comptent. `pane-pulse` alterne ◆ et ◇ toutes les ~0,7 s pendant
-    qu'un agent répond ; n'en retirer qu'un fait échouer le rapprochement une frame
-    sur deux, et l'agent le plus actif de le workspace clignote entre « ouverts » et
-    « à réveiller ». Le registre, lui, ne stocke que le nom NU (cf. pane-name).
-
-    Renvoie None si le layout est illisible — l'appelant retombe alors sur
-    `ended`, imparfait mais toujours mieux que rien."""
-    out = sh(["zellij", "action", "dump-layout"], 8)
-    if not out:
-        return None
-    names = []
-    for m in re.finditer(r'name="((?:[^"\\]|\\.)*)"', out):
-        names.append(PULSE_RE.sub("", m.group(1)))
-    return names
-
-
-def load_agents(cwd, sess="", dormant_max=12):
-    """Agents de ce workspace, en deux groupes → (actifs, inactifs).
-
-    Registre = ~/.cache/agents (TSV : id cwd role nom session started ended rc).
-
-    ACTIF   = son nom de pane est présent dans le layout courant — donc il
-              occupe vraiment un pane à droite. L'état vient des marqueurs des
-              hooks : waiting (il t'attend sur un QCM) prime sur busy.
-    INACTIF = conversation sans pane : elle existe toujours et peut être
-              RÉVEILLÉE (--resume). Les plus récentes d'abord, bornées :
-              l'historique d'un vieux projet ferait sinon une liste sans fin.
-
-    Le rapprochement se fait avec MULTIPLICITÉ (un pane consommé une fois) :
-    deux conversations peuvent s'appeler « claude », une seule est ouverte."""
-    busy, wait = fresh_sids("~/.cache/agent-busy"), fresh_sids("~/.cache/agent-waiting")
-    rows = []
-    try:
-        with open(os.path.expanduser("~/.cache/agents")) as f:
-            lines = f.read().splitlines()
-    except OSError:
-        return [], []
-    for line in lines:
-        p = line.split("\t")
-        if len(p) < 7:
-            continue
-        try:
-            if os.path.realpath(p[1]) != cwd:
-                continue
-        except OSError:
-            continue
-        # …ET de CETTE workspace. Le dossier ne suffit pas : un `claude` lancé à la main
-        # depuis shell, ou une tâche entrante, travaille dans le même répertoire
-        # sans avoir jamais fait partie de le workspace. Sa place est dans l'écran
-        # « sessions », qui recense toutes les conversations de la machine — pas ici,
-        # où la liste répond à « qui est, ou a été, de ce workspace ». Filtre levé si
-        # le workspace est inconnue (sidebar lancée hors zellij), sinon on masquerait tout.
-        if sess and p[4] != sess:
-            continue
-        try:
-            started, ended = int(p[5]), int(p[6])
-        except ValueError:
-            started, ended = 0, 0
-        rows.append({"sid": p[0], "role": p[2], "name": p[3] or "claude",
-                     "sess": p[4], "started": started, "ended": ended})
-    # Le plus récemment démarré d'abord : c'est lui qui doit récupérer le pane
-    # quand plusieurs conversations portent le même nom.
-    rows.sort(key=lambda r: -r["started"])
-    panes = live_pane_names()
-    pool = {}
-    for n in (panes or []):
-        pool[n] = pool.get(n, 0) + 1
-    actifs, dormants = [], []
-    for r in rows:
-        if panes is None:                      # layout illisible → repli sur `ended`
-            live = r["ended"] == 0 and (not sess or r["sess"] == sess)
-        else:
-            live = pool.get(r["name"], 0) > 0
-            if live:
-                pool[r["name"]] -= 1
-        if live:
-            state = ("waiting" if r["sid"] in wait else
-                     ("busy" if r["sid"] in busy else "idle"))
-            actifs.append((r["name"], r["role"], state, r["sid"]))
-        else:
-            dormants.append((r["name"], r["role"], r["ended"] or r["started"], r["sid"]))
-    # Une conversation qui redémarre (reprise, relance de le workspace, compactage) reçoit
-    # un NOUVEAU session id. Le registre accumule donc plusieurs entrées pour un même
-    # pane, chacune portant le nom que le pane avait à ce moment-là — un agent renommé
-    # deux fois laissait quatre lignes « à réveiller » qui sont ses propres vies
-    # antérieures, pas des conversations à part entière.
-    # D'où : une seule entrée par pane, la plus récente. Et AUCUNE si un agent vivant
-    # occupe ce pane — c'est lui, la conversation, les autres n'en sont que des traces.
-    # Rien n'est perdu : l'écran « sessions » liste toutes les conversations, lui.
-    # La clé est le pane ET la session zellij, pas le pane seul : zellij renumérote
-    # ses panes à partir de zéro à chaque session, donc deux conversations sans
-    # rapport se retrouvent « pane 6 » et fusionneraient à tort.
-    panes_pris = {agent_anchor(sid) for _, _, _, sid in actifs}
-    panes_pris.discard("")
-    vus, uniques = set(), []
-    for d in sorted(dormants, key=lambda d: -d[2]):
-        p = agent_anchor(d[3])
-        if p:
-            if p in panes_pris or p in vus:
-                continue
-            vus.add(p)
-        uniques.append(d)
-    return actifs, uniques[:dormant_max]
-
-
-def agent_anchor(sid):
-    """« pane + session zellij » d'un agent — l'emplacement qu'il occupait, unique
-    dans le temps là où `agent_pane` seul ne l'est pas (les panes sont renumérotés
-    à chaque session). Sert à reconnaître les entrées de registre qui décrivent le
-    MÊME emplacement, donc la même conversation reprise. Vide si jamais vu."""
-    try:
-        with open(os.path.expanduser("~/.cache/agent-panes/%s" % sid)) as f:
-            return f.read().strip()
-    except OSError:
-        return ""
-
-
-def agent_pane(sid):
-    """Pane id d'un agent (marqueur posé au SessionStart par agent-track,
-    rafraîchi par pane-name). Vide s'il n'a pas encore été vu."""
-    try:
-        with open(os.path.expanduser("~/.cache/agent-panes/%s" % sid)) as f:
-            return f.read().split("\t")[0].strip()
-    except OSError:
-        return ""
-
-
-def fmt_age(mtime):
-    """Âge relatif compact (≤ 6 car.), repris tel quel du home pour que les
-    deux écrans se lisent pareil."""
-    d = max(0, int(time.time() - mtime))
-    if d < 60:
-        return "now"
-    if d < 3600:
-        return "%dm" % (d // 60)
-    if d < 86400:
-        return "%dh" % (d // 3600)
-    return "%dd" % (d // 86400)
-
-
-def epoch(iso):
-    """ISO 8601 → epoch. 0 si illisible (la ligne passe alors en fin de tri)."""
-    try:
-        return time.mktime(time.strptime(iso[:19], "%Y-%m-%dT%H:%M:%S"))
-    except Exception:
-        return 0.0
-
-
-def clean_title(t):
-    """Titre lisible : les transcripts commencent parfois par une balise injectée
-    par le harness (<local-command-caveat>, <system-reminder>…) — on la coupe."""
-    t = t.strip()
-    while t.startswith("<"):
-        end = t.find(">")
-        if end < 0:
-            return ""
-        t = t[end + 1:].strip()
-    return " ".join(t.split())
-
-
-def load_sessions(limit=30):
-    """Sessions récentes, via la façade moteur (jamais les transcripts en direct).
-
-    On passe par `engine list --all --json` : c'est le point d'abstraction qui
-    évite à la sidebar de connaître le format de Claude Code (cf. ENGINE-COUPLING)."""
-    engine = os.path.join(os.path.dirname(os.path.realpath(__file__)), "engine")
-    rows = []
-    for line in sh([engine, "list", "--all", "--json"], 25).splitlines():
-        try:
-            d = json.loads(line)
-        except Exception:
-            continue
-        cwd = d.get("cwd") or ""
-        # On ne garde que de VRAIS projets : pas les workspaces de service (leads de
-        # l'org), pas les scratchpads jetables, pas les dossiers disparus.
-        if "/.cache/thedev/" in cwd or "/scratchpad" in cwd or cwd.startswith("/tmp/"):
-            continue
-        if not os.path.isdir(cwd):
-            continue
-        rows.append({"id": d.get("id", ""), "cwd": os.path.realpath(cwd),
-                     "mtime": epoch(d.get("mtime", "")),
-                     "title": clean_title(d.get("title") or ""),
-                     "name": os.path.basename(cwd) or cwd})
-    rows.sort(key=lambda r: r["mtime"], reverse=True)
-    # Une seule entrée par dossier : la plus récente.
-    seen, uniq = set(), []
-    for r in rows:
-        if r["cwd"] in seen:
-            continue
-        seen.add(r["cwd"])
-        uniq.append(r)
-        if len(uniq) >= limit:
-            break
-    return uniq
-
-
-def live_sessions():
-    """Noms des sessions zellij actuellement vivantes (marqueur ●)."""
-    names = set()
-    for line in sh(["zellij", "list-sessions", "--no-formatting"], 2).splitlines():
-        if line.strip() and "EXITED" not in line:
-            names.add(line.split()[0])
-    return names
-
-
 def listdir(path):
     """Contenu d'un dossier, dossiers d'abord, bruit filtré."""
     try:
@@ -442,16 +192,6 @@ class Sidebar:
     # même graisse et même taille partout, là où l'Unicode « divers » mélangeait
     # des glyphes de blocs différents rendus par des fontes de fallback
     # disparates. La fonte du terminal les embarque déjà (cf. barre zjstatus).
-    ENTRIES = [
-        ("󰋜", "home",            "home",     "ctrl q"),   # nf-md-home
-        ("󰉋", "files",           "files",    ""),         # nf-md-folder
-        ("󰚩", "agents",         "agents",  ""),         # nf-md-robot
-        ("󰕰", "sessions",        "sessions", ""),         # nf-md-view-grid
-        ("󰋽", "info",            "infos",    "alt i"),    # nf-md-information-outline
-        ("󰑐", "automations",     "autos",    ""),         # nf-md-refresh
-        ("󰐕", "spawn",           "aside",    ""),         # nf-md-plus
-    ]
-    VIEWS = {"files": "󰉋 files", "agents": "󰚩 agents", "sessions": "󰕰 sessions"}
 
     def __init__(self, scr, live=False):
         self.scr = scr
@@ -465,13 +205,11 @@ class Sidebar:
         self.cwd = workspace_cwd(self.workspace, os.path.realpath(os.getcwd()))
         self.sel = 0
         self.off = 0            # première ligne visible (défilement)
-        self.view = None        # None = menu ; sinon files | agents | sessions
+        self.view = "files"     # la seule vue : l'arbre du dossier du workspace
         self.status = ""
         self.expanded = set()   # dossiers dépliés dans l'arbre files
+        self.editors = []       # fichiers ouverts : {path, sock, pane}
         self.modal = None       # modale de choix ouverte (dict title/opts/sess) ou None
-        self.sessions = None    # None = pas encore chargé (thread)
-        self.agents, self.dormants = load_agents(self.cwd, self.workspace)
-        self.live_names = live_sessions()
         self.metrics = None
         self.stop = threading.Event()
         self.rows = []
@@ -569,16 +307,8 @@ class Sidebar:
             m = parse_metrics(sh(["thedev-metrics", "--raw"], 5))
             if m:
                 self.metrics = m
-            try:
-                self.agents, self.dormants = load_agents(self.cwd, self.workspace)
-                self.live_names = live_sessions()
-            except Exception:
-                pass
             if self.stop.wait(3):
                 break
-
-    def _load_sessions(self):
-        self.sessions = load_sessions()
 
     # ---------- construction des lignes ----------
 
@@ -593,85 +323,48 @@ class Sidebar:
 
         Chaque ligne = (segments, action). `action` None = ligne décorative (non
         sélectionnable). C'est cette liste qui sert AUSSI au clic : y → index."""
+        # Une seule vue : l'usage a montré que seul l'arbre des fichiers servait.
+        # En tête, le bouton de sortie (même modale que Ctrl+Q), puis le dossier
+        # et la machine : sur un serveur, sa couleur rappelle où l'on est.
         R = []
-        if self.modal:
-            R = self.rows_modal()
-        elif self.view is None:
-            R.append(([("  ", 0), (self.workspace, curses.A_BOLD)], None))
-            # Machine courante, nom en couleur : vert = ce PC ; un serveur prend une
-            # couleur stable dérivée de son nom (jlax et indice ne se confondent pas).
-            R.append(([("  ", 0), (self.machine, self.machine_color() | curses.A_BOLD)], None))
-            R.append(([("", 0)], None))
-            for icon, label, act, key in self.ENTRIES:
-                segs = [("  ", 0), ("%s " % icon, self.CYAN), (label, 0)]
-                segs.extend(self.badge(act))
-                if key:
-                    # Le raccourci est collé au bord droit : il se lit comme une
-                    # colonne, sans décaler les libellés entre eux.
-                    pad = self.band - 1 - sum(dwidth(t) for t, _ in segs) - dwidth(key)
-                    if pad > 1:
-                        segs.append((" " * pad, 0))
-                        segs.append((key, self.DIM))
-                R.append((segs, ("entry", act)))
-        else:
-            # Vue liste : la colonne est prise entièrement par la liste, et la
-            # première entrée devient le retour. Le titre rappelle où on est.
-            R.append(([("  ", 0), ("󰁍 back", 0),
-                       ("   " + self.VIEWS[self.view], self.DIM)], ("back", None)))
-            R.append(([("", 0)], None))
-            R.extend(getattr(self, "rows_" + self.view)())
-        self.rows = R
-
-    def badge(self, act):
-        """Le badge qui rend le bouton informatif — l'état sans cliquer."""
-        if act == "agents":
-            n = len(self.agents)
-            if not n:
-                return []
-            segs = [("  %d" % n, self.DIM)]
-            # Même règle que la liste : on ne compte QUE ce qui demande une action.
-            w = sum(1 for s in self.agents if s[2] == "waiting")
-            if w:
-                segs.append((" ⚠%d" % w, self.CYAN | curses.A_BOLD))
-            return segs
-        if act == "sessions" and self.sessions:
-            return [("  %d" % len(self.sessions), self.DIM)]
-        return []
-
-    def rows_agents(self):
-        R = []
-        for name, role, state, sid in self.agents:
-            # Pas de losange d'activité ici : que tel agent soit en train de
-            # répondre n'appelle AUCUN geste, et le marqueur bougeait sans arrêt
-            # dans une liste qu'on lit pour choisir où aller. Le seul état qui
-            # mérite un signe est celui qui demande quelque chose — « t'attend » —
-            # et il porte le ⚠ du badge, pas un losange de plus.
-            dot, col = (("⚠", self.CYAN | curses.A_BOLD) if state == "waiting"
-                        else ("·", self.DIM))
-            R.append(([("  %s " % dot, col), (name[:BAND - 12], 0)]
-                      + ([("  aside", self.DIM)] if role == "aside" else []),
-                      ("agent", sid)))
-        if not R:
-            R.append(([("  no agent open", self.DIM)], None))
-        # Ajouter et réveiller sont les deux façons d'avoir un agent de plus :
-        # elles se suivent, juste après les présents. Placé ICI et pas en fin de
-        # liste, sinon douze conversations dormantes le repoussent hors écran.
+        segs = [("  ", 0), ("󰗼 ", self.RED), ("quit", 0)]
+        pad = self.band - 1 - sum(dwidth(t) for t, _ in segs) - dwidth("ctrl q")
+        if pad > 1:
+            segs += [(" " * pad, 0), ("ctrl q", self.DIM)]
+        R.append((segs, ("quit", None)))
         R.append(([("", 0)], None))
-        R.append(([("  ", 0), ("󰐕", self.GREEN), (" add an agent", 0)],
-                  ("entry", "aside")))
-        # Les conversations terminées de ce workspace : plus de pane, mais elles
-        # existent toujours. Tout en atténué — ce sont des agents qu'on PEUT
-        # réveiller, pas des agents présents. Ne pas les confondre d'un coup
-        # d'œil est tout l'intérêt de les séparer.
-        if self.dormants:
+        # Fichiers ouverts : une ligne pour y revenir, une ligne de deux boutons.
+        # nvim supprime sa socket en sortant : un fichier refermé disparaît seul.
+        # Mais nvim met un instant à la CRÉER : une entrée dont la socket n'est pas
+        # encore apparue reste (10 s au plus), sinon le redessin qui suit
+        # l'ouverture la retirait aussitôt.
+        live = []
+        for e in self.editors:
+            if os.path.exists(e["sock"]):
+                e["seen"] = True
+                live.append(e)
+            elif not e.get("seen") and time.time() - e["t"] < 10:
+                live.append(e)
+        self.editors = live
+        for i, e in enumerate(self.editors):
+            R.append(([("  ", 0), ("✎ ", self.YEL), (os.path.basename(e["path"]), curses.A_BOLD)],
+                      ("edfocus", i)))
+            R.append(([("    ", 0), ("󰆓 save + close", self.GREEN)], ("edclose", i)))
+        if self.editors:
             R.append(([("", 0)], None))
-            R.append(([("  to wake up", self.DIM)], None))
-            for name, role, ended, sid in self.dormants:
-                segs = [("    ", 0), (name[:BAND - 12], self.DIM)]
-                if ended:
-                    segs.append(("  " + fmt_age(ended), self.DIM))
-                R.append((segs, ("wake", (sid, name))))
-        return R
+        root = os.path.basename(self.cwd.rstrip("/")) or self.cwd
+        segs = [("  ", 0), ("󰉋 ", self.CYAN), (root, curses.A_BOLD)]
+        pad = self.band - 1 - sum(dwidth(t) for t, _ in segs) - dwidth(self.machine)
+        if pad > 1:
+            segs += [(" " * pad, 0), (self.machine, self.machine_color() | curses.A_BOLD)]
+        R.append((segs, None))
+        R.extend(self.rows_files())
+        # Au premier affichage, la sélection part sur l'arbre et non sur « quit » :
+        # un Entrée réflexe en arrivant dans la colonne ne doit pas ouvrir la sortie.
+        if not getattr(self, "_placed", False):
+            self._placed = True
+            self.sel = next((i for i, r in enumerate(R) if r[1] and r[1][0] in ("dir", "file")), 0)
+        self.rows = R
 
     def rows_files(self):
         """Arbre du dossier courant, dépliable. Un fichier s'ouvre dans nvim."""
@@ -695,49 +388,6 @@ class Sidebar:
                               ("file", e.path)))
         walk(self.cwd, 0)
         return R or [([("  (empty)", self.DIM)], None)]
-
-    def rows_sessions(self):
-        if self.sessions is None:
-            return [([("  loading…", self.DIM)], None)]
-        if not self.sessions:
-            return [([("  no session", self.DIM)], None)]
-        R = []
-        for i, s in enumerate(self.sessions):
-            here = s["cwd"] == self.cwd
-            live = s["name"] in self.live_names
-            dot = ("● ", self.GREEN | curses.A_BOLD) if live else ("  ", 0)
-            # Seule reprise du home : la COULEUR DU NOM — cyan gras si
-            # le workspace est ouverte, sinon la couleur stable du projet. Même
-            # palette et même hash, donc un workspace garde sa couleur d'un
-            # écran à l'autre.
-            R.append(([("  ", 0), dot,
-                       (s["name"][:BAND - 10], (self.CYAN | curses.A_BOLD) if live
-                        else self.pcolor(s["name"])),
-                       ("  " + fmt_age(s["mtime"]), self.DIM)],
-                      None if here else ("sess", i)))
-        return R
-
-    OPEN_MODES = (
-        ("open here",           "current one keeps running"),
-        ("open here + close",   "kills the current one"),
-        ("new instance",        "separate detached session"),
-    )
-
-    def rows_modal(self):
-        """Modale de choix : lignes sélectionnables + annuler.
-
-        Elle REMPLACE le contenu de la colonne au lieu de se déplier sous la
-        session — dans 35 colonnes, une liste imbriquée devient illisible, et on
-        perd de vue ce qu'on est en train de choisir."""
-        m = self.modal
-        R = [([("  ", 0), (m["title"][:BAND - 4], curses.A_BOLD)], None),
-             ([("", 0)], None)]
-        for j, (lab, hint) in enumerate(m["opts"]):
-            R.append(([("  ", 0), (lab, self.GREEN)], ("choose", j)))
-            R.append(([("    " + hint, self.DIM)], None))
-        R.append(([("", 0)], None))
-        R.append(([("  ", 0), ("cancel", self.DIM)], ("choose", None)))
-        return R
 
     def net_row(self, state, pct, name, vpn, spd):
         """La ligne réseau : « à quoi je suis connecté » à gauche, « est-ce que
@@ -904,54 +554,20 @@ class Sidebar:
     # ---------- actions ----------
 
     def act(self, action):
-        kind, val = action
-        if kind == "back":
-            self.view, self.modal, self.sel, self.off = None, None, 0, 0
-            return
-        if kind == "entry":
-            if val in self.VIEWS:
-                # La liste REMPLACE la colonne — pas de dépliage sous le menu.
-                self.view, self.modal, self.sel, self.off = val, None, 0, 0
-                if val == "sessions" and self.sessions is None:
-                    threading.Thread(target=self._load_sessions, daemon=True).start()
-                return
-            self.run(val, None)
+        kind, val = action[0], action[1]
+        if kind == "quit":
+            self.run("quit", None)
             return
         if kind == "dir":
             self.expanded.symmetric_difference_update({val})
             return
-        if kind == "sess":
-            # Choisir un workspace ouvre une modale : les 3 façons d'y aller ne
-            # sont pas équivalentes (l'une TUE la session courante), ça mérite
-            # un choix explicite avec une sortie.
-            self.modal = {"title": self.sessions[val]["name"],
-                          "opts": self.OPEN_MODES, "sess": val}
-            self.sel, self.off = 0, 0
+        if kind == "edfocus":
+            self.zj("focus-pane-id", self.editors[val]["pane"])
             return
-        if kind == "choose":
-            m, self.modal = self.modal, None
-            self.sel, self.off = 0, 0
-            if val is not None:
-                self.run("open", (m["sess"], val))
+        if kind == "edclose":
+            self.nvim_cmd(self.editors[val], ":wq")
             return
         self.run(kind, val)
-
-    def open_page(self, page):
-        """Ouvre une page du home (infos / automations) EN PLEIN ÉCRAN.
-
-        Pane flottant 100 %×100 % + `--close-on-exit` : le Retour (ou Échap) de
-        la page termine `home`, le pane se referme, et on retombe sur la
-        page agents exactement où on était. Pas de navigation à défaire."""
-        name = {"infos": "info", "autos": "automations"}[page]
-        em = os.path.join(os.path.dirname(os.path.realpath(__file__)), "home")
-        r = subprocess.run(
-            ["zellij", "run", "--floating", "--close-on-exit",
-             "--width", "100%", "--height", "100%", "--name", name,
-             "--cwd", self.cwd, "--", em, "--page", page, self.cwd],
-            capture_output=True, text=True)
-        # Rien à annoncer quand ça marche : l'écran s'ouvre, ça se voit.
-        if r.returncode != 0:
-            self.status = "✗ %s : %s" % (name, (r.stderr or "failed").strip()[:40])
 
     def zj(self, *args):
         """`zellij action …`, silencieux. True si la commande a abouti."""
@@ -962,42 +578,54 @@ class Sidebar:
             return False
 
     def open_file(self, path):
-        """Ouvre un fichier dans nvim, EN PLEIN ÉCRAN (pane flottant).
+        """Ouvre un fichier dans nvim, À LA PLACE DES AGENTS (zone de droite).
 
-        Même idiome que les pages infos / automations : on quitte nvim, le pane se
-        referme, on retombe sur agents. Le flottant évite au passage de
-        polluer une stack — `zellij action edit` créerait un pane là où est le
-        focus, c'est-à-dire ici, dans la colonne de gauche."""
+        nvim écoute sur une socket : le bouton « save + close » de la colonne lui
+        envoie :wq. Déjà ouvert → on y retourne au lieu d'ouvrir un
+        second exemplaire."""
+        for e in self.editors:
+            if e["path"] == path and os.path.exists(e["sock"]):
+                self.zj("focus-pane-id", e["pane"])
+                return
+        if not self.live:
+            self.status = "⌁ opens %s in the agents stack" % os.path.basename(path)
+            return
+        slug = re.sub(r"[^A-Za-z0-9._-]", "_", self.workspace or "default")[:40]  # socket Unix : 108 car. max
+        sock = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp",
+                            "thedev-nvim-%s-%s.sock" % (
+                                slug, hashlib.md5(path.encode()).hexdigest()[:10]))
+        # nvim prend la place de l'agent principal (--in-place) : un pane de la
+        # mise en page, donc Alt+← mène à la colonne. En flottant (essai écarté),
+        # Alt+← ne voyait que les autres flottants et sautait à l'onglet précédent.
+        # Fermer nvim rend sa place à l'agent. Limite zellij : les AUTRES agents
+        # de la pile restent visibles en une ligne de titre au-dessus.
+        anchor = os.path.expanduser("~/.cache/thedev/front-stack/" + slug)
+        try:
+            with open(anchor) as f:
+                pid = f.readline().strip()
+            if pid:
+                self.zj("focus-pane-id", pid)
+        except OSError:
+            pass
         r = subprocess.run(
-            ["zellij", "run", "--floating", "--close-on-exit",
-             "--width", "100%", "--height", "100%", "--name", os.path.basename(path),
-             "--cwd", self.cwd, "--", "nvim", path],
+            ["zellij", "run", "--in-place", "--close-on-exit",
+             "--name", "✎ " + os.path.basename(path), "--cwd", self.cwd,
+             "--", "nvim", "--listen", sock, path],
             capture_output=True, text=True)
         if r.returncode != 0:
             self.status = "✗ %s" % (r.stderr or "failed").strip()[:38]
-
-    def switch_workspace(self, idx, mode):
-        """Les trois façons d'ouvrir une autre workspace.
-
-        On ne peut PAS s'attacher ailleurs depuis l'intérieur (la sidebar meurt
-        avec la session). Donc : on écrit le choix dans le fichier de relais,
-        puis on détache — `dev()` reprend la main dans sa boucle et applique.
-        Le mode « nouvelle instance » ne détache pas : workspace-open crée la session
-        à côté, détachée, et on reste où on est."""
-        s = self.sessions[idx]
-        if mode == 2:
-            r = subprocess.run(["workspace-open", "local", s["name"], "--dir", s["cwd"]],
-                               capture_output=True, text=True)
-            if r.returncode != 0:
-                self.status = "✗ %s" % (r.stderr or "failed").strip()[:38]
             return
-        rel = os.path.expanduser("~/.cache/thedev/relais")
-        os.makedirs(os.path.dirname(rel), exist_ok=True)
-        # id vide → session neuve ; sinon on reprend la conversation de l'agent.
-        kill = self.workspace if mode == 1 else ""
-        with open(rel, "w") as f:
-            f.write("RESUME\t%s\t%s\t%s\n" % (s["cwd"], s["id"], kill))
-        self.zj("detach")
+        m = re.search(r"terminal_\d+", (r.stdout or "") + (r.stderr or ""))
+        self.editors.append({"path": path, "sock": sock, "t": time.time(),
+                             "pane": m.group(0) if m else ""})
+
+    def nvim_cmd(self, e, cmd):
+        """Envoie une commande Ex à un nvim ouvert depuis la colonne."""
+        r = subprocess.run(["nvim", "--server", e["sock"], "--remote-send",
+                            "<C-\\><C-N>%s<CR>" % cmd],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode != 0:
+            self.status = "✗ %s" % (r.stderr or "nvim unreachable").strip()[:38]
 
     def run(self, what, val):
         """Exécute une action terminale.
@@ -1006,35 +634,10 @@ class Sidebar:
         est seulement AFFICHÉ : la sidebar tourne alors dans « jobs », un vrai
         `detach` détacherait l'utilisateur. Les actions inoffensives (pane
         flottant, nvim, focus) s'exécutent toujours."""
-        if what in ("infos", "autos"):
-            self.open_page(what)
-            return
         if what == "file":
             self.open_file(val)
             return
-        if what == "agent":
-            pid = agent_pane(val)
-            if pid and self.zj("focus-pane-id", pid):
-                self.status = ""
-            else:
-                self.status = "✗ agent not found (pane not registered)"
-            return
-        if what == "wake":
-            sid, name = val
-            if not self.live:
-                self.status = "⌁ wakes up « %s »" % name
-                return
-            # `spawn --resume` rouvre la conversation dans la stack des
-            # agents (l'ancre s'en charge), avec son nom de pane d'origine.
-            r = subprocess.run(["spawn", "--resume", sid, "--name", name],
-                               capture_output=True, text=True, cwd=self.cwd)
-            if r.returncode == 0:
-                self.agents, self.dormants = load_agents(self.cwd, self.workspace)
-                self.status = ""
-            else:
-                self.status = "✗ %s" % (r.stderr or "cannot wake up").strip()[:38]
-            return
-        if what == "home":
+        if what == "quit":
             if not self.live:
                 self.status = "⌁ opens the Ctrl+Q modal (detach / close)"
                 return
@@ -1042,41 +645,11 @@ class Sidebar:
                             "--name", "quit", "--width", "54", "--height", "11",
                             "--", "quit-menu"], capture_output=True)
             return
-        if what == "aside":
-            if not self.live:
-                self.status = "⌁ adds an agent to the stack"
-                return
-            r = subprocess.run(["spawn"], capture_output=True, text=True,
-                               cwd=self.cwd)
-            if r.returncode == 0:
-                # Le nouveau agent ne s'inscrit au registre qu'à son
-                # SessionStart : `r` pour le voir arriver dans la liste.
-                self.status = ""
-            else:
-                self.status = "✗ %s" % (r.stderr or "failed").strip()[:38]
-            return
-        if what == "open":
-            i, j = val
-            if not self.live and j != 2:
-                s = self.sessions[i]
-                self.status = ["⌁ detach → home attaches « %s »" % s["name"],
-                               "⌁ detach → kill « %s » → attach « %s »"
-                               % (self.workspace, s["name"])][j]
-                return
-            self.switch_workspace(i, j)
-            return
-
     def back(self):
-        """Remonte d'un cran : d'abord la modale, puis la vue.
-
-        Ne QUITTE jamais. La colonne est un élément permanent de la page agents — la
-        fermer par mégarde avec Échap (le réflexe pour « annuler ») laisserait
-        un pane vide sans moyen évident de la rappeler. Seul `q` sort."""
-        if self.modal is not None:
-            self.modal = None
-            self.sel, self.off = 0, 0
-        elif self.view is not None:
-            self.act(("back", None))
+        """Échap replie tout l'arbre. Ne QUITTE jamais : la colonne est un élément
+        permanent de la page agents, seul `q` sort."""
+        self.expanded.clear()
+        self.sel, self.off = 0, 0
 
     # ---------- boucle ----------
 
@@ -1113,9 +686,8 @@ class Sidebar:
     def loop(self):
         while True:
             self.draw()
-            # Réveils périodiques : le bandeau de ressources bouge tout seul, et
-            # la liste des sessions arrive d'un thread.
-            self.scr.timeout(1000 if self.metrics or self.sessions is None else 200)
+            # Réveil chaque seconde : le bandeau de ressources bouge tout seul.
+            self.scr.timeout(1000)
             try:
                 c = self._getch()
             except KeyboardInterrupt:
@@ -1155,11 +727,7 @@ class Sidebar:
                 # neuf fois sur dix en la tapant.
                 self.zj("move-focus", "right")
                 continue
-            if c == ord("r"):
-                self.agents, self.dormants = load_agents(self.cwd, self.workspace)
-                self.live_names = live_sessions()
-                self.sessions = None
-                threading.Thread(target=self._load_sessions, daemon=True).start()
+            if c == ord("r"):            # relit l'arbre (fichiers créés entre-temps)
                 self.status = ""
                 continue
             if c in (curses.KEY_DOWN, ord("j"), curses.KEY_UP, ord("k")):

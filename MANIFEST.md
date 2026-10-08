@@ -22,7 +22,7 @@ A **job** = a long-running pane started in jobs. Workspaces exchange cross-machi
 - **quit-impact** — what closing this workspace will stop (Ctrl+Q), one fact per line
 - **quit-menu** — menu to cleanly close the session
 - **shell-pane** — personal shell pane of my space (VPS badge)
-- **sidebar** — sidebar: left column of the agents page, clickable menu (home, files, agents, sessions...)
+- **sidebar** — sidebar: left column of the agents page, the file tree and a quit button
 - **spawn** — opens an extra stacked agent (aside) without touching the session
 - **workspace-new** — creates a new project by handing the bootstrap to a remote agent (auto VPS)
 - **workspace-open** — opens a workspace (local or remote) DETACHED with an already briefed agent (injected prompt)
