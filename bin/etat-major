@@ -245,62 +245,270 @@ def _read_json(path):
         return {}
 
 
-def gather_infos(vps, update_available, head):
+def fmt_reset(iso):
+    """Horodatage ISO (UTC) → « dans 2 h 40 » sous 24 h, sinon « ven. 07:59 ».
+    Toujours en heure LOCALE : l'API répond en UTC, afficher ses HH:MM tels quels
+    décalait le reset de deux heures."""
+    try:
+        t = datetime.datetime.fromisoformat(iso).astimezone()
+    except Exception:
+        return ""
+    now = datetime.datetime.now().astimezone()
+    sec = int((t - now).total_seconds())
+    if sec <= 0:
+        return "maintenant"
+    if sec < 86400:
+        h, m = sec // 3600, sec % 3600 // 60
+        return "dans %d h %02d" % (h, m) if h else "dans %d min" % m
+    jours = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."]
+    return "%s %s" % (jours[t.weekday()], t.strftime("%H:%M"))
+
+
+def speedtest_data():
+    """Dernier `thedev-metrics --speedtest`, avec une couleur par chiffre. Jamais
+    lancé automatiquement : ~25 Mo pris sur le forfait. None si aucune mesure."""
+    try:
+        f = _read_file(os.path.expanduser("~/.cache/thedev/speedtest")).strip().split("\t")
+        d = {"ts": int(f[0]), "down": float(f[1]), "up": float(f[2]),
+             "ping": int(f[3]) if f[3] else None, "jit": int(f[4]) if f[4] else None,
+             "where": f[6] if len(f) > 6 else ""}
+    except Exception:
+        return None
+    # Seuils usuels : 4K ≈ 25 Mb/s descendant, visio HD ≈ 3 Mb/s montant.
+    d["cdown"] = "grn" if d["down"] >= 25 else ("yel" if d["down"] >= 5 else "red")
+    d["cup"] = "grn" if d["up"] >= 3 else ("yel" if d["up"] >= 1 else "red")
+    p = d["ping"]
+    d["cping"] = "" if p is None else ("grn" if p < 50 else ("yel" if p < 100 else "red"))
+    age = max(0, int(time.time()) - d["ts"])
+    d["age"] = ("<1 min" if age < 60 else "%d min" % (age // 60) if age < 3600
+                else "%d h" % (age // 3600) if age < 86400 else "%d j" % (age // 86400))
+    return d
+
+
+def speedtest_rows(d):
+    """Vue détail : chaque chiffre traduit en usage concret."""
+    def palier(v, paliers):
+        for seuil, txt in paliers:
+            if v >= seuil:
+                return txt
+        return paliers[-1][1]
+    rows = [("kv", "descendant", ("%.0f Mb/s  %s" % (d["down"], palier(d["down"], [
+                (100, "plusieurs vidéos 4K"), (25, "vidéo 4K"), (10, "vidéo HD"),
+                (3, "navigation"), (0, "très lent")])), d["cdown"])),
+            ("kv", "montant", ("%.1f Mb/s  %s" % (d["up"], palier(d["up"], [
+                (10, "gros envois rapides"), (3, "visio HD"), (1, "visio basique"),
+                (0, "envois pénibles")])), d["cup"]))]
+    if d["ping"] is not None:
+        rows.append(("kv", "ping", ("%d ms  %s" % (d["ping"], "réactif" if d["ping"] < 50 else
+                     ("correct" if d["ping"] < 100 else "lent")), d["cping"])))
+    if d["jit"] is not None:
+        rows.append(("kv", "gigue", "%d ms  (compte en visio et en jeu)" % d["jit"]))
+    rows.append(("kv", "mesuré", "il y a %s%s" % (d["age"], (" sur " + d["where"]) if d["where"] else "")))
+    return rows
+
+
+# Modèles Apple par identifiant produit Bluetooth (Modalias bluetooth:v004Cp<PID>).
+APPLE_PID = {0x2002: "AirPods", 0x200F: "AirPods 2", 0x2013: "AirPods 3",
+             0x2019: "AirPods 4", 0x201B: "AirPods 4 ANC", 0x200E: "AirPods Pro",
+             0x2014: "AirPods Pro 2", 0x2024: "AirPods Pro 2 USB-C", 0x200A: "AirPods Max"}
+
+
+def aap_read(mac, timeout=2.5):
+    """Batterie d'écouteurs Apple par leur protocole privé (AAP, L2CAP PSM 0x1001),
+    tel que LibrePods l'a documenté (docs/AAP Definitions.md). Apple n'expose PAS la
+    batterie standard Bluetooth : c'est la seule voie qui donne gauche, droite et
+    boîtier au pourcent, pendant l'écoute, sans root. Lecture seule : poignée de
+    main, abonnement aux notifications, on attend le paquet batterie, on ferme.
+    Renvoie {"bat": {"gauche"|"droite"|"boîtier": (niveau, état)}, "ear": (a, b)}."""
+    import socket, select
+    out = {"bat": {}, "ear": None}
+    s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)
+    try:
+        s.settimeout(timeout)
+        s.connect((mac, 0x1001))
+        s.send(bytes.fromhex("00 00 04 00 01 00 02 00 00 00 00 00 00 00 00 00"))
+        s.send(bytes.fromhex("04 00 04 00 0F 00 FF FF FF FF"))
+        comp = {0x08: "boîtier", 0x04: "gauche", 0x02: "droite"}
+        end = time.time() + timeout
+        while time.time() < end and not (out["bat"] and out["ear"]):
+            r, _, _ = select.select([s], [], [], 0.3)
+            if not r:
+                continue
+            pk = s.recv(1024)
+            if pk[:6] == b"\x04\x00\x04\x00\x04\x00" and len(pk) >= 7:
+                for i in range(pk[6]):
+                    c, _sp, lvl, st, _e = pk[7 + 5 * i: 12 + 5 * i]
+                    if c in comp:
+                        out["bat"][comp[c]] = (lvl, st)
+            elif pk[:6] == b"\x04\x00\x04\x00\x06\x00" and len(pk) >= 8:
+                out["ear"] = (pk[6], pk[7])
+    finally:
+        s.close()
+    return out
+
+
+def bluetooth_infos(live=None):
+    """Appareils Bluetooth CONNECTÉS → lignes de la carte (pas de vue détail).
+    Écouteurs Apple : gauche, droite, boîtier par AAP. Autres : la batterie standard
+    (Battery1, celle de GNOME) quand l'appareil la publie. Le boîtier ne donne son
+    niveau que s'il est proche avec un écouteur dedans : on garde la dernière valeur
+    lue en cache, avec son âge, plutôt que de l'afficher « inconnu » la plupart du
+    temps. Muet sur une machine sans Bluetooth (serveur)."""
+    rows = []
+    try:
+        out = subprocess.run(["bluetoothctl", "devices", "Connected"],
+                             capture_output=True, text=True, timeout=4).stdout
+    except Exception:
+        return []
+    devs = [l.split(" ", 2)[1:] for l in out.splitlines() if l.startswith("Device ")]
+    if not devs:
+        return [("kv", "bluetooth", ("aucun appareil connecté", ""))]
+    cache_dir = os.path.expanduser("~/.cache/thedev")
+    for mac, name in devs:
+        try:
+            info = subprocess.run(["bluetoothctl", "info", mac], capture_output=True,
+                                  text=True, timeout=4).stdout
+        except Exception:
+            info = ""
+        m = re.search(r"Modalias: bluetooth:v004Cp([0-9A-Fa-f]{4})", info)
+        icon = (re.search(r"Icon: (\S+)", info) or [None, ""])[1]
+        label = name if len(name) <= 12 else name[:11] + "…"
+        if m and "audio" in icon:
+            model = APPLE_PID.get(int(m.group(1), 16), "écouteurs Apple")
+            if live is not None:
+                a = live.get(mac) or {"bat": {}, "ear": None, "wait": True}
+            else:
+                try:
+                    a = aap_read(mac)
+                except Exception:
+                    a = {"bat": {}, "ear": None}
+            bat = a["bat"]
+            cf = os.path.join(cache_dir, "bt-boitier-" + mac.replace(":", ""))
+            case = bat.get("boîtier")
+            case_age = None
+            if case and case[1] != 4:
+                try:
+                    os.makedirs(cache_dir, exist_ok=True)
+                    with open(cf, "w") as f:
+                        f.write("%d %d %d" % (int(time.time()), case[0], case[1]))
+                except Exception:
+                    pass
+            else:
+                try:
+                    ts, lv, st = (int(x) for x in _read_file(cf).split())
+                    case, case_age = (lv, st), int(time.time()) - ts
+                except Exception:
+                    case = None
+            chips = []
+            for key, short in (("gauche", "G"), ("droite", "D")):
+                v = bat.get(key)
+                if v and v[1] != 4:
+                    chips.append((short, v[0], v[1]))
+            if case:
+                chips.append(("boîtier", case[0], case[1] if case_age is None else 0))
+            if chips:
+                rows.append(("buds", label, chips, case_age))
+            elif a.get("wait"):
+                rows.append(("kv", label, ("lecture…", "")))
+            else:
+                rows.append(("kv", label, ("connecté, batterie illisible", "")))
+        else:
+            b = re.search(r"Battery Percentage: 0x[0-9a-fA-F]+ \((\d+)\)", info)
+            if b:
+                p = int(b.group(1))
+                rows.append(("kv", label, ("%d %%" % p, "red" if p < 15 else "")))
+            else:
+                rows.append(("kv", label, ("connecté", "")))
+    return rows
+
+
+def gather_infos(vps, update_available, head, bt_live=None):
     """Données du dashboard Infos. Renvoie une LISTE de sections [(titre, [items])],
     items = str (ligne dim) ou ('gauge', label, pct, détail) ou ('kv', clé, valeur)."""
     import socket, time, shutil
     sections = []
 
     # ── thedev ──
-    hostname = subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip() or socket.gethostname()
-    ncmd = "?"
-    try:
-        out = subprocess.run([os.path.expanduser("~/.local/bin/thedev-manifest"), "--scripts"],
-                             capture_output=True, text=True, timeout=4).stdout
-        ncmd = str(len([x for x in out.splitlines() if x.strip()]))
-    except Exception:
-        pass
     claudes = [p for p in (l.split("\t") for l in _read_file("~/.cache/soldats").splitlines())
                if len(p) >= 7 and p[0] and p[6].strip() == "0"]
     neq = len({p[1] for p in claudes})
     nsoutien = len([l for l in _read_file("~/.cache/thedev-soutien").splitlines() if l.strip()])
-    nsess = len(live_sessions())
     autos_local = fetch_autos("local")
     nact = sum(1 for a in autos_local if a.get("state") in ("active", "running"))
-    maj = ("󰑐 maj dispo", "yel") if update_available else ("à jour", "grn")
+    par_eq = {}
+    for p_ in claudes:
+        par_eq.setdefault(p_[4] or os.path.basename(p_[1]), []).append(p_[3] or "claude")
+    dx = []
+    for eq in sorted(par_eq):
+        noms = par_eq[eq]
+        dx.append(("kv", eq if len(eq) <= 12 else eq[:11] + "…", "%d soldat%s   %s" % (
+            len(noms), "s" if len(noms) > 1 else "", ", ".join(noms)[:60])))
+    if not par_eq:
+        dx.append(("kv", "équipes", "aucune ouverte"))
+    try:
+        sl = subprocess.run([os.path.expanduser("~/.local/bin/soutien"), "list"],
+                            capture_output=True, text=True, timeout=4).stdout
+        vivants = [l.split()[1] for l in sl.splitlines() if l.startswith("●") and len(l.split()) > 1]
+        morts = [l.split()[1] for l in sl.splitlines() if l.startswith("○") and len(l.split()) > 1]
+    except Exception:
+        vivants, morts = [], []
+    dx.append("")
+    dx.append(("kv", "soutiens", ", ".join(vivants)[:60] if vivants else "aucun"))
+    if morts:
+        dx.append(("kv", "soutiens morts", (", ".join(morts)[:60], "red")))
+    sections.append(("thedev+", dx))
     sections.append(("thedev", [
-        ("kv", "version", "%s   " % (head or "?")),
-        ("kv", "à jour", maj),
-        ("kv", "commandes", "%s" % ncmd),
-        ("kv", "équipes", "%d ouvert(s) · %d session(s) zellij" % (neq, nsess)),
-        ("kv", "actifs", "%d soldat · %d soutien · %d/%d auto" % (len(claudes), nsoutien, nact, len(autos_local))),
+        ("kv", "version", ("%s  ↑ maj dispo" % (head or "?"), "yel") if update_available
+                          else ("%s  ✓" % (head or "?"), "grn")),
+        ("chips", "actifs", [(neq, "équipe", ""), (len(claudes), "soldat", ""),
+                             (nsoutien, "soutien", "")]),
     ]))
 
     # ── Claude (plan + fenêtre Max 5x via endpoint OAuth) ──
     conf = _read_json("~/.claude.json")
     acc = conf.get("oauthAccount", {})
     cl = []
-    if acc:
-        plan = {"claude_max": "Max", "claude_pro": "Pro", "claude_team": "Team"}.get(
-            acc.get("organizationType", ""), acc.get("organizationType", "") or "?")
-        mult = next((x for x in ("20x", "5x") if x in acc.get("organizationRateLimitTier", "")), "")
-        cl.append(("kv", "plan", "Claude %s %s" % (plan, mult)))
     try:
         subprocess.run([os.path.expanduser("~/.local/bin/claude-window-usage")],
                        capture_output=True, timeout=6)
     except Exception:
         pass
     win = _read_json("~/.cache/claude-window-usage.json")
-    fh = win.get("five_hour") or {}
-    if fh.get("utilization") is not None:
-        reset = (fh.get("resets_at") or "")[11:16]
-        cl.append(("gauge", "fenêtre 5h", fh["utilization"], ("reset " + reset) if reset else ""))
-    sd = win.get("seven_day") or {}
-    if sd.get("utilization") is not None:
-        cl.append(("gauge", "7 jours", sd["utilization"], ""))
+    # Les limites viennent de la liste `limits` de l'API : elle inclut la limite
+    # hebdo PROPRE À UN MODÈLE, souvent plus haute que la globale, donc celle qui
+    # bloque en premier. Repli sur five_hour/seven_day si la liste est absente.
+    cx = []
+    lims = win.get("limits") or []
+    if not lims:
+        for key, kind in (("five_hour", "session"), ("seven_day", "weekly_all")):
+            v = win.get(key) or {}
+            if v.get("utilization") is not None:
+                lims.append({"kind": kind, "percent": v["utilization"], "resets_at": v.get("resets_at")})
+    for lm in lims:
+        k = lm.get("kind")
+        if k == "session":
+            lbl = "fenêtre 5h"
+        elif k == "weekly_all":
+            lbl = "7 jours"
+        elif k == "weekly_scoped":
+            mod = (((lm.get("scope") or {}).get("model") or {}).get("display_name")) or "modèle"
+            lbl = "7 j %s" % mod
+        else:
+            continue
+        rs = fmt_reset(lm.get("resets_at") or "")
+        cl.append(("gauge", lbl, lm.get("percent") or 0, ("↻ " + rs) if rs else ""))
+    bd = ((win.get("seven_day_breakdown") or {}).get("rows")) or []
+    for r_ in bd:
+        if r_.get("percent"):
+            cx.append(("kv", r_.get("display_name", "?")[:12], "%d %% de la semaine" % r_["percent"]))
+    ex = win.get("extra_usage") or {}
+    cx.append(("kv", "extra", ("activés", "yel") if ex.get("is_enabled") else "désactivés"))
+    if acc:
+        cx.append(("kv", "compte", acc.get("emailAddress", "?")))
     if not cl:
         cl.append("(pas de compte Claude détecté)")
     sections.append(("Claude", cl))
+    sections.append(("Claude+", cx))
 
     # ── système ──
     health = []
@@ -311,7 +519,7 @@ def gather_infos(vps, update_available, head):
             mem[k] = int(v.split()[0]) if v.split() else 0
         tot, avail = mem.get("MemTotal", 0) / 1e6, mem.get("MemAvailable", 0) / 1e6
         if tot:
-            health.append(("gauge", "RAM", 100 * (tot - avail) / tot, "%.1f / %.1f Go" % (tot - avail, tot)))
+            health.append(("gauge", "RAM", 100 * (tot - avail) / tot, "%.0f/%.0f Go" % (tot - avail, tot)))
     except Exception:
         pass
     try:
@@ -332,7 +540,7 @@ def gather_infos(vps, update_available, head):
                 continue
         try:
             du = shutil.disk_usage(mnt)
-            health.append(("gauge", "disque %s" % mnt, 100 * du.used / du.total, "%.0f Go libres" % (du.free / 1e9)))
+            health.append(("gauge", "disque %s" % mnt, 100 * du.used / du.total, "%.0f Go" % (du.free / 1e9)))
         except Exception:
             pass
     try:
@@ -340,7 +548,7 @@ def gather_infos(vps, update_available, head):
         load1 = float(_read_file("/proc/loadavg").split()[0])
         ncpu = os.cpu_count() or 1
         pct = min(100.0, load1 / ncpu * 100)
-        health.append(("gauge", "charge CPU", pct, "%.1f / %d cœurs" % (load1, ncpu)))
+        health.append(("gauge", "CPU", pct, "%.1f/%d" % (load1, ncpu)))
     except Exception:
         pass
     # chaleur : même jauge que les autres (en % du seuil de bridage du capteur), plus
@@ -353,14 +561,11 @@ def gather_infos(vps, update_available, head):
         tp = next((l.split("\t") for l in raw.splitlines() if l.startswith("TEMP\t")), None)
         if tp and len(tp) >= 5 and int(tp[2]):
             t, crit, fan, etouf = int(tp[1]), int(tp[2]), tp[3], tp[4] == "1"
-            health.append(("gauge", "chaleur", 100.0 * t / crit, "%d °C" % t))
-            if fan and fan != "0":
-                health.append(("kv", "ventilateur", "%s tr/min" % fan))
-            health.append(("kv", "bridage à", "%d °C" % crit))
+            # La jauge est en % du seuil de bridage, mais on affiche le DEGRÉ : « 51 % »
+            # de chaleur ne veut rien dire.
+            health.append(("gauge", "chaleur", 100.0 * t / crit, "", "%d°" % t))
             if etouf:
-                # Chaud sans travailler : l'air ne sort plus. Seule ligne de la page qui
-                # demande un GESTE — d'où l'impératif, et le rouge.
-                health.append(("kv", "aération", ("bloquée — surélève le PC", "red")))
+                health.append(("kv", "aération", ("bloquée", "red")))
     except Exception:
         pass
     try:
@@ -370,9 +575,9 @@ def gather_infos(vps, update_available, head):
         thr = "/sys/devices/system/cpu/cpu0/thermal_throttle/"
         n = int(_read_file(thr + "package_throttle_count") or 0)
         ms = int(_read_file(thr + "package_throttle_total_time_ms") or 0)
-        if n:
-            health.append(("kv", "bridages", ("%d × · %.0f s cumulées" % (n, ms / 1000.0),
-                                              "yel" if ms > 60000 else "")))
+        # Seulement s'ils pèsent (> 1 min cumulée) : quelques bridages brefs sont normaux.
+        if n and ms > 60000:
+            health.append(("kv", "bridages", ("%d×  %.0f s" % (n, ms / 1000.0), "yel")))
     except Exception:
         pass
     try:
@@ -386,34 +591,108 @@ def gather_infos(vps, update_available, head):
         # les constructeurs : 80 %, d'où le passage au jaune à cet endroit.
         bh = next((l.split("\t") for l in raw.splitlines() if l.startswith("BATH\t")), None)
         if bh and len(bh) >= 4:
-            det = "%s sur %s Wh" % (bh[2], bh[3])
-            if len(bh) >= 5 and bh[4].strip():
-                det += " · %s cy" % bh[4].strip()
-            health.append(("gaugeinv", "capacité max", int(bh[1]), det))
+            health.append(("gaugeinv", "batt. santé", int(bh[1]), "%.0f/%.0f Wh" % (float(bh[2]), float(bh[3]))))
+    except Exception:
+        pass
+    sx = []
+    try:
+        mi = {}
+        for ln in _read_file("/proc/meminfo").splitlines():
+            k, _, v = ln.partition(":")
+            mi[k] = int(v.split()[0]) if v.split() else 0
+        st_, sf_ = mi.get("SwapTotal", 0), mi.get("SwapFree", 0)
+        if st_:
+            # Le swap qui se remplit = la RAM a déjà débordé : la machine rame avant
+            # que la jauge RAM n'atteigne le rouge.
+            sx.append(("gauge", "swap", 100.0 * (st_ - sf_) / st_, "%.1f/%.0f Go" % ((st_ - sf_) / 1e6, st_ / 1e6)))
+    except Exception:
+        pass
+    try:
+        la = _read_file("/proc/loadavg").split()
+        sx.append(("kv", "charge", "%s   %s   %s   (1, 5, 15 min)" % (la[0], la[1], la[2])))
+    except Exception:
+        pass
+    try:
+        if tp and len(tp) >= 5 and int(tp[2]):
+            if tp[3] and tp[3] != "0":
+                sx.append(("kv", "ventilateur", "%s tr/min" % tp[3]))
+            sx.append(("kv", "bridage à", "%s°" % tp[2]))
+    except Exception:
+        pass
+    try:
+        thr = "/sys/devices/system/cpu/cpu0/thermal_throttle/"
+        n_ = int(_read_file(thr + "package_throttle_count") or 0)
+        ms_ = int(_read_file(thr + "package_throttle_total_time_ms") or 0)
+        sx.append(("kv", "bridages", ("%d, %.0f s cumulées" % (n_, ms_ / 1000.0), "yel" if ms_ > 60000 else "")
+                   if n_ else ("aucun", "grn")))
+    except Exception:
+        pass
+    try:
+        if bh and len(bh) >= 5 and bh[4].strip():
+            sx.append(("kv", "cycles batt.", bh[4].strip()))
     except Exception:
         pass
     try:
         up = float(_read_file("/proc/uptime").split()[0])
-        d, h, m = int(up // 86400), int(up % 86400 // 3600), int(up % 3600 // 60)
-        health.append(("kv", "uptime", "%s%dh%02d" % (("%dj " % d) if d else "", h, m)))
+        sx.append(("kv", "allumé", "%dj %dh%02d" % (up // 86400, up % 86400 // 3600, up % 3600 // 60)
+                   if up >= 86400 else "%dh%02d" % (up // 3600, up % 3600 // 60)))
     except Exception:
         pass
     sections.append(("système", health))
+    sections.append(("système+", sx))
 
-    # ── usage (historique local — cache Claude, peut dater) ──
-    stats = _read_json("~/.claude/stats-cache.json")
-    days = [d for d in (stats.get("dailyActivity") or []) if d.get("date")]
-    usg = []
-    if days:
-        usg.append(("kv", "période", "%d jours" % len(days)))
-        usg.append(("kv", "messages", "%d" % sum(d.get("messageCount", 0) for d in days)))
-        usg.append(("kv", "sessions", "%d" % sum(d.get("sessionCount", 0) for d in days)))
-        usg.append(("kv", "outils", "%d appels" % sum(d.get("toolCallCount", 0) for d in days)))
-        lc = (stats.get("lastComputedDate") or "")[:10]
-        usg.append(("kv", "cache", lc or "?"))
+    # ── réseau ──
+    # Vue d'ensemble : deux lignes. Le nom du réseau sert de libellé à la jauge de
+    # signal, et les trois chiffres du dernier speedtest tiennent sur une ligne,
+    # chacun coloré selon ce qu'il permet. Les explications (dBm, usages) sont
+    # dans la vue détail : section « réseau+ ».
+    net, netx = [], []
+    try:
+        nl = next((l.split("\t") for l in raw.splitlines() if l.startswith("NET\t")), None)
+        if nl and len(nl) >= 2:
+            st = nl[1]
+            pct = nl[2] if len(nl) > 2 else ""
+            name = (nl[3] if len(nl) > 3 else "") or "réseau"
+            vpn = nl[4] if len(nl) > 4 else ""
+            spd = nl[5] if len(nl) > 5 else ""
+            if st == "down":
+                net.append(("kv", "réseau", ("hors ligne", "red")))
+            else:
+                tag = "  vpn" if vpn else ""
+                dbm = ""
+                for ln in _read_file("/proc/net/wireless").splitlines()[2:]:
+                    f = ln.split()
+                    if len(f) >= 4:
+                        dbm = f[3].rstrip(".")
+                        break
+                short = name if len(name) <= 12 else name[:11] + "…"
+                if pct.isdigit():
+                    net.append(("gaugesig", short, int(pct), (dbm + " dBm" if dbm else "") + tag))
+                    netx.append(("kv", "signal", "%s %% · %s dBm" % (pct, dbm or "?")))
+                elif spd:
+                    net.append(("kv", short, ("filaire %s Mb/s%s" % (spd, tag), "grn")))
+                if st != "ok":
+                    net.append(("kv", "internet", ("injoignable", "red")))
+                if vpn:
+                    netx.append(("kv", "vpn", "tout le trafic" if vpn == "via" else "actif, accès seul"))
+    except Exception:
+        pass
+    sp = speedtest_data()
+    if sp:
+        cur = locals().get("name", "")
+        sp["autre"] = bool(sp["where"] and cur and sp["where"] != cur)
+        net.append(("speed", "débit", sp))
+        netx.extend(speedtest_rows(sp))
     else:
-        usg.append("(pas de stats locales)")
-    sections.append(("usage", usg))
+        net.append(("kv", "débit", ("t pour mesurer", "")))
+    if not net:
+        net.append("(réseau non détecté)")
+    sections.append(("réseau", net))
+    sections.append(("réseau+", netx))
+    bt = bluetooth_infos(live=bt_live)
+    if bt:
+        sections.append(("Bluetooth", bt))
+
 
     return sections
 
@@ -708,11 +987,109 @@ class Picker:
         self.loff = 0
         return False
 
+    def _bt_listen(self):
+        """Écoute EN CONTINU les écouteurs Apple tant que la page infos est ouverte.
+        Une lecture ponctuelle ne voit que l'état à la connexion ; les AirPods, eux,
+        envoient un message à chaque changement (écouteur rangé, boîtier ouvert, charge
+        qui démarre), et c'est à ce moment que le boîtier transmet sa batterie. Chaque
+        message met à jour l'état puis recalcule les cartes Bluetooth de la page."""
+        import socket, select
+        try:
+            out = subprocess.run(["bluetoothctl", "devices", "Connected"],
+                                 capture_output=True, text=True, timeout=4).stdout
+        except Exception:
+            return
+        mac = None
+        for l in out.splitlines():
+            if not l.startswith("Device "):
+                continue
+            m_ = l.split(" ", 2)[1]
+            try:
+                inf = subprocess.run(["bluetoothctl", "info", m_], capture_output=True,
+                                     text=True, timeout=4).stdout
+            except Exception:
+                continue
+            if "Modalias: bluetooth:v004C" in inf and "Icon: audio" in inf:
+                mac = m_
+                break
+        if not mac:
+            return
+        comp = {0x08: "boîtier", 0x04: "gauche", 0x02: "droite"}
+        state = {"bat": {}, "ear": None}
+
+        def apply():
+            self.bt_state = {mac: dict(state)}
+            bt = bluetooth_infos(live=self.bt_state)
+            with self.rc_lock:
+                if self.infos_data is not None:
+                    self.infos_data = [x for x in self.infos_data if x[0] != "Bluetooth"] \
+                        + [("Bluetooth", bt)]
+
+        def from_service():
+            """État publié par le service bt-reactions, s'il tourne et qu'il est frais.
+            Les AirPods n'acceptent qu'UNE connexion : quand le service la tient, la
+            page lit son état au lieu d'ouvrir la sienne (qui échouerait)."""
+            try:
+                with open(os.path.expanduser("~/.cache/thedev/airpods.json")) as f:
+                    d = json.load(f)
+                os.kill(int(d["pid"]), 0)
+                if d.get("mac") != mac or time.time() - d["ts"] > 30:
+                    return None
+                return {"bat": {k: tuple(v) for k, v in d["bat"].items()},
+                        "ear": tuple(d["ear"]) if d.get("ear") else None}
+            except Exception:
+                return None
+
+        while self.mode == "infos":
+            svc = from_service()
+            if svc:
+                if svc["bat"] and svc != state:
+                    state = svc
+                    apply()
+                time.sleep(2)
+                continue
+            s_ = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_SEQPACKET, socket.BTPROTO_L2CAP)
+            try:
+                s_.settimeout(5)
+                s_.connect((mac, 0x1001))
+                s_.send(bytes.fromhex("00 00 04 00 01 00 02 00 00 00 00 00 00 00 00 00"))
+                s_.send(bytes.fromhex("04 00 04 00 0F 00 FF FF FF FF"))
+                # Les AirPods n'envoient leur état qu'à la connexion (constaté : rien
+                # ne vient quand on range un écouteur) : on se reconnecte toutes les
+                # 8 s pour un état frais, sans perdre les notifications entre-temps.
+                fin = time.time() + 8
+                while self.mode == "infos" and time.time() < fin:
+                    r, _, _ = select.select([s_], [], [], 1)
+                    if not r:
+                        continue
+                    pk = s_.recv(1024)
+                    if not pk:
+                        break
+                    changed = False
+                    if pk[:6] == b"\x04\x00\x04\x00\x04\x00" and len(pk) >= 7:
+                        for i in range(pk[6]):
+                            c, _sp, lvl, st, _e = pk[7 + 5 * i: 12 + 5 * i]
+                            if c in comp:
+                                state["bat"][comp[c]] = (lvl, st)
+                        changed = True
+                    elif pk[:6] == b"\x04\x00\x04\x00\x06\x00" and len(pk) >= 8:
+                        state["ear"] = (pk[6], pk[7])
+                        changed = True
+                    if changed and state["bat"]:
+                        apply()
+            except Exception:
+                time.sleep(3)          # écouteurs rangés/éteints : on retente
+            finally:
+                s_.close()
+
     def enter_infos(self):
         self.mode = "infos"
+        self.bt_state = {}
+        threading.Thread(target=self._bt_listen, daemon=True).start()
         self.ii = 0                 # carte sélectionnée
         self.infos_zoom = None      # carte dépliée en grand (None = vue d'ensemble)
         self.infos_data = None
+        self.speed_running = getattr(self, "speed_running", False)
         threading.Thread(target=self._gather_infos, daemon=True).start()
 
     def enter_carte(self):
@@ -941,6 +1318,16 @@ class Picker:
             if self.rc_stop.wait(3):
                 break
 
+    def _speedtest(self):
+        try:
+            subprocess.run([os.path.expanduser("~/.local/bin/thedev-metrics"), "--speedtest"],
+                           capture_output=True, timeout=60)
+            self.msg = ""
+        except Exception:
+            self.msg = "mesure du débit impossible"
+        self._gather_infos()
+        self.speed_running = False
+
     def _gather_infos(self):
         head = ""
         try:
@@ -950,8 +1337,18 @@ class Picker:
                                       capture_output=True, text=True, timeout=5).stdout.strip()
         except Exception:
             pass
-        d = gather_infos(self.vps, self.update_available, head)
+        d = gather_infos(self.vps, self.update_available, head,
+                         bt_live=dict(getattr(self, "bt_state", {})))
         with self.rc_lock:
+            # L'écoute a pu recevoir la batterie PENDANT le chargement (souvent dès
+            # la connexion, alors qu'il n'y avait encore rien à mettre à jour) : on
+            # repart de son état le plus récent, sinon la carte resterait sur
+            # « lecture… » jusqu'au prochain changement des écouteurs.
+            live = dict(getattr(self, "bt_state", {}))
+            if live:
+                bt = bluetooth_infos(live=live)
+                d = [x for x in d if x[0] != "Bluetooth"] \
+                    + [("Bluetooth", bt)]
             self.infos_data = d
 
     def _git_check(self):
@@ -1882,110 +2279,21 @@ class Picker:
                 continue
         return sorted(agg.items(), key=lambda kv: -kv[1])[:n]
 
-    def draw_infos_zoom(self):
-        """Vue GRANDE d'une carte de l'écran Infos.
-
-        Le survol (l'écran Infos) répond « combien » ; ici on répond « à cause
-        de quoi ». Pour l'instant seule « système » a un vrai détail (la RAM
-        par logiciel) ; les autres cartes s'affichent en pleine largeur, ce qui
-        suffit déjà quand leur contenu est tronqué dans la colonne."""
-        self.scr.erase()
-        H, W = self.scr.getmaxyx()
-        DIM = curses.A_DIM
-        G, Y, R, C = self.GREEN, self.YEL, self.RED, self.CYAN
-        title = self.infos_zoom or ""
-        self.scr.addnstr(0, 2, "󰋽 %s" % title.upper(), W - 4, G | curses.A_BOLD)
-        back = "[ ‹ Retour ]"
-        try:
-            self.scr.addnstr(0, max(8, W - 2 - len(back)), back, len(back),
-                             C | curses.A_REVERSE | curses.A_BOLD)
-            self.scr.addnstr(1, 2, "─" * (W - 4), W - 4, DIM)
-        except curses.error:
-            pass
-
-        y = 3
-        if title == "système":
-            tot = avail = 0
-            try:
-                with open("/proc/meminfo") as f:
-                    for line in f:
-                        if line.startswith("MemTotal:"):
-                            tot = int(line.split()[1])
-                        elif line.startswith("MemAvailable:"):
-                            avail = int(line.split()[1])
-            except OSError:
-                pass
-            used = tot - avail
-            if tot:
-                pct = 100.0 * used / tot
-                col = G if pct < 70 else (Y if pct < 88 else R)
-                barw = min(40, max(10, W - 34))
-                fill = int(round(pct / 100 * barw))
-                put = [(" RAM   ", DIM), ("█" * fill, col), ("░" * (barw - fill), DIM),
-                       (" %3.0f%% " % pct, col | curses.A_BOLD),
-                       (" %.1f / %.1f Go" % (used / 1048576.0, tot / 1048576.0), DIM)]
-                x = 2
-                for t, a in put:
-                    try:
-                        self.scr.addnstr(y, x, t, max(0, W - 1 - x), a)
-                    except curses.error:
-                        pass
-                    x += len(t)
-            y += 2
-            try:
-                self.scr.addnstr(y, 2, "par logiciel  (toutes instances cumulées)",
-                                 W - 4, DIM)
-            except curses.error:
-                pass
-            y += 1
-            rows = self.ram_top(max(3, H - y - 3))
-            top_kb = rows[0][1] if rows else 1
-            for name, kb in rows:
-                if y >= H - 2:
-                    break
-                barw = min(30, max(8, W - 46))
-                fill = int(round(barw * kb / max(1, top_kb)))
-                share = 100.0 * kb / tot if tot else 0
-                segs = [(" %-18s " % name[:18], 0),
-                        ("█" * fill, C), ("░" * (barw - fill), DIM),
-                        (" %7.0f Mo" % (kb / 1024.0), C | curses.A_BOLD),
-                        ("  %4.1f%%" % share, DIM)]
-                x = 2
-                for t, a in segs:
-                    try:
-                        self.scr.addnstr(y, x, t, max(0, W - 1 - x), a)
-                    except curses.error:
-                        pass
-                    x += len(t)
-                y += 1
-        else:
-            try:
-                self.scr.addnstr(y, 2, "pas encore de détail pour cette carte.",
-                                 W - 4, DIM)
-            except curses.error:
-                pass
-
-        try:
-            self.scr.addnstr(H - 2, 2, "Échap · ↵  retour aux cartes", W - 4, DIM)
-        except curses.error:
-            pass
-        self.draw_status(H, W)
-        self.scr.noutrefresh()
-        curses.doupdate()
-
     def draw_infos(self):
-        if self.infos_zoom:
-            self.draw_infos_zoom()
-            return
+        """Écran Infos : un DIAGNOSTIC, pas un recueil. Il doit se lire en une
+        seconde : la ligne de verdict en tête dit s'il y a quelque chose à voir, et
+        chaque ligne tient en « libellé court + valeur en gras colorée ». La
+        couleur porte le jugement (vert = rien à faire), les explications vivent
+        dans la vue détail (↵). Toute ligne qui ne peut jamais signaler un problème
+        n'a rien à faire ici."""
         self.scr.erase()
         H, W = self.scr.getmaxyx()
-        DIM = curses.A_DIM
+        DIM, B = curses.A_DIM, curses.A_BOLD
         G, Y, R, C = self.GREEN, self.YEL, self.RED, self.CYAN
-        # ── en-tête : titre (gauche) + bouton Retour sélectionné (droite) ──
-        self.scr.addnstr(0, 2, "󰋽 INFOS", W - 4, G | curses.A_BOLD)   # vert = couleur du bouton etat-major
-        back = "[ ‹ Retour ]"
+        COL = {"grn": G, "yel": Y, "red": R}
+        title = "󰋽 " + (self.infos_zoom or "infos").upper()
+        self.scr.addnstr(0, 2, title, W - 4, G | B)
         try:
-            self.scr.addnstr(0, max(8, W - 2 - len(back)), back, len(back), C | curses.A_REVERSE | curses.A_BOLD)
             self.scr.addnstr(1, 2, "─" * (W - 4), W - 4, DIM)
         except curses.error:
             pass
@@ -1993,7 +2301,7 @@ class Picker:
             data = self.infos_data
             rc = dict(self.rc_data)
 
-        def put(row, x0, segs, xmax):             # segments colorés sur une ligne
+        def put(row, x0, segs, xmax):
             x = x0
             for t, a in segs:
                 if x >= xmax:
@@ -2003,16 +2311,18 @@ class Picker:
                 except curses.error:
                     pass
                 x += len(t)
-        def box(top, left, w, h, title, sel=False):   # panneau encadré, titre dans le bord haut
-            # Carte SÉLECTIONNÉE : bordure vive + titre inversé. C'est le seul
-            # repère de navigation de l'écran, il doit se voir de loin.
+        KEYS = {"thedev": "d", "Claude": "c", "système": "s", "réseau": "r"}
+        def box(top, left, w, h, title, sel=False):
             bd = C if sel else DIM
+            key = KEYS.get(title.split(" ")[0]) if not self.infos_zoom else None
             try:
                 self.scr.addnstr(top, left, "╭─ ", w, bd)
                 self.scr.addnstr(top, left + 3, title, w,
-                                 (C | curses.A_REVERSE | curses.A_BOLD) if sel
-                                 else (C | curses.A_BOLD))
+                                 (C | curses.A_REVERSE | B) if sel else (C | B))
                 tx = left + 3 + len(title)
+                if key:
+                    self.scr.addnstr(top, tx, "  " + key, 3, DIM)
+                    tx += 3
                 self.scr.addnstr(top, tx, " " + "─" * max(0, left + w - 2 - tx) + "╮", max(0, left + w - tx), bd)
                 for r in range(1, h - 1):
                     self.scr.addnstr(top + r, left, "│", 1, bd)
@@ -2021,75 +2331,140 @@ class Picker:
             except curses.error:
                 pass
 
-        LBL = 12                                   # largeur de libellé fixe → barres alignées
-        def gauge_row(label, pct, detail, contentw, inv=False):
+        def layout_col(x, panels, top0, boty, w):
+            """Remplit la hauteur [top0, boty) en AÉRANT plutôt qu'en étirant :
+            l'espace libre sert d'abord à une marge intérieure, puis à une ligne
+            vide entre les lignes ; le reste agrandit les cartes également, pour
+            que les deux colonnes finissent au même niveau."""
+            n = len(panels)
+            if not n:
+                return
+            avail = boty - top0 - (n - 1)                  # 1 ligne entre cartes
+            base = sum(len(r) + 2 for _, r in panels)
+            pad = 1 if base + 2 * n <= avail else 0
+            base += 2 * n * pad
+            spread = sum(max(0, len(r) - 1) for _, r in panels)
+            gapr = 1 if base + spread <= avail else 0
+            base += spread * gapr
+            extra, rem = divmod(max(0, avail - base), n)
+            top = top0
+            for idx, (title, rows) in enumerate(panels):
+                h = len(rows) + 2 + 2 * pad + gapr * max(0, len(rows) - 1) \
+                    + extra + (1 if idx < rem else 0)
+                h = min(h, boty - top)
+                if h < 3:
+                    break
+                box(top, x, w, h, title)
+                # contenu centré dans la carte : le surplus se partage haut/bas
+                content = len(rows) + gapr * max(0, len(rows) - 1)
+                y = top + 1 + max(pad, (h - 2 - content) // 2)
+                for segs in rows:
+                    if y >= top + h - 1:
+                        break
+                    put(y, x + 3, segs, x + w - 2)
+                    y += 1 + gapr
+                top += h + 1
+        def hint(H):
+            try:
+                self.scr.addnstr(H - 2, 2, "d thedev   c Claude   s système   r réseau   "
+                                 "t tester le débit   Échap "
+                                 + ("retour" if self.infos_zoom else "quitter"), W - 4, DIM)
+            except curses.error:
+                pass
+
+        LBL = 12
+        def lab(k):
+            return (" %-*s " % (LBL, k), DIM)
+        def gauge_row(label, pct, detail, contentw, inv=False, val=None):
             pct = max(0.0, min(100.0, float(pct)))
-            detail = (detail or "")[:28]
-            # largeur de barre CONSTANTE (réserve fixe pour % + détail) → toutes les
-            # pistes ont la même longueur et le % tombe à la même colonne.
-            barw = max(8, min(30, contentw - (LBL + 2) - 6 - 18))
+            barw = max(8, min(40, contentw - (LBL + 2) - 8 - 18))
             fill = int(round(pct / 100 * barw))
-            # `inv` : jauge où le HAUT est le bon état (santé d'une batterie, 100 % = neuf)
-            # au lieu du remplissage d'une ressource. Seuils constructeur : 80 % = fin de
-            # vie annoncée, 60 % = capacité franchement entamée.
-            col = ((G if pct >= 80 else (Y if pct >= 60 else R)) if inv else
-                   (G if pct < 70 else (Y if pct < 88 else R)))
-            return [(" %-*s " % (LBL, label), DIM), ("█" * fill, col), ("░" * (barw - fill), DIM),
-                    (" %3.0f%% " % pct, col | curses.A_BOLD), (" " + detail, DIM)]
+            if inv == "sig":
+                col = G if pct >= 60 else (Y if pct >= 40 else R)
+            else:
+                col = ((G if pct >= 80 else (Y if pct >= 60 else R)) if inv else
+                       (G if pct < 70 else (Y if pct < 88 else R)))
+            v = val if val is not None else "%3.0f%%" % pct
+            return [lab(label), ("█" * fill, col), ("░" * (barw - fill), DIM),
+                    (" %5s " % v, col | B), (" " + (detail or "")[:16], DIM)]
         def kv_row(k, v):
             if isinstance(v, tuple):
-                txt, attr = v[0], {"grn": G, "yel": Y, "red": R}.get(v[1], 0)
-            else:
-                txt, attr = v, 0
-            return [(" %-*s " % (LBL, k), DIM), (str(txt), attr)]
+                txt, c = v[0], COL.get(v[1], 0)
+                return [lab(k), (str(txt), (c | B) if c else 0)]
+            return [lab(k), (str(v), 0)]
+        def chips_row(k, chips):
+            segs = [lab(k)]
+            for n, word, c in chips:
+                if n == 0:
+                    continue                      # un compteur à zéro ne dit rien
+                plural = "s" if (not isinstance(n, int) or n > 1) else ""
+                segs += [(str(n), COL.get(c, 0) | B), (" %s%s   " % (word, plural), DIM)]
+            return segs
+        def speed_row(k, d):
+            segs = [lab(k),
+                    ("↓ ", DIM), ("%.0f" % d["down"], COL.get(d["cdown"], 0) | B),
+                    ("  ↑ ", DIM), ("%.1f" % d["up"], COL.get(d["cup"], 0) | B), (" Mb/s", DIM)]
+            if d["ping"] is not None:
+                segs += [("   ", 0), ("%d" % d["ping"], COL.get(d["cping"], 0) | B), (" ms", DIM)]
+            segs.append(("   il y a " + d["age"], DIM))
+            if d.get("autre"):
+                segs.append((" · " + d["where"], DIM))
+            return segs
+        def buds_row(k, chips, case_age):
+            # Règle batterie de thedev : vert = en charge, rouge = faible, neutre sinon.
+            # Un boîtier lu en cache est grisé : c'est un dernier niveau connu.
+            segs = [lab(k)]
+            for name, lvl, st in chips:
+                stale = name == "boîtier" and case_age is not None
+                col = DIM if stale else (G if st == 1 else (R if lvl < 15 else 0))
+                segs += [(name + " ", DIM), ("%d%%" % lvl, col | (0 if stale else B))]
+                if stale:
+                    # Le boîtier ne donne son niveau qu'ouvert, un écouteur dedans :
+                    # sans l'âge, une vieille mesure se lirait comme l'état actuel.
+                    age = ("%d min" % (case_age // 60) if case_age < 3600
+                           else "%d h" % (case_age // 3600))
+                    segs.append(("  il y a " + age, DIM))
+                segs.append(("   ", 0))
+            return segs
         def items_to_rows(items, contentw):
             out = []
             for it in items:
-                if isinstance(it, tuple) and it[0] in ("gauge", "gaugeinv"):
+                if isinstance(it, tuple) and it[0] == "gaugesig":
+                    out.append(gauge_row(it[1], it[2], it[3], contentw, inv="sig"))
+                elif isinstance(it, tuple) and it[0] in ("gauge", "gaugeinv"):
                     out.append(gauge_row(it[1], it[2], it[3], contentw,
-                                         inv=it[0] == "gaugeinv"))
+                                         inv=it[0] == "gaugeinv",
+                                         val=it[4] if len(it) > 4 else None))
                 elif isinstance(it, tuple) and it[0] == "kv":
                     out.append(kv_row(it[1], it[2]))
+                elif isinstance(it, tuple) and it[0] == "chips":
+                    out.append(chips_row(it[1], it[2]))
+                elif isinstance(it, tuple) and it[0] == "speed":
+                    out.append(speed_row(it[1], it[2]))
+                elif isinstance(it, tuple) and it[0] == "buds":
+                    out.append(buds_row(it[1], it[2], it[3]))
                 else:
                     out.append([(" " + str(it), DIM)])
             return out
         def parc_rows():
-            out = [[(" %-*s " % (LBL, "local"), DIM), ("● ", G), ("%d session(s)" % len(live_sessions()), G)]]
+            n = len(live_sessions())
+            out = [[lab("local"), ("● ", G), (str(n), G | B), (" session%s" % ("s" if n > 1 else ""), DIM)]]
             for host in self.rc_hosts:
                 d = rc.get(host) or {"loading": True}
                 if d.get("loading"):
-                    out.append([(" %-*s " % (LBL, host), DIM), ("…", DIM)])
+                    out.append([lab(host), ("…", DIM)])
                 elif d.get("error"):
-                    out.append([(" %-*s " % (LBL, host), DIM), ("○ ", R), (str(d["error"]), R)])
+                    out.append([lab(host), ("○ ", R), ("injoignable", R | B)])
                 else:
-                    s = d.get("sessions", [])
-                    if s:
-                        np = sum(len(x.get("panes", [])) for x in s)
-                        out.append([(" %-*s " % (LBL, host), DIM), ("● ", G), ("%d session · %d Claude" % (len(s), np), G)])
+                    ss = d.get("sessions", [])
+                    if ss:
+                        np = sum(len(x.get("panes", [])) for x in ss)
+                        out.append([lab(host), ("● ", G), (str(len(ss)), G | B),
+                                    (" session%s   " % ("s" if len(ss) > 1 else ""), DIM),
+                                    (str(np), B), (" Claude", DIM)])
                     else:
-                        out.append([(" %-*s " % (LBL, host), DIM), ("○ ", Y), ("aucune session", Y)])
+                        out.append([lab(host), ("○ ", DIM), ("vide", DIM)])
             return out
-        def autos_rows():
-            with self.rc_lock:
-                autos = self.autos
-            if autos is None:
-                return [[(" …", DIM)]]
-            if not autos:
-                return [[(" aucune garde", DIM)]]
-            out = []
-            for a in autos[:8]:
-                # même logique BINAIRE que la page « la garde » : opérationnelle ssi
-                # timer actif ET Claude présent dans l'équipe (a["open"]) ; sinon arrêtée.
-                actif = a.get("state") in ("active", "running")
-                op = actif and bool(a.get("open"))
-                if op:
-                    icon, c = ("► " if a.get("state") == "running" else "● "), G
-                else:
-                    icon, c = "○ ", R
-                out.append([(" ", 0), (icon, c), ("%-16s " % (a.get("name", "?")[:16]), 0),
-                            (("→ " + a.get("next", "")) if a.get("next") else "", DIM)])
-            return out
-
         if data is None:
             try:
                 self.scr.addnstr(3, 2, "chargement…", W - 4, DIM)
@@ -2100,52 +2475,80 @@ class Picker:
             curses.doupdate()
             return
 
-        # ── disposition 2 colonnes, cartes ÉTIRÉES pour remplir la hauteur ──
         sec = {t: rows for t, rows in data}
-        colw = (W - 5) // 2
-        contentw = colw - 4
-        leftx, rightx = 2, 2 + colw + 1
-        top0, boty = 3, H - 2
-        avail = boty - top0
 
-        left = [("thedev", items_to_rows(sec.get("thedev", []), contentw))]
-        if self.rc_hosts:
-            left.append(("parc", parc_rows()))
-        left.append(("la garde", autos_rows()))
-        right = [("Claude · Max 5x", items_to_rows(sec.get("Claude", []), contentw)),
-                 ("système", items_to_rows(sec.get("système", []), contentw)),
-                 ("usage", items_to_rows(sec.get("usage", []), contentw))]
+        # ── vue détail : la carte telle quelle, puis ce qui l'explique ──
+        z = self.infos_zoom
+        if z:
+            w = W - 4
+            name = {"Claude": "Claude · Max 5x"}.get(z, z)
+            cards = [(name, items_to_rows(sec.get(z, []), w - 6)),
+                     ("en détail", items_to_rows([i for i in sec.get(z + "+", [])], w - 6))]
+            if z == "thedev" and self.rc_hosts:
+                cards.append(("parc", parc_rows()))
+            if z == "système":
+                tot = 0
+                for ln in _read_file("/proc/meminfo").splitlines():
+                    if ln.startswith("MemTotal:"):
+                        tot = int(ln.split()[1])
+                ram = self.ram_top(8)
+                top_kb = ram[0][1] if ram else 1
+                rows = []
+                for nm, kb in ram:
+                    bw = max(8, min(40, w - 50))
+                    f_ = int(round(bw * kb / max(1, top_kb)))
+                    rows.append([lab(nm[:12]), ("█" * f_, C), ("░" * (bw - f_), DIM),
+                                 (" %6.0f Mo" % (kb / 1024.0), C | B),
+                                 ("  %4.1f %%" % (100.0 * kb / tot if tot else 0), DIM)])
+                cards.append(("RAM par logiciel", rows))
+            layout_col(2, cards, 3, H - 3, w)
+            hint(H)
+            self.draw_status(H, W)
+            self.scr.noutrefresh()
+            curses.doupdate()
+            return
 
-        # Ordre de navigation : colonne gauche de haut en bas, puis la droite.
-        # Mémorisé pour que les touches et le rendu parlent des mêmes cartes.
-        self.infos_panels = [t for t, _ in left] + [t for t, _ in right]
-        self.ii = max(0, min(self.ii, len(self.infos_panels) - 1))
-        selected = self.infos_panels[self.ii]
+        colw = (W - 7) // 2
+        contentw = colw - 6
+        leftx, rightx = 2, 2 + colw + 3
+        top0, boty = 4, H - 3
 
-        def layout_col(x, panels):
-            n = len(panels)
-            if n == 0:
-                return
-            gap = 1
-            base = sum(len(r) + 2 for _, r in panels) + gap * (n - 1)
-            per, rem = divmod(max(0, avail - base), n)   # rallonge chaque carte pour remplir
-            top = top0
-            for idx, (title, rows) in enumerate(panels):
-                h = len(rows) + 2 + per + (1 if idx < rem else 0)
-                if top + h > boty:
-                    h = max(len(rows) + 2, boty - top)
-                box(top, x, colw, h, title, sel=(title == selected))
-                for i, segs in enumerate(rows):
-                    put(top + 1 + i, x + 2, segs, x + colw - 1)
-                top += h + gap
-        layout_col(leftx, left)
-        layout_col(rightx, right)
-        try:
-            self.scr.addnstr(H - 2, 2, "↑↓ carte · ↵ détail · Échap retour",
-                             W - 4, DIM)
-        except curses.error:
-            pass
+        left = [("thedev", items_to_rows(sec.get("thedev", []), contentw)),
+                ("Claude · Max 5x", items_to_rows(sec.get("Claude", []), contentw))]
+        if sec.get("Bluetooth"):
+            left.append(("Bluetooth", items_to_rows(sec["Bluetooth"], contentw)))
+        right = [("système", items_to_rows(sec.get("système", []), contentw)),
+                 ("réseau", items_to_rows(sec.get("réseau", []), contentw))]
 
+        # ── le verdict : tout ce qui est jaune ou rouge dans les cartes, en une ligne.
+        # Tiré du RENDU lui-même, pas recalculé : il ne peut pas contredire les cartes.
+        def colour_of(a):
+            k = a & curses.A_COLOR
+            return R if k == (R & curses.A_COLOR) else (Y if k == (Y & curses.A_COLOR) else None)
+        issues = []
+        for _t, rows in left + right:
+            for segs in rows:
+                worst = None
+                for t, a in segs:
+                    c = colour_of(a)
+                    if c == R or (c == Y and worst is None):
+                        worst = c
+                if worst is not None:
+                    name = next((t.strip() for t, _a in segs
+                                 if t.strip() and t.strip() not in ("●", "○", "►", "↓", "↑")), "?")
+                    issues.append((name, worst))
+        if not issues:
+            put(2, 2, [("● ", G), ("tout est vert", G | B)], W - 2)
+        else:
+            worst = R if any(c == R for _n, c in issues) else Y
+            segs = [("● ", worst), ("%d à voir   " % len(issues), worst | B)]
+            for n, c in issues:
+                segs += [(n, c | B), ("   ", 0)]
+            put(2, 2, segs, W - 2)
+
+        layout_col(leftx, left, top0, boty, colw)
+        layout_col(rightx, right, top0, boty, colw)
+        hint(H)
         self.draw_status(H, W)
         self.scr.noutrefresh()
         curses.doupdate()
@@ -2531,7 +2934,7 @@ class Picker:
             # getch non bloquant tant qu'il y a qqch à rafraîchir (liste RC live,
             # check git en fond, ou écran infos en cours de chargement) ; sinon bloque.
             self._refresh_busy()                      # busy local (throttle interne) → clignotement
-            poll = bool(self.rc_hosts) or self.git_checking or self.local_refreshing or (self.metrics is not None) or (self.mode == "infos" and self.infos_data is None) or (self.autos is None) or (self.mode == "carte" and self.carte_nodes is None) or bool(self.busy_cwds) or bool(self.waiting_cwds) or bool(self.amb)
+            poll = bool(self.rc_hosts) or self.git_checking or self.local_refreshing or (self.metrics is not None) or (self.mode == "infos") or (self.autos is None) or (self.mode == "carte" and self.carte_nodes is None) or bool(self.busy_cwds) or bool(self.waiting_cwds) or bool(self.amb)
             # étoile filante en vol → rafraîchissement rapide (~7 fps) pour un
             # mouvement fluide ; sinon cadence normale (ambiance/live) ou blocage.
             self.scr.timeout(140 if self.star_anim else (400 if poll else -1))
@@ -2633,22 +3036,22 @@ class Picker:
                         return
                 continue
             if self.mode == "infos":
-                # Vue d'ensemble : ↑↓ change de carte, ↵ déplie. Vue dépliée :
-                # ↵/Échap replie. Échap sur la vue d'ensemble = quitter l'écran.
-                if self.infos_zoom:
-                    if ch in (27, curses.KEY_ENTER, 10, 13):
-                        self.infos_zoom = None
+                # Navigation par LETTRES, sans sélection de carte : seules deux cartes
+                # ont un détail, les parcourir une à une ne servait à rien.
+                #   d thedev, c Claude, s système, r réseau, t débit, Échap retour/quitter
+                if ch in (ord("t"), ord("T")) and not self.speed_running:
+                    self.speed_running = True
+                    self.msg = "mesure du débit… (~10 s)"
+                    threading.Thread(target=self._speedtest, daemon=True).start()
+                elif ch in (ord("r"), ord("s"), ord("d"), ord("c")):
+                    z = {ord("r"): "réseau", ord("s"): "système", ord("d"): "thedev",
+                         ord("c"): "Claude"}[ch]
+                    self.infos_zoom = None if self.infos_zoom == z else z
                 elif ch == 27:
-                    if self.back_page():
+                    if self.infos_zoom:
+                        self.infos_zoom = None
+                    elif self.back_page():
                         return
-                elif ch in (curses.KEY_UP, ord("k")):
-                    self.ii -= 1
-                elif ch in (curses.KEY_DOWN, ord("j")):
-                    self.ii += 1
-                elif ch in (curses.KEY_ENTER, 10, 13):
-                    panels = getattr(self, "infos_panels", [])
-                    if panels:
-                        self.infos_zoom = panels[max(0, min(self.ii, len(panels) - 1))]
                 continue
             self.msg = ""
             if ch in (curses.KEY_UP,):

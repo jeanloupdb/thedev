@@ -3,6 +3,7 @@
 # Affichées en permanence : l'etat-major (ligne du bas) et la ligne « ＋ Nouveau soldat ».
 #   thedev-metrics            bande ANSI colorée (vert<70 · jaune<88 · rouge sinon)
 #   thedev-metrics --raw      valeurs machine, 1/ligne (pour l'etat-major, qui colore en curses)
+#   thedev-metrics --speedtest  mesure le débit (ping, gigue, descendant, montant), ~25 Mo
 # RAM% et disque% = couperets DURS (OOM / écritures qui échouent). load = saturation
 # (à comparer aux cœurs). Usage Claude (fenêtre Max 5x) = claude-window-usage (endpoint
 # OAuth interne, GRATUIT) — le couperet le plus limitant pour le travail d'agents.
@@ -11,6 +12,40 @@ set -u
 # → on le garantit (sinon l'usage Claude disparaît de la bande à distance).
 export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
 ncpu=$(nproc 2>/dev/null || echo 1)
+
+# --speedtest : les quatre chiffres d'un speedtest, mesurés contre les serveurs de
+# test de Cloudflare (anycast, donc le point le plus proche). On n'utilise PAS le
+# speedtest Ookla : il télécharge jusqu'à saturer le lien, 100 Mo et plus sur un
+# partage de connexion, pris sur le forfait mobile. Ici le volume est BORNÉ (20 Mo
+# descendant, 5 Mo montant, 12 s max par sens), assez pour sortir du démarrage lent
+# de TCP. Jamais automatique : lancé à la demande depuis la page « infos ».
+#   ping  = temps d'aller-retour, mesuré sur la poignée de main TCP (connect − DNS),
+#           médiane de 6 essais ; gigue = écart moyen entre deux essais successifs.
+# Résultat en cache (lu par la page infos) : ts \t desc \t mont \t ping \t gigue \t Mo \t réseau
+if [ "${1:-}" = "--speedtest" ]; then
+  command -v curl >/dev/null 2>&1 || { echo "curl absent" >&2; exit 1; }
+  CF="https://speed.cloudflare.com"
+  rtts=""
+  for _ in 1 2 3 4 5 6; do
+    r=$(curl -s -o /dev/null -m 5 -w '%{time_namelookup} %{time_connect}' "$CF/__down?bytes=0" 2>/dev/null)
+    [ -n "$r" ] && rtts="$rtts $(awk -v a="${r% *}" -v b="${r#* }" 'BEGIN{printf "%.1f", (b-a)*1000}')"
+  done
+  # Gigue sur l'ordre des essais, médiane sur l'ordre trié (awk POSIX : pas d'asort).
+  JIT=$(printf '%s\n' $rtts | awk 'NR>1{d=$1-p; j+=(d<0?-d:d)} {p=$1} END{if(NR>1) printf "%.0f", j/(NR-1)}')
+  PING=$(printf '%s\n' $rtts | sort -n | awk '{v[NR]=$1} END{if(NR) printf "%.0f", (NR%2)?v[(NR+1)/2]:(v[NR/2]+v[NR/2+1])/2}')
+  DOWN=$(curl -s -o /dev/null -m 12 -w '%{speed_download}' "$CF/__down?bytes=20000000" 2>/dev/null)
+  UP=$(head -c 5000000 /dev/zero | curl -s -o /dev/null -m 12 -w '%{speed_upload}' \
+       --data-binary @- "$CF/__up" 2>/dev/null)
+  DOWN=$(awk -v b="${DOWN:-0}" 'BEGIN{printf "%.1f", b*8/1e6}')
+  UP=$(awk -v b="${UP:-0}" 'BEGIN{printf "%.1f", b*8/1e6}')
+  NET=$(nmcli -t -f NAME connection show --active 2>/dev/null | grep -vE '^(lo|docker|br-|virbr|tailscale|veth)' | head -1)
+  out="${XDG_CACHE_HOME:-$HOME/.cache}/thedev/speedtest"
+  mkdir -p "$(dirname "$out")"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$DOWN" "$UP" "${PING:-}" "${JIT:-}" 25 "$NET" > "$out"
+  printf 'ping %s ms · gigue %s ms · descendant %s Mb/s · montant %s Mb/s (%s)\n' \
+    "${PING:-?}" "${JIT:-?}" "$DOWN" "$UP" "${NET:-?}"
+  exit 0
+fi
 
 ram_pct()  { awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} END{ if(t) printf "%.0f", 100*(t-a)/t }' /proc/meminfo 2>/dev/null; }
 disk_pct() { df -P "$1" 2>/dev/null | awk 'NR==2{gsub(/%/,"",$5); print $5}'; }
@@ -202,7 +237,9 @@ else
   _idc="${XDG_CACHE_HOME:-$HOME/.cache}/thedev/net-id"
   _fresh=0
   if [ -f "$_idc" ]; then
-    IFS=$'\t' read -r _ci _cn _cv < "$_idc" 2>/dev/null || true
+    # Séparateur « | » et non tabulation : `read` fusionne les tabulations
+    # consécutives, donc un nom vide décalait « vpn » dans le champ du nom.
+    IFS='|' read -r _ci _cn _cv < "$_idc" 2>/dev/null || true
     _age=$(( $(date +%s) - $(stat -c %Y "$_idc" 2>/dev/null || echo 0) ))
     [ "$_age" -lt 30 ] && [ "${_ci:-}" = "$NET_IF" ] && _fresh=1
   fi
@@ -210,7 +247,11 @@ else
     NET_NAME="${_cn:-}"; NET_VPN="${_cv:-}"
   else
     if [ -d "/sys/class/net/$NET_IF/wireless" ]; then
-      NET_NAME=$(iwgetid -r 2>/dev/null)
+      # iw d'abord : iwgetid (wireless-tools) a disparu avec Ubuntu 26.04.
+      NET_NAME=$(iw dev "$NET_IF" link 2>/dev/null | sed -n 's/^[[:space:]]*SSID: //p' | head -1)
+      [ -n "$NET_NAME" ] || NET_NAME=$(iwgetid -r 2>/dev/null)
+      [ -n "$NET_NAME" ] || NET_NAME=$(nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null \
+                                       | awk -F: -v d="$NET_IF" '$2==d{print $1; exit}')
     else
       NET_NAME=filaire
     fi
@@ -225,7 +266,7 @@ else
         | grep -qE '^(tun|tap|wg|tailscale|ppp|nordlynx|proton|zt)' && NET_VPN=vpn
     fi
     mkdir -p "$(dirname "$_idc")" 2>/dev/null
-    printf '%s\t%s\t%s' "$NET_IF" "$NET_NAME" "$NET_VPN" > "$_idc" 2>/dev/null || true
+    printf '%s|%s|%s' "$NET_IF" "$NET_NAME" "$NET_VPN" > "$_idc" 2>/dev/null || true
   fi
 
   # Est-ce que ça PASSE vraiment ? Sonde vers api.anthropic.com plutôt que
