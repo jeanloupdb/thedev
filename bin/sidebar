@@ -5,7 +5,7 @@
 Une colonne étroite (~20 % de l'écran, ~35 colonnes), cliquable et pilotable au
 clavier. À l'usage, seul l'arbre des fichiers servait : c'est désormais la seule
 vue. En tête, un bouton « quit » (même modale que Ctrl+Q : détacher ou fermer),
-puis les fichiers ouverts (bouton save + close), le dossier du workspace et la
+puis les fichiers ouverts (un bouton « close files » commun), le dossier du workspace et la
 machine — sur un serveur, sa couleur rappelle où l'on est. Un fichier s'ouvre
 dans nvim à la place des agents, dans leur pile à droite.
 
@@ -349,8 +349,10 @@ class Sidebar:
         for i, e in enumerate(self.editors):
             R.append(([("  ", 0), ("✎ ", self.YEL), (os.path.basename(e["path"]), curses.A_BOLD)],
                       ("edfocus", i)))
-            R.append(([("    ", 0), ("󰆓 save + close", self.GREEN)], ("edclose", i)))
+        # Un seul bouton pour tout refermer : une ligne par fichier ALOURDIT la
+        # colonne sans rien apporter (on n'a qu'un éditeur à la fois en pratique).
         if self.editors:
+            R.append(([("    ", 0), ("󰆓 close files", self.GREEN)], ("edcloseall", 0)))
             R.append(([("", 0)], None))
         root = os.path.basename(self.cwd.rstrip("/")) or self.cwd
         segs = [("  ", 0), ("󰉋 ", self.CYAN), (root, curses.A_BOLD)]
@@ -564,8 +566,9 @@ class Sidebar:
         if kind == "edfocus":
             self.zj("focus-pane-id", self.editors[val]["pane"])
             return
-        if kind == "edclose":
-            self.nvim_cmd(self.editors[val], ":wq")
+        if kind == "edcloseall":
+            for e in list(self.editors):
+                self.nvim_cmd(e, ":wq")
             return
         self.run(kind, val)
 
@@ -580,7 +583,7 @@ class Sidebar:
     def open_file(self, path):
         """Ouvre un fichier dans nvim, À LA PLACE DES AGENTS (zone de droite).
 
-        nvim écoute sur une socket : le bouton « save + close » de la colonne lui
+        nvim écoute sur une socket : le bouton « close files » de la colonne lui
         envoie :wq. Déjà ouvert → on y retourne au lieu d'ouvrir un
         second exemplaire."""
         for e in self.editors:
@@ -589,6 +592,20 @@ class Sidebar:
                 return
         if not self.live:
             self.status = "⌁ opens %s in the agents stack" % os.path.basename(path)
+            return
+        # UN seul éditeur : un nvim déjà ouvert charge le nouveau fichier À LA PLACE
+        # du précédent (enregistré au passage s'il a changé) au lieu d'empiler un
+        # second pane par-dessus.
+        live = [e for e in self.editors if os.path.exists(e["sock"])]
+        if live:
+            e = live[0]
+            esc = path.replace("'", "''")
+            self.nvim_cmd(e, ":execute 'update | edit ' . fnameescape('%s')" % esc)
+            e["path"], e["t"] = path, time.time()
+            self.editors = [e]
+            if e["pane"]:
+                self.zj("rename-pane", "-p", e["pane"], "✎ " + os.path.basename(path))
+                self.zj("focus-pane-id", e["pane"])
             return
         slug = re.sub(r"[^A-Za-z0-9._-]", "_", self.workspace or "default")[:40]  # socket Unix : 108 car. max
         sock = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp",
