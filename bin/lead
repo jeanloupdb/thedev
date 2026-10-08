@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# @thedev org lead: opens an interactive Claude briefed as THIS lead (on demand)
+# lead — « discuter avec un lead ». Un lead est STRUCTUREL (pas de session debout) : le
+# convoquer = lancer un Claude INTERACTIF (abonnement, jamais `claude -p`) briefé avec le
+# contexte agrégé de son périmètre — les SUMMARIES de ses workspaces (bornés), leurs blockers,
+# leur fraîcheur. Il répond au survol, et peut DESCENDRE dans le détail à la demande.
+#
+#   lead                     l'OWNER : toute la flotte
+#   lead <machine>           le lead d'une machine
+#   lead <machine>/<domaine> le sous-lead d'un domaine
+#   lead --brief [<node>]    imprime seulement le briefing (ne lance pas Claude)
+#
+# Le contexte vient de `org-tree --data` (qui agrège déjà local + flotte via le sommet) →
+# marche pour un lead local OU distant. La descente fine (`note ls --all`, `milestone`) est
+# pleine pour le local ; pour une machine distante, le détail vit sur le sommet (ouvrir
+# le lead là-bas pour descendre plus loin — évolution).
+set -u
+
+BRIEF_ONLY=0
+case "${1:-}" in --brief) BRIEF_ONLY=1; shift ;; esac
+node="${1:-}"                       # "" = owner | "machine" | "machine/domaine"
+
+mach="${node%%/*}"; dom=""
+case "$node" in */*) dom="${node#*/}" ;; esac
+
+# titre lisible du périmètre
+if   [ -z "$node" ]; then scope="owner (the whole fleet)"
+elif [ -z "$dom" ];  then scope="lead of machine $mach"
+else                      scope="sub-lead of domain \"$dom\" ($mach)"; fi
+
+# workspaces du périmètre, depuis org-tree --data : machine \t domaine \t workspace \t live \t etat \t ago
+lines="$(org-tree --data 2>/dev/null | awk -F'\t' -v m="$mach" -v d="$dom" '
+  $1 ~ /^#/ { next }
+  { if (m!="" && $1!=m) next; if (d!="" && $2!=d) next;
+    eq=$3; etat=$5; ago=$6;
+    printf "  - %s", eq;
+    if (etat!="" && etat!="—") printf " : %s", etat;
+    if (ago!="") printf "  (%s)", ago;
+    printf "\n" }')"
+[ -n "$lines" ] || lines="  (no workspace in this scope: the namespace fills up as workspaces open and sync up)"
+
+brief="You are summoned as the ${scope}.
+
+You are NOT a workspace: you are a lead. Your role = know the state of your workspaces (their
+synced-up summaries) and answer questions about this scope. You can GO DOWN into the
+details when useful (do not guess):
+  • \`org-tree\`            the full org tree
+  • \`note ls --all\`       the detailed context of a workspace (in its folder)
+  • \`milestone\` / \`blocker\`   the timeline / the stuck points of a workspace
+
+Current state of your scope (shared summaries + blockers ⚠, freshness in parentheses):
+${lines}
+
+You run in INTERACTIVE mode (subscription). Start by introducing yourself in one sentence as the ${scope},
+then give the state in 2-4 lines (what moves forward, what is stuck, what needs attention)."
+
+if [ "$BRIEF_ONLY" = 1 ]; then printf '%s\n' "$brief"; exit 0; fi
+
+# convocation : Claude interactif, briefé, avec un 1er message qui le fait se présenter.
+exec claude --append-system-prompt "$brief" "Introduce yourself and give the state of your scope."

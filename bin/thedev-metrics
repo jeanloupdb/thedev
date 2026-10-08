@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# @thedev infra métriques limitantes locales (RAM/disque/load/chaleur) — source unique
-# Affichées en permanence : l'etat-major (ligne du bas) et la ligne « ＋ Nouveau soldat ».
+# @thedev infra local limiting metrics (RAM/disk/load/heat), single source
+# Affichées en permanence : l'home (ligne du bas) et la ligne « ＋ Nouveau agent ».
 #   thedev-metrics            bande ANSI colorée (vert<70 · jaune<88 · rouge sinon)
-#   thedev-metrics --raw      valeurs machine, 1/ligne (pour l'etat-major, qui colore en curses)
+#   thedev-metrics --raw      valeurs machine, 1/ligne (pour l'home, qui colore en curses)
 #   thedev-metrics --speedtest  mesure le débit (ping, gigue, descendant, montant), ~25 Mo
 # RAM% et disque% = couperets DURS (OOM / écritures qui échouent). load = saturation
 # (à comparer aux cœurs). Usage Claude (fenêtre Max 5x) = claude-window-usage (endpoint
@@ -23,7 +23,7 @@ ncpu=$(nproc 2>/dev/null || echo 1)
 #           médiane de 6 essais ; gigue = écart moyen entre deux essais successifs.
 # Résultat en cache (lu par la page infos) : ts \t desc \t mont \t ping \t gigue \t Mo \t réseau
 if [ "${1:-}" = "--speedtest" ]; then
-  command -v curl >/dev/null 2>&1 || { echo "curl absent" >&2; exit 1; }
+  command -v curl >/dev/null 2>&1 || { echo "curl missing" >&2; exit 1; }
   CF="https://speed.cloudflare.com"
   rtts=""
   for _ in 1 2 3 4 5 6; do
@@ -42,7 +42,7 @@ if [ "${1:-}" = "--speedtest" ]; then
   out="${XDG_CACHE_HOME:-$HOME/.cache}/thedev/speedtest"
   mkdir -p "$(dirname "$out")"
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$DOWN" "$UP" "${PING:-}" "${JIT:-}" 25 "$NET" > "$out"
-  printf 'ping %s ms · gigue %s ms · descendant %s Mb/s · montant %s Mb/s (%s)\n' \
+  printf 'ping %s ms · jitter %s ms · down %s Mb/s · up %s Mb/s (%s)\n' \
     "${PING:-?}" "${JIT:-?}" "$DOWN" "$UP" "${NET:-?}"
   exit 0
 fi
@@ -253,7 +253,7 @@ else
       [ -n "$NET_NAME" ] || NET_NAME=$(nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null \
                                        | awk -F: -v d="$NET_IF" '$2==d{print $1; exit}')
     else
-      NET_NAME=filaire
+      NET_NAME=wired
     fi
     # VPN : une interface tunnel qui porte une ADRESSE. La présence de
     # l'interface ne suffit PAS — tailscale0 existe, garde son carrier et ses
@@ -339,8 +339,8 @@ out=""
 add() { [ -n "$out" ] && out+="${D} │ ${Z}"; out+="$1"; }   # colonnes │ ; libellé DIM, valeur COLORÉE
 
 # `--minimal` = HEURE + BATTERIE, rien d'autre. Les jauges détaillées (fenêtre
-# Claude, RAM, disque, charge) vivent désormais dans la colonne de gauche du
-# front (`sidebar`), où elles sont visibles en permanence pendant le travail : les
+# Claude, RAM, disque, charge) vivent désormais dans la colonne de gauche de la
+# page agents (`sidebar`), où elles sont visibles en permanence pendant le travail : les
 # répéter dans la barre du bas ne ferait que charger l'écran.
 if [ "${1:-}" = "--minimal" ]; then
   add "${D}$(date +%H:%M)${Z}"
@@ -350,7 +350,7 @@ else
   for d in "${DISKS[@]}"; do
     m="${d%%:*}"; p="${d##*:}"
     [ "$m" = "/" ] || continue        # bande compacte : disque racine seulement (/data → écran Infos)
-    add "${D}disque ${Z}$(col_pct "$p")${p}%${Z}"
+    add "${D}disk ${Z}$(col_pct "$p")${p}%${Z}"
   done
   if [ -n "$LOAD" ]; then
     lc=$(awk -v l="$LOAD" -v n="$ncpu" 'BEGIN{ if(l<n*0.7)print"g"; else if(l<n)print"y"; else print"r" }')
@@ -359,8 +359,8 @@ else
   fi
   if [ -n "$TEMP" ]; then
     # Colorée en % de crit → mêmes bornes 70/88 que toutes les autres jauges thedev.
-    if [ "$TETOUF" = 1 ]; then add "${D}chaleur ${Z}${R}${TEMP}° étouffé${Z}"
-    else add "${D}chaleur ${Z}$(col_pct "$(( 100 * TEMP / TCRIT ))")${TEMP}°${Z}"; fi
+    if [ "$TETOUF" = 1 ]; then add "${D}heat ${Z}${R}${TEMP}° throttled${Z}"
+    else add "${D}heat ${Z}$(col_pct "$(( 100 * TEMP / TCRIT ))")${TEMP}°${Z}"; fi
   fi
 fi
 if [ -n "$BAT_PCT" ]; then

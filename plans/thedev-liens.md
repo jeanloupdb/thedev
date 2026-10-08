@@ -1,65 +1,65 @@
-# Plan — thedev liens (réseau d'espaces pairs, sans `-p`)
+# Plan: thedev links (network of peer workspaces, without `-p`)
 
-> Vocabulaire : voir `NAMING.md`. But : déléguer du travail entre espaces **sur des
-> machines différentes**, en **interactif** (abonnement) plutôt que `claude -p` (pool
-> de crédits, depuis le 15/22 juin 2026).
+> Vocabulary: see `NAMING.md`. Goal: delegate work between workspaces **on different
+> machines**, **interactively** (subscription) rather than with `claude -p` (credit
+> pool, since June 15/22, 2026).
 
-## Principe
-Un **espace** (sur une **machine**) ouvre un **lien** vers un autre espace et lui
-envoie une **mission** ; l'espace distant l'exécute dans sa **sandbox** (cruns
-interactifs → abonnement) et renvoie un **résultat**. Modèle **plat** (pairs).
-Un lien est **toujours cross-machine** (transport **SSH**).
+## Principle
+A **workspace** (on a **machine**) opens a **link** to another workspace and sends it
+a **task**; the remote workspace runs it in its **sandbox** (interactive
+jobs → subscription) and sends back a **result**. **Flat** model (peers).
+A link is **always cross-machine** (**SSH** transport).
 
-## Arborescence (par machine, `~/.cache/thedev/`)
+## Layout (per machine, `~/.cache/thedev/`)
 ```
-links/<espace>                 ← REGISTRE : 1 fichier = 1 espace ouvert aux missions
-spaces/<espace>/
-  inbox/<id>.mission           ← missions reçues
-  outbox/<id>.result           ← résultats à rendre (écrit atomique : .tmp puis mv)
-  work/<id>/                    ← mission en cours (claim)
-  done/<id>/                    ← archive (mission + résultat + log)
+links/<workspace>              ← REGISTRY: 1 file = 1 workspace open to tasks
+spaces/<workspace>/
+  inbox/<id>.mission           ← received tasks
+  outbox/<id>.result           ← results to return (atomic write: .tmp then mv)
+  work/<id>/                    ← task in progress (claim)
+  done/<id>/                    ← archive (task + result + log)
 ```
 
-## Format (style email)
-`inbox/<id>.mission` : en-têtes `From:` / `Created:` / `Timeout:` + ligne vide + corps.
-`outbox/<id>.result` : en-têtes `Status:` (ok|error|timeout) / `Finished:` + corps.
-L'apparition de `<id>.result` = signal « mission finie ».
+## Format (email style)
+`inbox/<id>.mission`: headers `From:` / `Created:` / `Timeout:` + blank line + body.
+`outbox/<id>.result`: headers `Status:` (ok|error|timeout) / `Finished:` + body.
+The appearance of `<id>.result` = "task finished" signal.
 
-## Cycle de vie
-1. émetteur : `ssh` dépose `inbox/<id>.mission` sur la machine cible.
-2. **watcher** (crun bash de l'espace cible) voit le fichier → claim → `work/`.
-3. lance un **crun-mission** : `claude "<mission + 'écris le résultat dans outbox/<id>.result'>"`
-   en **interactif** (abonnement) ; peut fanout en d'autres cruns.
-4. le crun-mission écrit le résultat (dernier acte) → le watcher le voit → tue le pane, archive.
-5. émetteur : poll `outbox/<id>.result` via ssh → lit → rend à son Claude.
+## Lifecycle
+1. sender: `ssh` drops `inbox/<id>.mission` on the target machine.
+2. **watcher** (a bash job of the target workspace) sees the file → claim → `work/`.
+3. starts a **task job**: `claude "<task + 'write the result to outbox/<id>.result'>"`
+   **interactively** (subscription); can fan out into other jobs.
+4. the task job writes the result (last act) → the watcher sees it → kills the pane, archives.
+5. sender: polls `outbox/<id>.result` over ssh → reads → hands it back to its Claude.
 
-> Exec interactif : crun-mission démarré avec la mission en **prompt initial**
-> (`claude "<…>"`, pas `-p`). Fallback si le prompt positionnel ne s'auto-exécute
-> pas : injection zellij `write-chars` en local dans le pane du crun-mission.
+> Interactive exec: the task job is started with the task as its **initial prompt**
+> (`claude "<…>"`, not `-p`). Fallback if the positional prompt does not run
+> by itself: local zellij `write-chars` injection into the task job's pane.
 
-## Commandes
-- `thedev-link open|close|status` — ouvre/ferme l'espace courant aux missions
-  (lance/arrête son watcher + (dé)inscription registre). **Auto `open` sur VPS**, manuel en local.
-- `mission <machine>/<espace> "<txt>"` — envoie, attend, rend le résultat.
-- `mission ls <machine>` — liste les espaces joignables (lit le registre via ssh).
+## Commands
+- `thedev-link open|close|status`: opens/closes the current workspace to tasks
+  (starts/stops its watcher + registry (un)registration). **Auto `open` on VPS**, manual locally.
+- `delegate <machine>/<workspace> "<txt>"`: sends, waits, returns the result.
+- `delegate ls <machine>`: lists reachable workspaces (reads the registry over ssh).
 
-## Défauts v1 (validés)
-- **Concurrence** : séquentiel (une mission à la fois par espace, file d'attente).
-- **Timeout** : 10 min par défaut, surchargé par l'en-tête `Timeout:`.
-- **Émetteur** : tourne dans un **crun** (non-bloquant, te ping au retour).
+## v1 defaults (approved)
+- **Concurrency**: sequential (one task at a time per workspace, queued).
+- **Timeout**: 10 min by default, overridden by the `Timeout:` header.
+- **Sender**: runs in a **job** (non-blocking, pings you when it returns).
 
-## Intégration
-- sandbox : le watcher est un crun (visible dans `crun list`).
-- accueil (mode Infos) : « Liens : ouvert/fermé » + missions en cours (v2 : `mission ls`).
-- launcher `dev` : `thedev-link open` au démarrage d'un espace sur VPS.
+## Integration
+- sandbox: the watcher is a job (visible in `job list`).
+- home (Infos mode): "Links: open/closed" + tasks in progress (v2: `delegate ls`).
+- `dev` launcher: `thedev-link open` when a workspace starts on a VPS.
 
-## Sécurité
-- Seul SSH livre les missions → seul le détenteur des clés (toi) peut envoyer. Zéro
-  surface réseau ouverte.
-- crun-mission en `jlal`, dans ta sandbox → périmètre. Sur jlax il lit `~/.claude/CLAUDE.md`
-  natif → ne touche pas à maxime.
-- ⚠️ mission = instructions exécutées en autonomie (`--dangerously-skip-permissions`).
-  Garde-fou = la livraison passe par TON SSH (même confiance qu'une connexion manuelle).
+## Security
+- Only SSH delivers tasks → only the key holder (you) can send. Zero
+  open network surface.
+- task job runs as `jlal`, in your sandbox → scoped. On jlax it reads the native
+  `~/.claude/CLAUDE.md` → does not touch maxime.
+- ⚠️ task = instructions run autonomously (`--dangerously-skip-permissions`).
+  Safeguard = delivery goes through YOUR SSH (same trust as a manual login).
 
-## Identité d'un espace
-espace = `$ZELLIJ_SESSION_NAME` (le nom de la session thedev). Adresse : `<machine>/<espace>`.
+## Workspace identity
+workspace = `$ZELLIJ_SESSION_NAME` (the name of the thedev session). Address: `<machine>/<workspace>`.

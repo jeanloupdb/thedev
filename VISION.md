@@ -1,92 +1,92 @@
 # Vision
 
-## Ce que c'est
+## What it is
 
-thedev fait d'une **intention** un **résultat fini**, produit par des agents, **sur tes propres machines** — et te laisse aux commandes du tout.
+thedev turns an **intention** into a **finished result**, produced by agents, **on your own machines**, and keeps you in control of the whole thing.
 
-Une session = un contexte borné (un TP, un projet perso, un backend en prod) où un agent télécharge, range, lance, déploie, et te rend un livrable. Toi tu décides, tu vérifies, tu possèdes. Tu ne *tapes* pas le travail : tu le **diriges** et tu en **réponds**.
+A session is a bounded context (a school assignment, a side project, a production backend) where an agent downloads, organizes, runs, deploys, and hands you a deliverable. You decide, you check, you own. You do not *type* the work: you **direct** it and you **answer** for it.
 
-## Le cœur (fixe)
+## The core (fixed)
 
-C'est l'invariant. Il ne bouge pas — c'est l'étoile polaire de toutes les décisions.
+This is the invariant. It does not move: it is the reference point for every decision.
 
-> Une intention → une session où un agent fait le travail de bout en bout, sur la bonne machine → un résultat fini que tu possèdes, **toi aux commandes, sur ton infra, à coût maîtrisé**.
+> An intention → a session where an agent does the work end to end, on the right machine → a finished result that you own, **with you in control, on your infrastructure, at a controlled cost**.
 
-Et son centre de gravité durable : **pas** « l'agent exécute » — ça, les labos le rendront banal et gratuit, on le *consomme* — mais **tu gardes la main, la confiance et le coût** sur ce qu'il produit.
+And its lasting center of gravity: **not** "the agent executes" (the labs will make that commonplace and free, and we *consume* it) but **you keep control, trust and cost** over what it produces.
 
-En une ligne : **thedev est l'instrument de la part qui ne s'automatise pas** — décider quoi faire, vérifier que c'est bon, posséder le résultat, en répondre.
+In one line: **thedev is the tool for the part that does not get automated**: deciding what to do, checking that it is right, owning the result, answering for it.
 
-## La surface (remplaçable)
+## The surface (replaceable)
 
-Tout le reste est un habit de 2026, échangeable sans toucher au cœur :
+Everything else is 2026 packaging, swappable without touching the core:
 
-- le terminal / zellij / la TUI
-- Claude Code comme moteur
-- le mot « dev »
-- l'interface actuelle (picker, Remote Control, missions…)
+- the terminal / zellij / the TUI
+- Claude Code as the engine
+- the word "dev"
+- the current interface (picker, Remote Control, tasks…)
 
-Si un meilleur moteur sort, thedev l'adopte. Si l'interface devient vocale ou ambiante, le cœur tient quand même. Ne jamais confondre l'habit avec le corps.
+If a better engine comes out, thedev adopts it. If the interface becomes voice-based or ambient, the core still holds. Never confuse the packaging with the substance.
 
-## Le pari
+## The bet
 
-Plus les modèles deviennent forts, plus on fait tourner d'agents en parallèle, plus le goulot se déplace :
+The stronger the models get, the more agents run in parallel, and the more the bottleneck shifts:
 
-- de **« est-ce que l'agent sait faire »** — résolu par les labos, de mieux en mieux —
-- vers **« est-ce que je peux superviser, faire confiance, payer et orchestrer N agents sur mes machines »** — jamais résolu par les labos, parce que c'est contre leur intérêt (ils vendent le cerveau, pas ta tour de contrôle), et qui **grandit** avec l'autonomie.
+- from **"can the agent do it"** (solved by the labs, better and better)
+- to **"can I supervise, trust, pay for and coordinate N agents on my machines"**: never solved by the labs, because it goes against their interest (they sell the brain, not your control tower), and it **grows** with autonomy.
 
-thedev parie sur le second. Donc **chaque saut de capacité modèle est un vent dans le dos, pas une menace.**
+thedev bets on the second. So **every jump in model capability is a tailwind, not a threat.**
 
-## Diriger une armée d'agents (la doctrine de commandement)
+## Running many agents (the organization model)
 
-Le pari ci-dessus pose la question — *superviser, faire confiance, orchestrer N agents* — sans y répondre. Voici la réponse, et c'est l'inverse de ce que font les labos.
+The bet above raises the question (*supervise, trust, coordinate N agents*) without answering it. Here is the answer, and it is the opposite of what the labs do.
 
-**Décomposition descendante vs agrégation ascendante.** Un agent classique, face à une tâche trop grosse, **fabrique des exécutants sous lui** : éphémères, ils font un bout, rendent un résultat, meurent. L'arbre naît de la *tâche* et pousse vers le *bas*. thedev fait l'inverse : face à trop d'**équipes réelles** à commander, tu fabriques du **commandement au-dessus**. Les feuilles sont de vrais soldats qui bossent en continu sur de vrais projets ; les nœuds au-dessus ne *font* pas le travail, ils **répartissent l'attention** et **font circuler** — ordres vers le bas, renseignement vers le haut. On ne crée pas des sous-fifres, on crée des **chefs**.
+**Top-down decomposition vs bottom-up aggregation.** A typical agent, facing a task that is too big, **creates workers below itself**: short-lived, they do a piece, return a result, and end. The tree grows from the *task* and extends *downward*. thedev does the opposite: when you have too many **real workspaces** to direct, you create **leads above** them. The leaves are real agents working continuously on real projects; the nodes above do not *do* the work, they **distribute attention** and **relay information**: directives going down, status going up. We do not create subordinates, we create **leads**.
 
-**Le plat n'est pas renversé : c'est la loi *dans* l'équipe.** Une session = une **équipe** = un groupe de soldats **pairs** qui bossent ensemble, sans chef interne. Permanent, inchangé. La hiérarchie ne descend **jamais** à l'intérieur d'une équipe ; elle organise les équipes **entre elles**. Un **chef** est au-dessus des équipes, pas dedans — et deux équipes sœurs restent pairs (elles ne se commandent pas l'une l'autre ; elles reportent à un chef, d'un autre rang). La grammaire d'armée **ajoute un axe vertical** au plat horizontal ; elle ne le remplace pas.
+**Flat is not overturned: it is the rule *inside* a workspace.** A session is a **workspace**: a group of **peer** agents working together, with no internal lead. This is permanent and unchanged. The hierarchy **never** goes down inside a workspace; it organizes workspaces **relative to each other**. A **lead** sits above workspaces, never inside one, and two sibling workspaces stay peers (they do not direct each other; they report to a lead, one level up). The org model **adds a vertical axis** to the horizontal flat structure; it does not replace it.
 
-**Une hiérarchie qui respire.** L'axe vertical n'est pas figé : il grandit et se replie avec la charge, symétrique sur trois axes.
+**A hierarchy that grows and shrinks.** The vertical axis is not fixed: it grows and folds back with the load, symmetrically on three axes.
 
-| Inspiration | Expiration |
+| Growing | Shrinking |
 |---|---|
-| **Scinder** — span trop large → promouvoir un sous-chef | **Fusionner** — span trop maigre → replier, rendre les tours |
-| **Raid** — tu plonges dans une équipe, la chaîne s'informe et se range | **Retrait** — tu débriefes vers le haut, le chef reprend |
-| **Ordres** ↓ — l'intention du chef redescend | **Renseignement** ↑ — l'état remonte, agrégé et résumé |
+| **Split**: span too wide → promote a sub-lead | **Merge**: span too thin → fold back, give the turns back |
+| **Step in**: you take over a workspace, the chain is informed and stands aside | **Step out**: you report upward, the lead takes over again |
+| **Directives** ↓: the lead's intent goes down | **Status** ↑: state goes up, aggregated and summarized |
 
-**Le général n'est jamais prisonnier de sa propre armée.** Deux privilèges absolus :
-- *Court-circuit libre* — tu prends la tête de n'importe quelle équipe sans demander à personne. Ta présence est un **fait**, pas une requête : la chaîne **s'informe** (drapeau de présence qui remonte) et **se range** (le chef responsable suspend ses ordres sur cette équipe), elle ne t'**autorise** pas.
-- *Disparition intelligente* — tu quittes en **flushant un débrief vers le haut** (ce que tu as changé, l'état, les ordres en cours) ; le drapeau tombe, le chef reprend avec le contexte. Jamais un départ muet : même une fermeture brutale flushe un débrief minimal.
+**The owner is never locked in by their own organization.** Two absolute privileges:
+- *Free bypass*: you take over any workspace without asking anyone. Your presence is a **fact**, not a request: the chain is **informed** (a presence flag goes up) and **stands aside** (the responsible lead suspends its directives on that workspace); it does not **authorize** you.
+- *Clean exit*: you leave by **flushing a report upward** (what you changed, the state, the directives in progress); the flag drops, the lead takes over with the context. Never a silent exit: even an abrupt close flushes a minimal report.
 
-**Les murs, assumés.** Cette doctrine a un prix, et on le dit :
-- **Plafond d'abonnement** — chaque chef est une vraie session qui brûle des tours sur ton abo. L'armée ne peut pas grossir sans fin ; son coût permanent doit rester ∝ la charge. C'est *pourquoi* la fusion est vitale, pas optionnelle. « À l'infini » est un asymptote ; 2–3 étages, le réel.
-- **Latence de remontée** — l'info monte au *tour* de chaque nœud ; profondeur × cadence = fraîcheur de la vue au sommet.
-- **Hystérésis** — scinder à N, fusionner bien en dessous de M, sinon l'arbre oscille.
-- **Compression** — chaque étage résume ; le débrief **lie les artefacts** (transcript, fichiers) pour re-creuser sans perte. Avantage natif du socle bash + fichiers.
+**The limits, stated openly.** This model has a cost, and we say so:
+- **Subscription ceiling**: each lead is a real session that burns turns on your subscription. The organization cannot grow without bound; its permanent cost must stay ∝ the load. That is *why* merging is vital, not optional. "Infinitely" is an asymptote; 2 or 3 levels is reality.
+- **Upward latency**: information goes up at each node's *turn*; depth × cadence = freshness of the view at the top.
+- **Hysteresis**: split at N, merge well below M, otherwise the tree oscillates.
+- **Compression**: each level summarizes; the report **links the artifacts** (transcript, files) so you can dig back in without loss. A native advantage of the bash + files foundation.
 
-**Le garde-fou.** Cette auto-organisation n'est *pas* l'autonomie qu'on refuse (cf. Non-buts) : elle ne décide jamais *quoi produire*, elle gère seulement *la portée de ton attention*. Tu es toujours la racine, l'intention part toujours de toi, tu peux toujours court-circuiter. La hiérarchie **sert** ta main, elle ne la **remplace** pas. Le jour où elle déciderait à ta place, ce serait un bug, pas une feature.
+**The safeguard.** This self-organization is *not* the autonomy we reject (see Non-goals): it never decides *what to produce*, it only manages *the scope of your attention*. You are always the root, the intention always comes from you, you can always bypass. The hierarchy **serves** your control, it does not **replace** it. The day it decides in your place, that is a bug, not a feature.
 
-## Principes de conception
+## Design principles
 
-1. **Moteur-agnostique** *(direction, pas état actuel)*. thedev orchestre un moteur ; il n'EST pas le moteur. Réduire les dépendances dures aux internals d'un CLI précis, pour qu'un changement de moteur n'impose pas une réécriture. État des lieux du couplage actuel et plan d'abstraction : [`ENGINE-COUPLING.md`](ENGINE-COUPLING.md).
-2. **Primitives qui survivent.** Miser sur les briques ops/sysadmin qui vaudront autant dans cinq ans qu'aujourd'hui : l'**espace** (unité de travail), la **vue de flotte**, la **mission** (dispatch entre machines), le **crun** (tâche longue), les **secrets isolés**, la **conscience coût/quota**.
-3. **Consommer le cerveau, pas le reconstruire.** Mémoire native, planification, autonomie, multimodal : quand les labos les livrent, thedev les *expose*, il ne les réimplémente pas.
-4. **Humain aux commandes.** Tout ce qui est irréversible, coûteux ou sensible reste sous décision humaine. Secrets hors chat. Une fermeture qui montre d'abord ce qu'elle coupe.
-5. **Sur ton infra, sur ton abo, auditable.** Tes machines, ton abonnement (pas d'API), zéro port ouvert, bash + fichiers lisibles. Pas de boîte noire, pas de cloud loué.
-6. **Léger.** TUI minimale, empreinte basse — pour faire tourner beaucoup d'agents sans saturer.
+1. **Engine-agnostic** *(direction, not current state)*. thedev orchestrates an engine; it IS NOT the engine. Reduce hard dependencies on the internals of a specific CLI, so that changing engines does not force a rewrite. Current coupling and abstraction plan: [`ENGINE-COUPLING.md`](ENGINE-COUPLING.md).
+2. **Primitives that last.** Bet on ops/sysadmin building blocks that will be worth as much in five years as today: the **workspace** (unit of work), the **fleet view**, the **task** (dispatch between machines), the **job** (long-running process), **isolated secrets**, **cost/quota awareness**.
+3. **Consume the brain, do not rebuild it.** Native memory, planning, autonomy, multimodal: when the labs ship them, thedev *exposes* them, it does not reimplement them.
+4. **Human in control.** Anything irreversible, costly or sensitive stays under human decision. Secrets out of the chat. A close that first shows what it will cut.
+5. **On your infrastructure, on your subscription, auditable.** Your machines, your subscription (no API), zero open ports, readable bash + files. No black box, no rented cloud.
+6. **Lightweight.** Minimal TUI, low footprint, to run many agents without saturating.
 
-## Non-buts
+## Non-goals
 
-thedev ne cherche **pas** à :
+thedev does **not** try to:
 
-- être un agent plus intelligent → c'est le terrain des labos, on le consomme ;
-- être autonome / se self-améliorer tout seul → le but est que *tu* gardes la main ;
-- être multi-modèles universel → choix assumé, centré sur ton abo ;
-- être un assistant grand public multi-messageries → le pilotage passe par l'app officielle, pas par un bot-shell (moins de surface d'attaque) ;
-- devenir un produit à vendre → thedev est un **moteur de production**, pas une marchandise. Sa valeur = ce que *tu* fabriques avec, qui s'accumule.
+- be a smarter agent → that is the labs' territory, we consume it;
+- be autonomous / self-improve on its own → the point is that *you* stay in control;
+- be universally multi-model → a deliberate choice, centered on your subscription;
+- be a consumer assistant across messaging apps → control goes through the official app, not through a bot shell (smaller attack surface);
+- become a product to sell → thedev is a **production engine**, not a commodity. Its value is what *you* build with it, which accumulates.
 
-## Comment ça évolue
+## How it evolves
 
-Le cœur ne bouge pas. La surface, oui — et c'est voulu. Question-filtre à chaque ajout :
+The core does not move. The surface does, on purpose. Filter question for every addition:
 
-- ça renforce « tu gardes la main / la confiance / le coût » ? → **cœur**, on investit.
-- ça reconstruit ce que les labos vont livrer ? → **on attend**, on consommera.
-- ça nous couple en dur à un moteur précis ? → **à abstraire**.
+- does it strengthen "you keep control / trust / cost"? → **core**, we invest.
+- does it rebuild what the labs will ship? → **we wait**, we will consume it.
+- does it hard-couple us to a specific engine? → **to abstract**.

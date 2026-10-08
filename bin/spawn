@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# @thedev session ouvre un soldat secondaire empile (aside) sans toucher la session
-# renfort — ouvre un soldat SUPPLÉMENTAIRE (numéroté : claude 2, claude 3…)
-# dans la stack du tab courant, sans toucher au soldat principal ni à sa session
+# @thedev session opens an extra stacked agent (aside) without touching the session
+# spawn — ouvre un agent SUPPLÉMENTAIRE (numéroté : claude 2, claude 3…)
+# dans la stack du tab courant, sans toucher à l'agent principal ni à sa session
 # (pas de `dev`, donc pas d'écrasement).
 #
 # À lancer depuis le pane `shell` :
@@ -9,14 +9,14 @@
 #   aside -f        # version flottante (overlay) au lieu de la stack
 #   aside <dir>     # dans un autre dossier
 #
-# Pour FERMER un soldat secondaire : tape simplement /exit dedans → le pane se
+# Pour FERMER un agent secondaire : tape simplement /exit dedans → le pane se
 # ferme tout seul (close-on-exit). Aucun raccourci à retenir.
 #
 # Session NEUVE (CLAUDE_RESUME_ID forcé vide). Le nouveau pane est inséré dans la
 # stack et remonté au-dessus de shell/git (best-effort : zellij CLI ne permet pas
 # un placement exact garanti — ajuste MOVE_UP si l'ordre n'est pas bon).
 
-[ -n "${ZELLIJ:-}" ] || { echo "renfort : pas dans une session zellij." >&2; exit 1; }
+[ -n "${ZELLIJ:-}" ] || { echo "spawn: not inside a zellij session." >&2; exit 1; }
 
 float=""
 dir="$(pwd -P)"
@@ -39,7 +39,7 @@ else
   count=$(zellij action dump-layout 2>/dev/null | grep -cE 'name="claude')
   [ "$count" -lt 1 ] 2>/dev/null && count=1
   name="claude $((count + 1))"
-  # Sur un VPS distant : même repère que le soldat principal (« claude N [indice] »).
+  # Sur un VPS distant : même repère que l'agent principal (« claude N [indice] »).
   [ -f "$HOME/.config/dev-vps" ] && name="$name [$(cat "$HOME/.config/dev-vps")]"
 fi
 
@@ -65,9 +65,9 @@ if [ -n "$float" ]; then
 fi
 
 # `--stacked` s'empile sur le pane FOCUS. Or le focus peut être ailleurs — dans
-# la colonne de gauche (sidebar), par exemple : le nouveau soldat atterrissait
+# la colonne de gauche (sidebar), par exemple : le nouveau agent atterrissait
 # alors à GAUCHE au lieu de rejoindre ses pairs. On vise donc explicitement
-# l'ancre posée par le soldat principal (bin/soldat-pane) avant d'empiler.
+# l'ancre posée par l'agent principal (bin/agent-pane) avant d'empiler.
 # Pas d'ancre (vieille session, layout tiers) → on retombe sur le focus courant.
 _anchor="$HOME/.cache/thedev/front-stack/$(printf '%s' "${ZELLIJ_SESSION_NAME:-$(basename "$(pwd -P)")}" | tr -c 'A-Za-z0-9._-' '_')"
 if [ -r "$_anchor" ]; then
@@ -75,7 +75,7 @@ if [ -r "$_anchor" ]; then
   [ -n "$_pid" ] && zellij action focus-pane-id "$_pid" 2>/dev/null
 fi
 
-# S'empile dans la stack des soldats (au-dessus de la barre ＋, qui est un pane
+# S'empile dans la stack des agents (au-dessus de la barre ＋, qui est un pane
 # fixe à part). La barre étant structurellement sous la stack, le ＋ reste
 # toujours en dessous de tous les claudes — pas besoin de repositionner.
 zellij run --stacked --close-on-exit --name "$name" --cwd "$dir" -- bash -lc "$WRAP"

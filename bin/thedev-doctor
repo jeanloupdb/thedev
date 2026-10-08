@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# @thedev infra diagnostic d'installation : deps, scripts symlinkés, engine, hooks, lancement
+# @thedev infra install diagnostic: deps, symlinked scripts, engine, hooks, launch
 # thedev-doctor — vérifie qu'une install thedev est complète et cohérente. Read-only :
 # il diagnostique et pointe quoi relancer, il ne répare rien lui-même.
 set -u
@@ -16,44 +16,44 @@ hr() { printf '\033[2m── %s ──\033[0m\n' "$1"; }
 
 printf 'thedev doctor — %s\n\n' "$ROOT"
 
-hr "dépendances"
+hr "dependencies"
 for d in zellij claude nvim python3 git jq fzf inotifywait; do
-  command -v "$d" >/dev/null 2>&1 && ok "$d" || ko "$d manquant"
+  command -v "$d" >/dev/null 2>&1 && ok "$d" || ko "$d missing"
 done
 
-hr "scripts @thedev sur le PATH (~/.local/bin)"
+hr "@thedev scripts on the PATH (~/.local/bin)"
 miss=""
 for b in $("$ROOT/bin/thedev-manifest" --scripts 2>/dev/null); do
   [ -e "$HOME/.local/bin/$b" ] || miss="$miss $b"
 done
-if [ -z "$miss" ]; then ok "tous les scripts @thedev présents"
-else wa "absent(s) de ~/.local/bin :$miss → relance ./install.sh"; fi
+if [ -z "$miss" ]; then ok "all @thedev scripts present"
+else wa "missing from ~/.local/bin:$miss → rerun ./install.sh"; fi
 
-hr "engine (adaptateur moteur)"
+hr "engine (engine adapter)"
 if command -v engine >/dev/null 2>&1; then
   if engine selftest >/dev/null 2>&1; then ok "engine selftest PASS"
-  else wa "engine présent mais selftest non-PASS → lance 'engine selftest'"; fi
-else ko "engine absent du PATH → relance ./install.sh"; fi
+  else wa "engine present but selftest not PASS → run 'engine selftest'"; fi
+else ko "engine not on the PATH → rerun ./install.sh"; fi
 
 hr "hooks Claude (settings.json)"
-if grep -q 'soldat-track' "$HOME/.claude/settings.json" 2>/dev/null; then ok "hook soldat-track câblé"
-else wa "hook non câblé → registre/busy/pulse/nudge désactivés (relance ./install.sh)"; fi
+if grep -q 'agent-track' "$HOME/.claude/settings.json" 2>/dev/null; then ok "agent-track hook wired"
+else wa "hook not wired → registry/busy/pulse/nudge disabled (rerun ./install.sh)"; fi
 
-hr "lancement"
-if grep -q 'dev-launcher' "$HOME/.bashrc" 2>/dev/null; then ok "dev-launcher sourcé dans ~/.bashrc"
-else wa "dev-launcher non sourcé → la commande 'dev' est indisponible (relance ./install.sh)"; fi
+hr "launch"
+if grep -q 'dev-launcher' "$HOME/.bashrc" 2>/dev/null; then ok "dev-launcher sourced in ~/.bashrc"
+else wa "dev-launcher not sourced → the 'dev' command is unavailable (rerun ./install.sh)"; fi
 
-hr "zellij (layout / config / thème)"
+hr "zellij (layout / config / theme)"
 for l in config.kdl layouts/dev.kdl; do
-  [ -e "$HOME/.config/zellij/$l" ] && ok "zellij/$l" || wa "zellij/$l absent (relance ./install.sh)"
+  [ -e "$HOME/.config/zellij/$l" ] && ok "zellij/$l" || wa "zellij/$l missing (rerun ./install.sh)"
 done
 
 echo
 if [ "$fail" -eq 0 ] && [ "$warn" -eq 0 ]; then
-  printf '\033[32mOK — install complète\033[0m (%d vérifs)\n' "$pass"
+  printf '\033[32mOK: install complete\033[0m (%d checks)\n' "$pass"
 elif [ "$fail" -eq 0 ]; then
-  printf '\033[33m%d avertissement(s)\033[0m (%d ok)\n' "$warn" "$pass"
+  printf '\033[33m%d warning(s)\033[0m (%d ok)\n' "$warn" "$pass"
 else
-  printf '\033[31m%d problème(s) bloquant(s)\033[0m (%d ok, %d warn)\n' "$fail" "$pass" "$warn"
+  printf '\033[31m%d blocking problem(s)\033[0m (%d ok, %d warn)\n' "$fail" "$pass" "$warn"
 fi
 [ "$fail" -eq 0 ]

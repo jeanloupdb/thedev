@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# @thedev session pane shell perso de my space (badge VPS)
+# @thedev session personal shell pane of my space (VPS badge)
 # shell-pane — pane shell perso de la page « my space ». Se comporte comme un
 # shell zellij normal ; en plus, sur un serveur distant, le titre du pane devient
 # le marqueur VPS rouge (🔴 <label>) au lieu de « shell » — le 🔴 porte la

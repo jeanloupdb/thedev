@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# @thedev session pane nvim de la code page (badge VPS)
+# @thedev session nvim pane of the code page (VPS badge)
 # Same as claude-pane but for nvim. Preloads `nvim <args>` in the fallback
 # shell's history so ↑ relaunches the editor.
 

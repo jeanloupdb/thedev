@@ -1,6 +1,6 @@
-# thedev-machines — hôtes ssh sondés par thedev-status (1 par ligne, # = commentaire).
-# Copie ce fichier en 'thedev-machines' et mets TES machines. La locale est toujours incluse.
-# La PREMIÈRE ligne est le serveur par défaut de `srv` (surcharge : SRV_HOST=…).
-# Sans ce fichier, thedev reste purement local : ni board cross-machine, ni `srv`.
-# mon-serveur
-# autre-machine
+# thedev-machines: ssh hosts probed by thedev-status (1 per line, # = comment).
+# Copy this file to 'thedev-machines' and put YOUR machines in it. The local one is always included.
+# The FIRST line is the default server for `srv` (override: SRV_HOST=…).
+# Without this file, thedev stays purely local: no cross-machine board, no `srv`.
+# my-server
+# other-machine

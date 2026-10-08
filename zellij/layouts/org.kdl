@@ -1,17 +1,18 @@
 layout {
-    // Cockpit COMMANDEMENT — une page : à GAUCHE l'arbre de commandement navigable
-    // (commandement-nav), à DROITE le Claude du chef sélectionné (commandement-driver).
-    // Session dédiée `commandement`, ouverte depuis l'accueil (⌘ commandement).
+    // Cockpit ORG — une page : à GAUCHE l'org tree navigable
+    // (org-nav), à DROITE le Claude du lead sélectionné (org-driver).
+    // Session dédiée `org`, ouverte depuis l'home (⌘ org).
     default_tab_template {
         children
         // Même barre que la page dev : le losange ◆ et l'alerte « ⚠ action t'attend »
-        // du chef (QCM) s'y affichent aussi.
+        // du lead (QCM) s'y affichent aussi.
         pane size=1 borderless=true {
             plugin location="file:~/.config/zellij/plugins/zjstatus.wasm" {
                 format_left  "#[bg=#000000,fg=#8ed68e,bold] 󰉋 {session} #[bg=#000000,fg=#4a4a4a]│#[bg=#000000,fg=#808080]  {tabs}{pipe_wait}"
                 format_right "#[bg=#000000]{mode}#[bg=#000000,fg=#607a60,bold] {swap_layout} "
                 format_space "#[bg=#000000]"
                 border_enabled "false"
+                pane_frame_style "full"   // zjstatus 0.25 : doit refléter config.kdl (défaut « titles » sinon)
                 pipe_wait_format "{output}"
                 pipe_wait_rendermode "dynamic"
                 mode_normal "#[fg=#808080,bg=#000000] {name} "
@@ -21,10 +22,10 @@ layout {
         }
     }
 
-    tab name="commandement" focus=true {
+    tab name="org" focus=true {
         pane split_direction="vertical" {
-            pane size="34%" name="commandement" command="~/.local/bin/commandement-nav"
-            pane name="chef" command="~/.local/bin/commandement-driver"
+            pane size="34%" name="org-tree" command="~/.local/bin/org-nav"
+            pane name="lead" command="~/.local/bin/org-driver"
         }
     }
 }

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# @thedev ui landing animée du boot d'un pane claude — île nature + oiseaux
+# @thedev ui animated boot screen of a claude pane (nature island and birds)
 # Scène générée à CHAQUE lancement : une ÎLE verte flottante, centrée dans
 # l'océan noir de l'écran (relief, arbres façon Minecraft, herbe), dans le code
 # couleur du logo (dégradé de verts). Vivante : deux oiseaux traversent le ciel
 # en battant des ailes, l'herbe ondule, les feuillages frémissent, les étoiles
-# scintillent. Citation de stratège en pied, tirée au hasard. Tourne jusqu'à
-# être tué (soldat-pane l'arrête quand claude prend l'écran) ; pane trop petit
+# scintillent. Phrase en pied, tirée au hasard. Tourne jusqu'à
+# être tué (agent-pane l'arrête quand claude prend l'écran) ; pane trop petit
 # → spinner minimal.
 set -u
 
@@ -18,11 +18,11 @@ BROWN=94
 Z=$'\033[0m'; D=$'\033[2m'
 
 QUOTES=(
-'« La rapidité est l’essence de la guerre. » — Sun Tzu'
-'« L’art suprême de la guerre est de soumettre l’ennemi sans combattre. » — Sun Tzu'
-'« Qui veut la paix prépare la guerre. » — Végèce'
-'« N’interrompez jamais un ennemi qui est en train de faire une erreur. » — Napoléon'
-'« La stratégie est un système d’expédients. » — Moltke'
+'Make it work, make it right, make it fast.'
+'Small steps, shipped often.'
+'Read the error message first.'
+'The best code is the code you can delete.'
+'Write it down, then build it.'
 )
 quote=${QUOTES[RANDOM % ${#QUOTES[@]}]}
 
@@ -176,7 +176,7 @@ scene() {  # (re)génère l'île + dessine tout le statique pour cols×lines
     SX+=("$x"); SY+=("$r")
     at "$r" "$x" "${D}·${Z}"
   done
-  # — citation de stratège, en pied
+  # — phrase en pied
   local q=$quote
   (( ${#q} > cols - 2 )) && q=${q:0:cols-2}
   local qc=$(( (cols - ${#q}) / 2 )); (( qc < 1 )) && qc=1

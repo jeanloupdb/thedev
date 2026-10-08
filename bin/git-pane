@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# @thedev session pane git-centric (alias g/gs)
+# @thedev session git-centric pane (aliases g/gs)
 # git-pane — dashboard git minimaliste au boot, puis shell git-centric.
 # Tu vois immédiatement : branche, ahead/behind, modifs, 5 derniers commits.
 # Commandes utiles : `g`/`gs` (refresh), `lg` (lazygit pour interagir).
@@ -16,7 +16,7 @@ GIT_FN="$THEDEV_ROOT/bash/git-functions.sh"
 if command -v git_status >/dev/null 2>&1; then
   git_status
 else
-  echo "[git-pane] git-functions.sh introuvable."
+  echo "[git-pane] git-functions.sh not found."
 fi
 
 # Shell interactif avec les alias

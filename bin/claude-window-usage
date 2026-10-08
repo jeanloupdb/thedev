@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# @thedev infra % d'utilisation de la fenêtre de rate-limit Max 5x (5h/7d) — GRATUIT
+# @thedev infra usage % of the Max 5x rate-limit window (5h/7d), FREE
 # Source : endpoint OAuth interne que Claude Code utilise lui-même
 #   GET https://api.anthropic.com/api/oauth/usage   (Bearer = token abonnement)
 # C'est un GET de MÉTADONNÉES : zéro inférence, zéro token, zéro crédit (≠ claude -p).

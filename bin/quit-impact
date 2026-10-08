@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# @thedev session what closing this workspace will stop (Ctrl+Q), one fact per line
+# quit-impact <workspace> — texte NU : ni glyphe, ni couleur, ni ponctuation de
+# liaison. C'est l'appelant (quit-menu) qui choisit la formulation et le rendu ;
+# ici on ne produit que des morceaux de phrase (« 2 jobs », « automation X »),
+# assemblables tels quels. Rien du tout si le workspace est inerte.
+# Le workspace == le nom de session zellij (cf. workspace_name).
+set -u
+eq="${1:-}"; [ -n "$eq" ] || exit 0
+ROOT="$HOME/.cache/thedev"
+
+nm=$(find "$ROOT/spaces/$eq/work" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)
+[ "${nm:-0}" -gt 0 ] && printf '%s task%s\n' "$nm" "$([ "$nm" -gt 1 ] && echo s)"
+
+if command -v job >/dev/null 2>&1; then
+  na=$(job list 2>/dev/null | awk '/^● /{ if ($2 !~ /^link-/ && $2 !~ /^task-/) c++ } END{print c+0}')
+  [ "${na:-0}" -gt 0 ] && printf '%s job%s\n' "$na" "$([ "$na" -gt 1 ] && echo s)"
+fi
+
+# Automatisations rattachées : on ne cite QUE celles qui tournent. Une automatisation déjà arrêtée
+# n'est pas coupée par la fermeture — la nommer ferait craindre une perte qui
+# n'existe pas. Le watcher lui-même n'est jamais listé (plomberie interne).
+if [ -f "$ROOT/links/$eq" ]; then
+  wpid=$(sed -n 's/^watcher_pid=//p' "$ROOT/links/$eq" 2>/dev/null | head -1)
+  if [ -n "$wpid" ] && kill -0 "$wpid" 2>/dev/null && command -v automation-list >/dev/null 2>&1; then
+    while IFS=$'\t' read -r state name _n _l e _cwd _desc open; do
+      [ "$e" = "$eq" ] || continue
+      [ "$open" = 1 ] || continue
+      case "$state" in running|active) printf 'automation %s\n' "$name";; esac
+    done < <(automation-list 2>/dev/null)
+  fi
+fi

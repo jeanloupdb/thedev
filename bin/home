@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# @thedev etat-major selecteur de machine/projet au lancement (fzf, multi-serveurs)
-"""etat-major — sélecteur de session/dossier à deux panneaux (TUI maison).
+# @thedev home machine/project picker at startup (fzf, multi-server)
+"""home — sélecteur de session/dossier à deux panneaux (TUI maison).
 
 Panneau gauche = liste (sessions ou dossiers), panneau droit = actions.
 ←/→ changent de panneau, ↑/↓ naviguent, Entrée valide, tape pour filtrer,
@@ -24,8 +24,8 @@ import threading
 import time
 
 # Adaptateur moteur (engine list …) résolu en VOISIN de ce script (relocatable) :
-# etat-major n'a plus à connaître l'emplacement ni le schéma des transcripts du
-# moteur — il demande la liste des équipes à `engine`.
+# home n'a plus à connaître l'emplacement ni le schéma des transcripts du
+# moteur — il demande la liste des workspaces à `engine`.
 ENGINE = os.path.join(os.path.dirname(os.path.realpath(__file__)), "engine")
 
 
@@ -68,25 +68,25 @@ def live_sessions():
 
 
 def fetch_remote_claudes(host):
-    """SSH : lit ~/.cache/soldats d'un serveur → sessions de dev ouvertes et
+    """SSH : lit ~/.cache/agents d'un serveur → sessions de dev ouvertes et
     leurs panes Claude. Comme les sessions serveur sont auto-remote-control, ce
     sont les « remote controls dispo ». Renvoie {"sessions":[{name,cwd,panes,
     busy}]} ou {"error":"…"}. (TSV id⇥cwd⇥role⇥nom_pane⇥session⇥started⇥ended ;
     ended==0 → Claude encore ouvert.) Un pane est « busy » (en train de répondre)
-    si son sid a un marqueur frais dans ~/.cache/soldat-busy (posé par le
+    si son sid a un marqueur frais dans ~/.cache/agent-busy (posé par le
     hook sur UserPromptSubmit, retiré sur Stop). ControlMaster → re-fetch rapides
     pour le rafraîchissement live."""
     sep, sep2, sep3, sep4 = "@@@BUSY@@@", "@@@RC@@@", "@@@LIVE@@@", "@@@SESS@@@"
     # 5 sections : registre · marqueurs busy · cwd des process en remote-control
-    # (pour le flag « remote ») · cwd de TOUS les process claude VIVANTS · équipes
+    # (pour le flag « remote ») · cwd de TOUS les process claude VIVANTS · workspaces
     # dont le WATCHER thedev-link est VIVANT (« eq\tcwd » par ligne). Le 4e bloc
     # compte les Claude ; le 5e dit si le THEDEV est encore actif/joignable même
-    # sans Claude interactif debout — c'est EXACTEMENT le signal des gardes
-    # (cf. garde-list : open ⟺ watcher_pid vivant), donc badge auto et liste sont
-    # cohérents au pixel. On garde alors l'équipe visible (réattachable + ancre des
-    # autos) ; une équipe vraiment fermée (watcher mort) disparaît → fini les fantômes.
-    remote = ("cat ~/.cache/soldats 2>/dev/null; echo %s; "
-              "find ~/.cache/soldat-busy -type f -mmin -30 -printf '%%f\\n' 2>/dev/null; "
+    # sans Claude interactif debout — c'est EXACTEMENT le signal des automations
+    # (cf. automation-list : open ⟺ watcher_pid vivant), donc badge auto et liste sont
+    # cohérents au pixel. On garde alors le workspace visible (réattachable + ancre des
+    # autos) ; un workspace vraiment fermée (watcher mort) disparaît → fini les fantômes.
+    remote = ("cat ~/.cache/agents 2>/dev/null; echo %s; "
+              "find ~/.cache/agent-busy -type f -mmin -30 -printf '%%f\\n' 2>/dev/null; "
               "echo %s; "
               "for p in $(pgrep -f remote-control 2>/dev/null); do readlink /proc/$p/cwd 2>/dev/null; done; "
               "echo %s; "
@@ -105,19 +105,19 @@ def fetch_remote_claudes(host):
              "-o", "ControlPersist=30s", host, remote],
             capture_output=True, text=True, timeout=12)
     except subprocess.TimeoutExpired:
-        return {"error": "injoignable (timeout)"}
+        return {"error": "unreachable (timeout)"}
     except Exception:
-        return {"error": "injoignable"}
+        return {"error": "unreachable"}
     if proc.returncode != 0:
         # ssh n'a pas pu se connecter (box down, refus, auth…). Sans ce test on ne
         # lisait que .stdout (vide) → l'hôte passait pour « 0 session » et disparaissait
         # silencieusement. On classe la cause pour un retour clair à l'utilisateur.
         e = (proc.stderr or "").lower()
-        if "timed out" in e or "timeout" in e:                    reason = "injoignable (timeout)"
-        elif "refused" in e:                                      reason = "injoignable (refusé)"
-        elif "permission denied" in e or "publickey" in e:        reason = "auth refusée"
-        elif "could not resolve" in e or "name or service" in e:  reason = "hôte introuvable"
-        else:                                                     reason = "injoignable"
+        if "timed out" in e or "timeout" in e:                    reason = "unreachable (timeout)"
+        elif "refused" in e:                                      reason = "unreachable (refused)"
+        elif "permission denied" in e or "publickey" in e:        reason = "auth refused"
+        elif "could not resolve" in e or "name or service" in e:  reason = "host not found"
+        else:                                                     reason = "unreachable"
         return {"error": reason}
     out = proc.stdout
     reg, _, rest = out.partition(sep)
@@ -132,9 +132,9 @@ def fetch_remote_claudes(host):
         c = x.strip().rstrip("/")
         if c:
             live_count[c] = live_count.get(c, 0) + 1
-    # équipes dont le WATCHER thedev-link est VIVANT (= thedev actif/joignable, prêt à
-    # spawner un Claude pour une mission/auto). {cwd_normalisé: nom_equipe}. Même signal
-    # que garde-list → cohérence parfaite badge auto ↔ liste.
+    # workspaces dont le WATCHER thedev-link est VIVANT (= thedev actif/joignable, prêt à
+    # spawner un Claude pour une task/auto). {cwd_normalisé: ws_name}. Même signal
+    # que automation-list → cohérence parfaite badge auto ↔ liste.
     alive_watchers = {}
     for x in sess_raw.splitlines():
         x = x.rstrip("\n")
@@ -166,7 +166,7 @@ def fetch_remote_claudes(host):
         n = live_count.get(c.rstrip("/"), 0)
         watcher_alive = c.rstrip("/") in alive_watchers   # thedev actif (watcher vivant)
         if n <= 0 and not watcher_alive:
-            continue   # ni Claude vivant ni watcher → équipe fermée/fantôme, écartée
+            continue   # ni Claude vivant ni watcher → workspace fermée/fantôme, écartée
         if n > 0:
             # garde les n entrées les plus RÉCENTES : les fantômes (ended==0 jamais
             # nettoyés) sont forcément plus vieux que les panes réellement vivants.
@@ -175,7 +175,7 @@ def fetch_remote_claudes(host):
             g["panes"].sort(key=lambda x: x["role"] != "main")   # main d'abord (affichage)
             g["claude_dead"] = False
         else:
-            # watcher vivant mais AUCUN Claude interactif : équipe joignable (missions/
+            # watcher vivant mais AUCUN Claude interactif : workspace joignable (tasks/
             # autos), réattachable via srv. Le watcher rouvrira un Claude à la demande.
             g["panes"] = []
             g["claude_dead"] = True
@@ -184,7 +184,7 @@ def fetch_remote_claudes(host):
         # tourne dans ce cwd (détection live → couvre les sessions déjà ouvertes).
         g["remote"] = any(pn["rc"] for pn in g["panes"]) or c.rstrip("/") in rc_cwds
         sessions.append(g)
-    # Equipes avec un watcher vivant mais ABSENTES du registre (jamais eu de Claude, ou
+    # Workspaces avec un watcher vivant mais ABSENTES du registre (jamais eu de Claude, ou
     # registre purgé) : ajoutées pour que tout thedev actif/joignable soit visible.
     seen = {s["cwd"].rstrip("/") for s in sessions}
     for wcwd, eq in alive_watchers.items():
@@ -197,18 +197,18 @@ def fetch_remote_claudes(host):
 
 
 def fetch_autos(host):
-    """garde-list sur <host> ('local' = cette machine) → liste {state,name,next,last,machine}.
-    Une garde = un timer systemd --user thedev (cf. bin/garde-list). TSV en entrée."""
+    """automation-list sur <host> ('local' = cette machine) → liste {state,name,next,last,machine}.
+    Une automation = un timer systemd --user thedev (cf. bin/automation-list). TSV en entrée."""
     try:
         if host == "local":
-            out = subprocess.run(["garde-list"], capture_output=True, text=True, timeout=8).stdout
+            out = subprocess.run(["automation-list"], capture_output=True, text=True, timeout=8).stdout
             label = "local"
         else:
             out = subprocess.run(
                 ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes",
                  "-o", "ControlMaster=auto", "-o", "ControlPath=~/.ssh/dev-cm-%C",
                  "-o", "ControlPersist=30s", host,
-                 'PATH="$HOME/.local/bin:$PATH" garde-list'],
+                 'PATH="$HOME/.local/bin:$PATH" automation-list'],
                 capture_output=True, text=True, timeout=12).stdout
             label = host
     except Exception:
@@ -218,7 +218,7 @@ def fetch_autos(host):
         p = line.split("\t")
         if len(p) >= 4 and p[1]:
             autos.append({"state": p[0], "name": p[1], "next": p[2], "last": p[3],
-                          "equipe": p[4] if len(p) > 4 else "",
+                          "workspace": p[4] if len(p) > 4 else "",
                           "cwd": p[5] if len(p) > 5 else "",
                           "desc": p[6] if len(p) > 6 else "",
                           "open": (p[7] == "1") if len(p) > 7 else False,
@@ -228,7 +228,7 @@ def fetch_autos(host):
 
 # ----------------------------------------------------------------------------
 # Écran « infos » : contexte/version, état live, santé système, abonnement +
-# usage Claude. Toutes les données sont LOCALES (la machine où tourne l'etat-major).
+# usage Claude. Toutes les données sont LOCALES (la machine où tourne l'home).
 # ----------------------------------------------------------------------------
 def _read_file(path):
     try:
@@ -256,11 +256,11 @@ def fmt_reset(iso):
     now = datetime.datetime.now().astimezone()
     sec = int((t - now).total_seconds())
     if sec <= 0:
-        return "maintenant"
+        return "now"
     if sec < 86400:
         h, m = sec // 3600, sec % 3600 // 60
-        return "dans %d h %02d" % (h, m) if h else "dans %d min" % m
-    jours = ["lun.", "mar.", "mer.", "jeu.", "ven.", "sam.", "dim."]
+        return "in %dh%02d" % (h, m) if h else "in %d min" % m
+    jours = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     return "%s %s" % (jours[t.weekday()], t.strftime("%H:%M"))
 
 
@@ -281,7 +281,7 @@ def speedtest_data():
     d["cping"] = "" if p is None else ("grn" if p < 50 else ("yel" if p < 100 else "red"))
     age = max(0, int(time.time()) - d["ts"])
     d["age"] = ("<1 min" if age < 60 else "%d min" % (age // 60) if age < 3600
-                else "%d h" % (age // 3600) if age < 86400 else "%d j" % (age // 86400))
+                else "%d h" % (age // 3600) if age < 86400 else "%d d" % (age // 86400))
     return d
 
 
@@ -292,18 +292,18 @@ def speedtest_rows(d):
             if v >= seuil:
                 return txt
         return paliers[-1][1]
-    rows = [("kv", "descendant", ("%.0f Mb/s  %s" % (d["down"], palier(d["down"], [
-                (100, "plusieurs vidéos 4K"), (25, "vidéo 4K"), (10, "vidéo HD"),
-                (3, "navigation"), (0, "très lent")])), d["cdown"])),
-            ("kv", "montant", ("%.1f Mb/s  %s" % (d["up"], palier(d["up"], [
-                (10, "gros envois rapides"), (3, "visio HD"), (1, "visio basique"),
-                (0, "envois pénibles")])), d["cup"]))]
+    rows = [("kv", "download", ("%.0f Mb/s  %s" % (d["down"], palier(d["down"], [
+                (100, "several 4K videos"), (25, "4K video"), (10, "HD video"),
+                (3, "browsing"), (0, "very slow")])), d["cdown"])),
+            ("kv", "upload", ("%.1f Mb/s  %s" % (d["up"], palier(d["up"], [
+                (10, "fast big uploads"), (3, "HD video call"), (1, "basic video call"),
+                (0, "painful uploads")])), d["cup"]))]
     if d["ping"] is not None:
-        rows.append(("kv", "ping", ("%d ms  %s" % (d["ping"], "réactif" if d["ping"] < 50 else
-                     ("correct" if d["ping"] < 100 else "lent")), d["cping"])))
+        rows.append(("kv", "ping", ("%d ms  %s" % (d["ping"], "responsive" if d["ping"] < 50 else
+                     ("fine" if d["ping"] < 100 else "slow")), d["cping"])))
     if d["jit"] is not None:
-        rows.append(("kv", "gigue", "%d ms  (compte en visio et en jeu)" % d["jit"]))
-    rows.append(("kv", "mesuré", "il y a %s%s" % (d["age"], (" sur " + d["where"]) if d["where"] else "")))
+        rows.append(("kv", "jitter", "%d ms  (matters for video calls and games)" % d["jit"]))
+    rows.append(("kv", "measured", "%s ago%s" % (d["age"], (" on " + d["where"]) if d["where"] else "")))
     return rows
 
 
@@ -362,7 +362,7 @@ def bluetooth_infos(live=None):
         return []
     devs = [l.split(" ", 2)[1:] for l in out.splitlines() if l.startswith("Device ")]
     if not devs:
-        return [("kv", "bluetooth", ("aucun appareil connecté", ""))]
+        return [("kv", "bluetooth", ("no device connected", ""))]
     cache_dir = os.path.expanduser("~/.cache/thedev")
     for mac, name in devs:
         try:
@@ -374,7 +374,7 @@ def bluetooth_infos(live=None):
         icon = (re.search(r"Icon: (\S+)", info) or [None, ""])[1]
         label = name if len(name) <= 12 else name[:11] + "…"
         if m and "audio" in icon:
-            model = APPLE_PID.get(int(m.group(1), 16), "écouteurs Apple")
+            model = APPLE_PID.get(int(m.group(1), 16), "Apple earbuds")
             if live is not None:
                 a = live.get(mac) or {"bat": {}, "ear": None, "wait": True}
             else:
@@ -400,25 +400,25 @@ def bluetooth_infos(live=None):
                 except Exception:
                     case = None
             chips = []
-            for key, short in (("gauche", "G"), ("droite", "D")):
+            for key, short in (("gauche", "L"), ("droite", "R")):
                 v = bat.get(key)
                 if v and v[1] != 4:
                     chips.append((short, v[0], v[1]))
             if case:
-                chips.append(("boîtier", case[0], case[1] if case_age is None else 0))
+                chips.append(("case", case[0], case[1] if case_age is None else 0))
             if chips:
                 rows.append(("buds", label, chips, case_age))
             elif a.get("wait"):
-                rows.append(("kv", label, ("lecture…", "")))
+                rows.append(("kv", label, ("reading…", "")))
             else:
-                rows.append(("kv", label, ("connecté, batterie illisible", "")))
+                rows.append(("kv", label, ("connected, battery unreadable", "")))
         else:
             b = re.search(r"Battery Percentage: 0x[0-9a-fA-F]+ \((\d+)\)", info)
             if b:
                 p = int(b.group(1))
                 rows.append(("kv", label, ("%d %%" % p, "red" if p < 15 else "")))
             else:
-                rows.append(("kv", label, ("connecté", "")))
+                rows.append(("kv", label, ("connected", "")))
     return rows
 
 
@@ -429,10 +429,10 @@ def gather_infos(vps, update_available, head, bt_live=None):
     sections = []
 
     # ── thedev ──
-    claudes = [p for p in (l.split("\t") for l in _read_file("~/.cache/soldats").splitlines())
+    claudes = [p for p in (l.split("\t") for l in _read_file("~/.cache/agents").splitlines())
                if len(p) >= 7 and p[0] and p[6].strip() == "0"]
     neq = len({p[1] for p in claudes})
-    nsoutien = len([l for l in _read_file("~/.cache/thedev-soutien").splitlines() if l.strip()])
+    njobs = len([l for l in _read_file("~/.cache/thedev-jobs").splitlines() if l.strip()])
     autos_local = fetch_autos("local")
     nact = sum(1 for a in autos_local if a.get("state") in ("active", "running"))
     par_eq = {}
@@ -441,27 +441,27 @@ def gather_infos(vps, update_available, head, bt_live=None):
     dx = []
     for eq in sorted(par_eq):
         noms = par_eq[eq]
-        dx.append(("kv", eq if len(eq) <= 12 else eq[:11] + "…", "%d soldat%s   %s" % (
+        dx.append(("kv", eq if len(eq) <= 12 else eq[:11] + "…", "%d agent%s   %s" % (
             len(noms), "s" if len(noms) > 1 else "", ", ".join(noms)[:60])))
     if not par_eq:
-        dx.append(("kv", "équipes", "aucune ouverte"))
+        dx.append(("kv", "workspaces", "none open"))
     try:
-        sl = subprocess.run([os.path.expanduser("~/.local/bin/soutien"), "list"],
+        sl = subprocess.run([os.path.expanduser("~/.local/bin/job"), "list"],
                             capture_output=True, text=True, timeout=4).stdout
         vivants = [l.split()[1] for l in sl.splitlines() if l.startswith("●") and len(l.split()) > 1]
         morts = [l.split()[1] for l in sl.splitlines() if l.startswith("○") and len(l.split()) > 1]
     except Exception:
         vivants, morts = [], []
     dx.append("")
-    dx.append(("kv", "soutiens", ", ".join(vivants)[:60] if vivants else "aucun"))
+    dx.append(("kv", "jobs", ", ".join(vivants)[:60] if vivants else "none"))
     if morts:
-        dx.append(("kv", "soutiens morts", (", ".join(morts)[:60], "red")))
+        dx.append(("kv", "dead jobs", (", ".join(morts)[:60], "red")))
     sections.append(("thedev+", dx))
     sections.append(("thedev", [
-        ("kv", "version", ("%s  ↑ maj dispo" % (head or "?"), "yel") if update_available
+        ("kv", "version", ("%s  ↑ update available" % (head or "?"), "yel") if update_available
                           else ("%s  ✓" % (head or "?"), "grn")),
-        ("chips", "actifs", [(neq, "équipe", ""), (len(claudes), "soldat", ""),
-                             (nsoutien, "soutien", "")]),
+        ("chips", "active", [(neq, "workspace", ""), (len(claudes), "agent", ""),
+                             (njobs, "job", "")]),
     ]))
 
     # ── Claude (plan + fenêtre Max 5x via endpoint OAuth) ──
@@ -487,12 +487,12 @@ def gather_infos(vps, update_available, head, bt_live=None):
     for lm in lims:
         k = lm.get("kind")
         if k == "session":
-            lbl = "fenêtre 5h"
+            lbl = "5h window"
         elif k == "weekly_all":
-            lbl = "7 jours"
+            lbl = "7 days"
         elif k == "weekly_scoped":
-            mod = (((lm.get("scope") or {}).get("model") or {}).get("display_name")) or "modèle"
-            lbl = "7 j %s" % mod
+            mod = (((lm.get("scope") or {}).get("model") or {}).get("display_name")) or "model"
+            lbl = "7 d %s" % mod
         else:
             continue
         rs = fmt_reset(lm.get("resets_at") or "")
@@ -500,13 +500,13 @@ def gather_infos(vps, update_available, head, bt_live=None):
     bd = ((win.get("seven_day_breakdown") or {}).get("rows")) or []
     for r_ in bd:
         if r_.get("percent"):
-            cx.append(("kv", r_.get("display_name", "?")[:12], "%d %% de la semaine" % r_["percent"]))
+            cx.append(("kv", r_.get("display_name", "?")[:12], "%d %% of the week" % r_["percent"]))
     ex = win.get("extra_usage") or {}
-    cx.append(("kv", "extra", ("activés", "yel") if ex.get("is_enabled") else "désactivés"))
+    cx.append(("kv", "extra", ("enabled", "yel") if ex.get("is_enabled") else "disabled"))
     if acc:
-        cx.append(("kv", "compte", acc.get("emailAddress", "?")))
+        cx.append(("kv", "account", acc.get("emailAddress", "?")))
     if not cl:
-        cl.append("(pas de compte Claude détecté)")
+        cl.append("(no Claude account detected)")
     sections.append(("Claude", cl))
     sections.append(("Claude+", cx))
 
@@ -519,7 +519,7 @@ def gather_infos(vps, update_available, head, bt_live=None):
             mem[k] = int(v.split()[0]) if v.split() else 0
         tot, avail = mem.get("MemTotal", 0) / 1e6, mem.get("MemAvailable", 0) / 1e6
         if tot:
-            health.append(("gauge", "RAM", 100 * (tot - avail) / tot, "%.0f/%.0f Go" % (tot - avail, tot)))
+            health.append(("gauge", "RAM", 100 * (tot - avail) / tot, "%.0f/%.0f GB" % (tot - avail, tot)))
     except Exception:
         pass
     try:
@@ -540,7 +540,7 @@ def gather_infos(vps, update_available, head, bt_live=None):
                 continue
         try:
             du = shutil.disk_usage(mnt)
-            health.append(("gauge", "disque %s" % mnt, 100 * du.used / du.total, "%.0f Go" % (du.free / 1e9)))
+            health.append(("gauge", "disk %s" % mnt, 100 * du.used / du.total, "%.0f GB" % (du.free / 1e9)))
         except Exception:
             pass
     try:
@@ -563,9 +563,9 @@ def gather_infos(vps, update_available, head, bt_live=None):
             t, crit, fan, etouf = int(tp[1]), int(tp[2]), tp[3], tp[4] == "1"
             # La jauge est en % du seuil de bridage, mais on affiche le DEGRÉ : « 51 % »
             # de chaleur ne veut rien dire.
-            health.append(("gauge", "chaleur", 100.0 * t / crit, "", "%d°" % t))
+            health.append(("gauge", "heat", 100.0 * t / crit, "", "%d°" % t))
             if etouf:
-                health.append(("kv", "aération", ("bloquée", "red")))
+                health.append(("kv", "airflow", ("blocked", "red")))
     except Exception:
         pass
     try:
@@ -577,7 +577,7 @@ def gather_infos(vps, update_available, head, bt_live=None):
         ms = int(_read_file(thr + "package_throttle_total_time_ms") or 0)
         # Seulement s'ils pèsent (> 1 min cumulée) : quelques bridages brefs sont normaux.
         if n and ms > 60000:
-            health.append(("kv", "bridages", ("%d×  %.0f s" % (n, ms / 1000.0), "yel")))
+            health.append(("kv", "throttling", ("%d×  %.0f s" % (n, ms / 1000.0), "yel")))
     except Exception:
         pass
     try:
@@ -591,7 +591,7 @@ def gather_infos(vps, update_available, head, bt_live=None):
         # les constructeurs : 80 %, d'où le passage au jaune à cet endroit.
         bh = next((l.split("\t") for l in raw.splitlines() if l.startswith("BATH\t")), None)
         if bh and len(bh) >= 4:
-            health.append(("gaugeinv", "batt. santé", int(bh[1]), "%.0f/%.0f Wh" % (float(bh[2]), float(bh[3]))))
+            health.append(("gaugeinv", "batt. health", int(bh[1]), "%.0f/%.0f Wh" % (float(bh[2]), float(bh[3]))))
     except Exception:
         pass
     sx = []
@@ -604,42 +604,42 @@ def gather_infos(vps, update_available, head, bt_live=None):
         if st_:
             # Le swap qui se remplit = la RAM a déjà débordé : la machine rame avant
             # que la jauge RAM n'atteigne le rouge.
-            sx.append(("gauge", "swap", 100.0 * (st_ - sf_) / st_, "%.1f/%.0f Go" % ((st_ - sf_) / 1e6, st_ / 1e6)))
+            sx.append(("gauge", "swap", 100.0 * (st_ - sf_) / st_, "%.1f/%.0f GB" % ((st_ - sf_) / 1e6, st_ / 1e6)))
     except Exception:
         pass
     try:
         la = _read_file("/proc/loadavg").split()
-        sx.append(("kv", "charge", "%s   %s   %s   (1, 5, 15 min)" % (la[0], la[1], la[2])))
+        sx.append(("kv", "load", "%s   %s   %s   (1, 5, 15 min)" % (la[0], la[1], la[2])))
     except Exception:
         pass
     try:
         if tp and len(tp) >= 5 and int(tp[2]):
             if tp[3] and tp[3] != "0":
-                sx.append(("kv", "ventilateur", "%s tr/min" % tp[3]))
-            sx.append(("kv", "bridage à", "%s°" % tp[2]))
+                sx.append(("kv", "fan", "%s rpm" % tp[3]))
+            sx.append(("kv", "throttle at", "%s°" % tp[2]))
     except Exception:
         pass
     try:
         thr = "/sys/devices/system/cpu/cpu0/thermal_throttle/"
         n_ = int(_read_file(thr + "package_throttle_count") or 0)
         ms_ = int(_read_file(thr + "package_throttle_total_time_ms") or 0)
-        sx.append(("kv", "bridages", ("%d, %.0f s cumulées" % (n_, ms_ / 1000.0), "yel" if ms_ > 60000 else "")
-                   if n_ else ("aucun", "grn")))
+        sx.append(("kv", "throttling", ("%d, %.0f s total" % (n_, ms_ / 1000.0), "yel" if ms_ > 60000 else "")
+                   if n_ else ("none", "grn")))
     except Exception:
         pass
     try:
         if bh and len(bh) >= 5 and bh[4].strip():
-            sx.append(("kv", "cycles batt.", bh[4].strip()))
+            sx.append(("kv", "batt. cycles", bh[4].strip()))
     except Exception:
         pass
     try:
         up = float(_read_file("/proc/uptime").split()[0])
-        sx.append(("kv", "allumé", "%dj %dh%02d" % (up // 86400, up % 86400 // 3600, up % 3600 // 60)
+        sx.append(("kv", "uptime", "%dd %dh%02d" % (up // 86400, up % 86400 // 3600, up % 3600 // 60)
                    if up >= 86400 else "%dh%02d" % (up // 3600, up % 3600 // 60)))
     except Exception:
         pass
-    sections.append(("système", health))
-    sections.append(("système+", sx))
+    sections.append(("system", health))
+    sections.append(("system+", sx))
 
     # ── réseau ──
     # Vue d'ensemble : deux lignes. Le nom du réseau sert de libellé à la jauge de
@@ -652,11 +652,11 @@ def gather_infos(vps, update_available, head, bt_live=None):
         if nl and len(nl) >= 2:
             st = nl[1]
             pct = nl[2] if len(nl) > 2 else ""
-            name = (nl[3] if len(nl) > 3 else "") or "réseau"
+            name = (nl[3] if len(nl) > 3 else "") or "network"
             vpn = nl[4] if len(nl) > 4 else ""
             spd = nl[5] if len(nl) > 5 else ""
             if st == "down":
-                net.append(("kv", "réseau", ("hors ligne", "red")))
+                net.append(("kv", "network", ("offline", "red")))
             else:
                 tag = "  vpn" if vpn else ""
                 dbm = ""
@@ -670,25 +670,25 @@ def gather_infos(vps, update_available, head, bt_live=None):
                     net.append(("gaugesig", short, int(pct), (dbm + " dBm" if dbm else "") + tag))
                     netx.append(("kv", "signal", "%s %% · %s dBm" % (pct, dbm or "?")))
                 elif spd:
-                    net.append(("kv", short, ("filaire %s Mb/s%s" % (spd, tag), "grn")))
+                    net.append(("kv", short, ("wired %s Mb/s%s" % (spd, tag), "grn")))
                 if st != "ok":
-                    net.append(("kv", "internet", ("injoignable", "red")))
+                    net.append(("kv", "internet", ("unreachable", "red")))
                 if vpn:
-                    netx.append(("kv", "vpn", "tout le trafic" if vpn == "via" else "actif, accès seul"))
+                    netx.append(("kv", "vpn", "all traffic" if vpn == "via" else "active, access only"))
     except Exception:
         pass
     sp = speedtest_data()
     if sp:
         cur = locals().get("name", "")
         sp["autre"] = bool(sp["where"] and cur and sp["where"] != cur)
-        net.append(("speed", "débit", sp))
+        net.append(("speed", "speed", sp))
         netx.extend(speedtest_rows(sp))
     else:
-        net.append(("kv", "débit", ("t pour mesurer", "")))
+        net.append(("kv", "speed", ("t to measure", "")))
     if not net:
-        net.append("(réseau non détecté)")
-    sections.append(("réseau", net))
-    sections.append(("réseau+", netx))
+        net.append("(no network detected)")
+    sections.append(("network", net))
+    sections.append(("network+", netx))
     bt = bluetooth_infos(live=bt_live)
     if bt:
         sections.append(("Bluetooth", bt))
@@ -710,8 +710,8 @@ def fmt_date(mtime):
 
 
 def fmt_age(mtime):
-    """Âge relatif compact (pour les équipes OUVERTES : « il y a » implicite). Format
-    court (≤ 6 car.) pour rester aligné avec les dates des équipes fermées."""
+    """Âge relatif compact (pour les workspaces OUVERTES : « il y a » implicite). Format
+    court (≤ 6 car.) pour rester aligné avec les dates des workspaces fermées."""
     import time
     d = max(0, int(time.time() - mtime))
     if d < 60:
@@ -720,7 +720,7 @@ def fmt_age(mtime):
         return "%dm" % (d // 60)
     if d < 86400:
         return "%dh" % (d // 3600)
-    return "%dj" % (d // 86400)
+    return "%dd" % (d // 86400)
 
 
 def short(path):
@@ -761,7 +761,7 @@ def _iso_epoch(iso):
 
 def load_workspaces():
     """Historique des ESPACES de dev (un par dossier, dédup realpath) via
-    l'adaptateur moteur `engine list --all --json`. etat-major n'a plus à
+    l'adaptateur moteur `engine list --all --json`. home n'a plus à
     connaître l'emplacement ni le schéma des transcripts du moteur. On écarte les
     dossiers qui n'existent plus : un dossier renommé/supprimé laisse un transcript
     avec un cwd mort (RESUME → `cd` échoue) → on ne propose pas le lien mort."""
@@ -828,16 +828,16 @@ class Picker:
     def __init__(self, scr, cur_dir):
         self.scr = scr
         self.cur_dir = cur_dir
-        self.ws = load_workspaces()   # équipes de dev (un par dossier, dédup realpath)
+        self.ws = load_workspaces()   # workspaces de dev (un par dossier, dédup realpath)
         self.live = live_sessions()   # sessions zellij vivantes (basename du cwd)
-        self.busy_cwds = set()        # cwd (realpath) des équipes avec un Claude en plein tour
+        self.busy_cwds = set()        # cwd (realpath) des workspaces avec un Claude en plein tour
         self.waiting_cwds = set()     # … bloqué sur une question/permission (t'attend)
         self.stuck_cwds = set()       # … en plein tour depuis > 10 min (probablement coincé)
         self._busy_ts = 0             # throttle de _refresh_busy
         self.vps = vps_label()        # non-vide si on tourne sur un serveur distant
         self.mode = "sessions"        # 'sessions' | 'browser'
-        self.solo_page = None         # page ouverte SEULE (--page infos|autos), sans accueil derrière
-        self.new_open = False         # bouton « nouvelle équipe » déplié ? (cibles ici/ailleurs)
+        self.solo_page = None         # page ouverte SEULE (--page infos|autos), sans home derrière
+        self.new_open = False         # bouton « nouvelle workspace » déplié ? (cibles ici/ailleurs)
         self.focus = "right"          # 'left' | 'right' — démarre sur ACTIONS (quitter présélectionné)
         self.filt = ""
         self.bdir = cur_dir
@@ -857,7 +857,7 @@ class Picker:
         self.rc_data = {h: {"loading": True} for h in self.rc_hosts}
         self.rc_lock = threading.Lock()
         self.rc_loading = bool(self.rc_hosts)
-        self.rc_stop = threading.Event()   # arrête le polling à la fermeture de l'etat-major
+        self.rc_stop = threading.Event()   # arrête le polling à la fermeture de l'home
         # Une SEULE pinentry à l'ouverture : on déverrouille la clé SSH + on monte le
         # master ControlMaster AVANT le fan-out parallèle (rc + autos). Sans ça, les 4
         # connexions concurrentes réclament chacune la passphrase (cf. _ssh_warmup).
@@ -867,12 +867,12 @@ class Picker:
             threading.Thread(target=self._rc_worker, daemon=True).start()
         else:
             self.ssh_warmed.set()   # pas d'hôte distant → rien à déverrouiller
-        self.carte_nodes = None       # écran Commandement : arbre de nœuds (None = chargement)
-        self.ci = 0                   # sélection dans la page Commandement (index sélectionnable)
+        self.carte_nodes = None       # écran org : arbre de nœuds (None = chargement)
+        self.ci = 0                   # sélection dans la page org (index sélectionnable)
         # Automatisations (timers thedev) : gather en fond pour le bouton + l'écran dédié.
         self.autos = None
-        self.ai = 0                   # sélection dans l'écran gardes
-        self._autos_flat = []         # gardes sélectionnables (rempli par draw_autos)
+        self.ai = 0                   # sélection dans l'écran automations
+        self._autos_flat = []         # automations sélectionnables (rempli par draw_autos)
         self.confirm_del = None       # auto en attente de confirmation de suppression
         threading.Thread(target=self._autos_worker, daemon=True).start()
         # Mise à jour de la config : la machine est-elle en retard sur le git d'où
@@ -881,7 +881,7 @@ class Picker:
         self.git_checking = True
         threading.Thread(target=self._git_check, daemon=True).start()
         # self.live est capturé une fois ci-dessus ; on le rafraîchit qq sec après
-        # l'ouverture pour corriger la race « je reviens à l'etat-major juste après
+        # l'ouverture pour corriger la race « je reviens à l'home juste après
         # avoir quitté une session » (zellij la liste encore un instant → ● faux).
         self.local_refreshing = True
         threading.Thread(target=self._local_worker, daemon=True).start()
@@ -943,7 +943,7 @@ class Picker:
         return self.PALETTE[sum(name.encode("utf-8")) % len(self.PALETTE)]
 
     def split_live(self):
-        """Sépare les équipes en (ouvertes ●, récentes). Une équipe est ouverte si
+        """Sépare les workspaces en (ouvertes ●, récentes). Un workspace est ouverte si
         une session zellij vivante porte son nom (basename). Si deux dossiers
         partagent un basename qui matche une session vivante (rare), un seul
         tourne réellement → on garde le plus récent en ●, l'autre retombe en
@@ -972,12 +972,12 @@ class Picker:
         threading.Thread(target=self._autos_worker, daemon=True).start()   # rafraîchit l'état
 
     def back_page(self):
-        """« Retour » depuis une page plein écran (infos / la garde).
+        """« Retour » depuis une page plein écran (infos / automations).
 
         Ouverte en solo (`--page`, typiquement lancée depuis la colonne de
-        gauche du front), la page n'a PAS de liste de sessions derrière elle :
+        gauche de la page agents), la page n'a PAS de liste de sessions derrière elle :
         Retour doit fermer l'écran — le pane flottant se referme et rend la main
-        au front. Sinon, comportement historique : retour à l'accueil.
+        à la page agents. Sinon, comportement historique : retour au home.
         Renvoie True s'il faut sortir de la boucle."""
         if self.solo_page:
             return True
@@ -1093,8 +1093,8 @@ class Picker:
         threading.Thread(target=self._gather_infos, daemon=True).start()
 
     def enter_carte(self):
-        # Écran Commandement : l'arbre CHEFS + SESSIONS (pas les panes), navigable.
-        # Données via `arbre --data` → modèle général → chef-machine → domaine → session.
+        # Écran org : l'arbre LEADS + SESSIONS (pas les panes), navigable.
+        # Données via `org-tree --data` → modèle owner → lead-machine → domaine → session.
         self.mode = "carte"
         self.carte_nodes = None
         self.ci = 0
@@ -1102,7 +1102,7 @@ class Picker:
 
     def _carte_worker(self):
         try:
-            out = subprocess.run(["arbre", "--data"], capture_output=True, text=True, timeout=8).stdout
+            out = subprocess.run(["org-tree", "--data"], capture_output=True, text=True, timeout=8).stdout
         except Exception:
             out = ""
         me = sommet = ""
@@ -1117,33 +1117,33 @@ class Picker:
                 if len(p) > 2:
                     etage[p[1]] = p[2]
             elif len(p) >= 6:
-                mb = re.match(r'⚠(\d+)', p[4] or "")     # blocages ouverts encodés en tête d'état
-                rows.append({"machine": p[0], "domaine": p[1], "equipe": p[2],
+                mb = re.match(r'⚠(\d+)', p[4] or "")     # blockers ouverts encodés en tête d'état
+                rows.append({"machine": p[0], "domaine": p[1], "workspace": p[2],
                              "live": p[3], "etat": p[4], "ago": p[5],
                              "bloc": int(mb.group(1)) if mb else 0})
-        # arbre : général (racine) → chef par machine → ◆ domaine (header) → session.
-        # Sélectionnables : général + chefs + sessions (JAMAIS les panes). Domaine = header.
+        # arbre : owner (racine) → lead par machine → ◆ domaine (header) → session.
+        # Sélectionnables : owner + leads + sessions (JAMAIS les panes). Domaine = header.
         is_sommet = bool(sommet) and me == sommet
         self.carte_me = me; self.carte_sommet = sommet     # pour l'en-tête de la page
         machines = ([me] if any(r["machine"] == me for r in rows) else []) + \
                    sorted(m for m in {r["machine"] for r in rows} if m != me)
-        # DISSOLUTION : le nœud « général » n'apparaît que s'il contient ≥2 chefs-machine
-        # (sur le sommet). Avec UNE seule machine, le chef-machine EST la racine — pas de
-        # général redondant au-dessus d'un unique enfant.
+        # DISSOLUTION : le nœud « owner » n'apparaît que s'il contient ≥2 leads-machine
+        # (sur le sommet). Avec UNE seule machine, le lead-machine EST la racine — pas de
+        # owner redondant au-dessus d'un unique enfant.
         multi = len(machines) >= 2
         N_SPAN = 7                        # span de contrôle (même valeur que reorg)
         nodes = []
-        nodes.append({"lvl": 0, "sel": True, "type": "retour", "label": "‹ Retour", "prefix": ""})
-        if is_sommet:   glabel = "⌘ général en chef · toute la flotte"
-        elif sommet:    glabel = "⌘ général en chef · toute la flotte (sommet %s)" % sommet
-        else:           glabel = "⌘ général en chef · %s" % me
-        # ARBRE indenté avec CONNECTEURS (├ └ │) : le général (apex, la flotte) → un chef par
-        # MACHINE (son nom = son label) → ses sous-chefs. La hiérarchie entre les chefs de
-        # machines différentes (tous enfants du général) est ainsi EXPLICITE.
+        nodes.append({"lvl": 0, "sel": True, "type": "retour", "label": "‹ Back", "prefix": ""})
+        if is_sommet:   glabel = "⌘ owner · all machines"
+        elif sommet:    glabel = "⌘ owner · all machines (top %s)" % sommet
+        else:           glabel = "⌘ owner · %s" % me
+        # ARBRE indenté avec CONNECTEURS (├ └ │) : le owner (apex, toutes les machines) → un lead par
+        # MACHINE (son nom = son label) → ses sous-leads. La hiérarchie entre les leads de
+        # machines différentes (tous enfants du owner) est ainsi EXPLICITE.
         if multi:
             nodes.append({"lvl": 0, "sel": True, "type": "general",
-                          "glyph": "⌘", "name": "général en chef",
-                          "suffix": " · toute la flotte" if (is_sommet or sommet) else " · %s" % me,
+                          "glyph": "⌘", "name": "owner",
+                          "suffix": " · all machines" if (is_sommet or sommet) else " · %s" % me,
                           "label": glabel,
                           "me": me, "sommet": sommet, "rows": rows,
                           "bloc": sum(r["bloc"] for r in rows), "prefix": ""})
@@ -1157,9 +1157,9 @@ class Picker:
                 doms.setdefault(r["domaine"], []).append(r)
             split = etage.get(m) == "split"
             warn = (split and len(doms) > N_SPAN)
-            role = "chef"      # tous les chefs sont pairs : aucune distinction (couleur/forme/label)
+            role = "lead"      # tous les leads sont pairs : aucune distinction (couleur/forme/label)
             nlive = sum(1 for r in mrows if r["live"] in ("live", "busy"))
-            chef_children = []          # enfants DIRECTS : sous-chefs (si scindé) OU sessions
+            chef_children = []          # enfants DIRECTS : sous-leads (si scindé) OU sessions
             nodes.append({"lvl": 1 if multi else 0, "sel": True, "type": "chef", "machine": m,
                           "glyph": "⬡", "name": m, "suffix": "  · " + role,
                           "warn": warn, "nlive": nlive,
@@ -1167,7 +1167,7 @@ class Picker:
                           "label": "⬡ %s · %s" % (m, role),
                           "bloc": sum(r["bloc"] for r in mrows), "children": chef_children,
                           "prefix": cpref})
-            scnodes = []                 # sous-chefs matérialisés (split, ≥2), pour connecteurs
+            scnodes = []                 # sous-leads matérialisés (split, ≥2), pour connecteurs
             for d in sorted(doms):
                 drows = doms[d]
                 sc_live = sum(1 for r in drows if r["live"] in ("live", "busy"))
@@ -1177,7 +1177,7 @@ class Picker:
                     chef_children.append({"kind": "souschef", "domaine": d, "n": len(drows),
                                           "live": sc_live, "bloc": sc_bloc})
                 else:
-                    for r in drows:                       # sessions DIRECTES du chef (droite only)
+                    for r in drows:                       # sessions DIRECTES du lead (droite only)
                         chef_children.append(dict(r, kind="session"))
             for si, (d, drows, sc_bloc, sc_live) in enumerate(scnodes):
                 spref = guide + ("└─ " if si == len(scnodes) - 1 else "├─ ")
@@ -1190,9 +1190,9 @@ class Picker:
             self.carte_nodes = nodes
 
     def _open_chef(self):
-        """Ouvre le chef sélectionné dans un Claude INTERACTIF (pane flottant, abonnement).
-        Un chef est structurel → le convoquer = lancer `chef <node>` qui briefe un Claude
-        avec les résumés agrégés du périmètre. général = toute la flotte ; chef = 1 machine ;
+        """Ouvre le lead sélectionné dans un Claude INTERACTIF (pane flottant, abonnement).
+        Un lead est structurel → le convoquer = lancer `lead <node>` qui briefe un Claude
+        avec les summaries agrégés du périmètre. owner = toutes les machines ; lead = 1 machine ;
         souschef = 1 domaine."""
         nodes = self.carte_nodes or []
         sel = [n for n in nodes if n.get("sel")]
@@ -1200,18 +1200,18 @@ class Picker:
             return
         node = sel[self.ci]
         t = node.get("type")
-        if t == "retour":                       # 1re ligne : retour à l'accueil
+        if t == "retour":                       # 1re ligne : retour au home
             self.mode = "sessions"; self.focus = "left"; self.li = self.ri = 0; self.loff = 0
             return
         if t == "chef":
             arg = node.get("machine", "")
         elif t == "souschef":
             arg = "%s/%s" % (node.get("machine", ""), node.get("domaine", ""))
-        else:                                   # general → toute la flotte
+        else:                                   # general → toutes les machines
             arg = ""
-        # On ne lance PAS `chef` ici (le TUI tourne dans le pane de l'accueil, souvent hors
-        # d'une session d'équipe → `zellij run` viserait une session au hasard). On émet une
-        # DÉCISION, comme pour ouvrir une session : dev() lance `chef <arg>` dans CE pane.
+        # On ne lance PAS `lead` ici (le TUI tourne dans le pane du home, souvent hors
+        # d'une session de workspace → `zellij run` viserait une session au hasard). On émet une
+        # DÉCISION, comme pour ouvrir une session : dev() lance `lead <arg>` dans CE pane.
         self.decision = ("CHEF", arg)
         return "quit"
 
@@ -1220,7 +1220,7 @@ class Picker:
         return int(time.time()) % 2 == 0
 
     def _refresh_busy(self):
-        """Cwd (realpath) des équipes LOCALES par état : busy (en plein tour) vs
+        """Cwd (realpath) des workspaces LOCALES par état : busy (en plein tour) vs
         waiting (bloqué sur une question/permission, il t'attend). Marqueurs frais
         (< 30 min) croisés au registre sid→cwd. Throttle ~1 s (lectures locales)."""
         now = time.time()
@@ -1242,7 +1242,7 @@ class Picker:
             return out
 
         busy, stuck = set(), set()
-        bdir = os.path.expanduser("~/.cache/soldat-busy")
+        bdir = os.path.expanduser("~/.cache/agent-busy")
         try:
             for f in os.listdir(bdir):
                 try:
@@ -1255,10 +1255,10 @@ class Picker:
                         stuck.add(f)
         except OSError:
             pass
-        wait = fresh_sids("~/.cache/soldat-waiting")
+        wait = fresh_sids("~/.cache/agent-waiting")
         bc, wc, sc = set(), set(), set()
         if busy or wait:
-            for line in _read_file("~/.cache/soldats").splitlines():
+            for line in _read_file("~/.cache/agents").splitlines():
                 p = line.split("\t")
                 if len(p) < 2:
                     continue
@@ -1276,9 +1276,9 @@ class Picker:
 
     def _local_worker(self):
         # self.live (sessions zellij vivantes → marqueurs « ● en cours ») est figé
-        # à l'ouverture. En revenant à l'etat-major juste après avoir quitté une
+        # à l'ouverture. En revenant à l'home juste après avoir quitté une
         # session, zellij peut encore la lister une fraction de seconde → marqueur
-        # faux. On rafraîchit ~8 s pour que l'etat-major se corrige tout seul.
+        # faux. On rafraîchit ~8 s pour que l'home se corrige tout seul.
         for _ in range(8):
             if self.rc_stop.wait(1):
                 break
@@ -1324,7 +1324,7 @@ class Picker:
                            capture_output=True, timeout=60)
             self.msg = ""
         except Exception:
-            self.msg = "mesure du débit impossible"
+            self.msg = "speed test failed"
         self._gather_infos()
         self.speed_running = False
 
@@ -1402,7 +1402,7 @@ class Picker:
         lent ou injoignable ne retarde plus l'apparition ni le refresh des autres
         (avant, le fetch séquentiel faisait attendre indice derrière un jlax down
         ~6 s). Chaque hôte met à jour sa propre entrée dès que son fetch revient,
-        puis reboucle ~4 s. S'arrête quand l'etat-major se ferme (rc_stop)."""
+        puis reboucle ~4 s. S'arrête quand l'home se ferme (rc_stop)."""
         def host_loop(h):
             self.ssh_warmed.wait(12)   # attend le déverrouillage SSH (1 pinentry) avant de se connecter
             while not self.rc_stop.is_set():
@@ -1431,7 +1431,7 @@ class Picker:
         threading.Thread(target=do, daemon=True).start()
 
     def _autos_worker(self):
-        """Gather les gardes (timers thedev) : local + chaque VPS. Une passe (les
+        """Gather les automations (timers thedev) : local + chaque VPS. Une passe (les
         timers ne changent pas en continu ; ré-appelé à l'ouverture de l'écran pour fraîcheur)."""
         hosts = ["local"] if self.vps else ["local"] + list(self.rc_hosts)
         res = []
@@ -1460,38 +1460,38 @@ class Picker:
                      'XDG_RUNTIME_DIR=/run/user/$(id -u) ' + shell_cmd],
                     capture_output=True, text=True, timeout=14)
             self.msg = done if r.returncode == 0 \
-                else ("échec : %s" % (r.stderr.strip().splitlines()[-1] if r.stderr.strip() else "?"))
+                else ("failed: %s" % (r.stderr.strip().splitlines()[-1] if r.stderr.strip() else "?"))
         except Exception as e:
-            self.msg = "échec : %s" % e
+            self.msg = "failed: %s" % e
         with self.rc_lock:
             self.autos = None
         threading.Thread(target=self._autos_worker, daemon=True).start()
 
     def _reactivate_auto(self, a):
         """État arrêté → actif : (re)démarre le timer. Il reprend son planning ; il lui
-        faudra une équipe ouverte (accès Claude) pour s'exécuter vraiment — l'autre axe."""
+        faudra un workspace ouverte (accès Claude) pour s'exécuter vraiment — l'autre axe."""
         u = "%s.timer" % a["name"]
         self._auto_systemctl(a, "systemctl --user start " + u,
-                             "réactivation de %s…" % a["name"], "%s réactivée" % a["name"])
+                             "reactivating %s…" % a["name"], "%s reactivated" % a["name"])
 
     def _stop_auto(self, a):
         """État actif → arrêté : stoppe le timer (économise des tokens, plus aucune exécution).
         On la relance d'un ↵ quand on veut."""
         if a["state"] not in ("active", "running"):
-            self.msg = "%s est déjà arrêtée" % a["name"]; return
+            self.msg = "%s is already stopped" % a["name"]; return
         u = "%s.timer" % a["name"]
         self._auto_systemctl(a, "systemctl --user stop " + u,
-                             "arrêt de %s…" % a["name"], "%s arrêtée" % a["name"])
+                             "stopping %s…" % a["name"], "%s stopped" % a["name"])
 
     def _delete_auto(self, a):
-        """Supprime la garde À TOUT JAMAIS : désactive+stoppe le timer, retire les
+        """Supprime l'automation À TOUT JAMAIS : désactive+stoppe le timer, retire les
         units systemd (timer+service) et recharge le daemon. Le prompt feeds/<nom>.prompt
         reste dans le repo (versionné) — on ne touche pas au dépôt git d'ici."""
         n = a["name"]
         cmd = ("systemctl --user disable --now %s.timer 2>/dev/null; "
                "rm -f ~/.config/systemd/user/%s.timer ~/.config/systemd/user/%s.service; "
                "systemctl --user daemon-reload") % (n, n, n)
-        self._auto_systemctl(a, cmd, "suppression de %s…" % n, "%s supprimée" % n)
+        self._auto_systemctl(a, cmd, "deleting %s…" % n, "%s deleted" % n)
 
     # --- construction des lignes affichées -------------------------------
     def left_rows(self):
@@ -1508,23 +1508,23 @@ class Picker:
                         scored.append((s, w))
                 scored.sort(key=lambda x: -x[0])
                 return [w for _, w in scored]
-            # Une équipe = un dossier. Ouverts ● = session zellij vivante (rejoint
+            # Un workspace = un dossier. Ouverts ● = session zellij vivante (rejoint
             # par attach) ; récents = fermés (même de force), relancés + repris.
             live, rest = self.split_live()
             live, rest = rank(live), rank(rest)
             lim = 10 ** 9 if (self.show_all or f) else self.CAP
             if live:
-                rows.append({"kind": "header", "text": "équipes ouvertes"})
+                rows.append({"kind": "header", "text": "open workspaces"})
                 for w in live:
                     rows.append({"kind": "ws", "w": w, "live": True})
             if rest:
-                rows.append({"kind": "header", "text": "équipes récentes"})
+                rows.append({"kind": "header", "text": "recent workspaces"})
                 for w in rest[:lim]:
                     rows.append({"kind": "ws", "w": w, "live": False})
                 if len(rest) > lim:
                     rows.append({"kind": "more", "n": len(rest) - lim})
             if not rows:
-                rows.append({"kind": "header", "text": "(aucune équipe thedev)"})
+                rows.append({"kind": "header", "text": "(no thedev workspace)"})
         else:
             if not f:
                 rows.append({"kind": "dir", "path": os.path.dirname(self.bdir), "name": ".."})
@@ -1540,7 +1540,7 @@ class Picker:
                 for _, path, name in scored:
                     rows.append({"kind": "dir", "path": path, "name": name})
                 if not scored:
-                    rows.append({"kind": "header", "text": "(aucun dossier pour « %s »)" % f})
+                    rows.append({"kind": "header", "text": "(no folder matching \"%s\")" % f})
         return rows
 
     def right_rows(self):
@@ -1550,22 +1550,22 @@ class Picker:
             # (détecté en fond par _git_check ; clic → git pull côté dev()).
             # 1ʳᵉ action, présélectionnée à l'ouverture (cf. focus="right", ri=0) : quitter.
             # Sur un serveur → revenir au laptop (la session SSH se termine, on retombe sur
-            # l'etat-major local) ; en local → sortir de l'etat-major vers le shell.
+            # l'home local) ; en local → sortir de l'home vers le shell.
             if self.vps:
-                rows.append({"kind": "act", "id": "quit_vps", "text": "← quitter le VPS"})
+                rows.append({"kind": "act", "id": "quit_vps", "text": "← leave the VPS"})
             else:
-                rows.append({"kind": "act", "id": "quit", "text": "⏻ quitter thedev"})
+                rows.append({"kind": "act", "id": "quit", "text": "⏻ quit thedev"})
             if self.update_available:
-                rows.append({"kind": "act", "id": "update_dev", "text": "󰑐 mettre à jour thedev"})
-            # « nouvelle équipe » est un bouton repliable : un clic déplie/replie
+                rows.append({"kind": "act", "id": "update_dev", "text": "󰑐 update thedev"})
+            # « nouvelle workspace » est un bouton repliable : un clic déplie/replie
             # ses deux cibles (dossier courant · ailleurs). cf. self.new_open.
             rows.append({"kind": "rcgap"})
-            rows.append({"kind": "act", "id": "new_menu", "text": "nouvelle équipe"})
+            rows.append({"kind": "act", "id": "new_menu", "text": "new workspace"})
             if self.new_open:
                 # barre verticale à gauche : rattache visuellement les cibles au bouton.
                 rows.append({"kind": "act", "id": "new_here",
-                             "text": "│ ici · %s" % self.cur_dir})
-                rows.append({"kind": "act", "id": "browse", "text": "│ ailleurs"})
+                             "text": "│ here · %s" % self.cur_dir})
+                rows.append({"kind": "act", "id": "browse", "text": "│ elsewhere"})
             # Déjà sur un serveur distant → ne pas proposer de sauter (SSH) vers un autre.
             if not self.vps:
                 # Chaque serveur est annoté de son état (connu en fond par _rc_worker) :
@@ -1576,7 +1576,7 @@ class Picker:
                 for h in self.rc_hosts:
                     d = states.get(h, {})
                     rows.append({"kind": "act", "id": "server:%s" % h,
-                                 "text": "serveur %s" % h,
+                                 "text": "server %s" % h,
                                  "err": d.get("error")})
             # Sous les boutons : remote controls dispo (sessions serveur + panes).
             # On n'affiche un hôte que s'il a des sessions (ou est en chargement /
@@ -1587,7 +1587,7 @@ class Picker:
                     for h in self.rc_hosts:
                         d = self.rc_data.get(h, {})
                         if d.get("loading"):
-                            rc_rows.append({"kind": "rcinfo", "text": "%s · chargement…" % h})
+                            rc_rows.append({"kind": "rcinfo", "text": "%s · loading…" % h})
                         elif d.get("error"):
                             pass   # injoignable déjà affiché sur le bouton « ↗ <h> » → pas de doublon ici
                         elif d.get("sessions"):
@@ -1609,16 +1609,16 @@ class Picker:
                     nop = sum(1 for a in self.autos
                               if a["state"] in ("active", "running") and a.get("open"))
                     ninact = len(self.autos) - nop
-            # bouton masqué s'il n'y a aucune garde (mais affiché pendant le chargement)
+            # bouton masqué s'il n'y a aucune automation (mais affiché pendant le chargement)
             if nop is None or (nop + ninact) > 0:
                 rows.append({"kind": "act", "id": "autos", "footer": True,
-                             "text": "↻ la garde", "nop": nop, "ninact": ninact})
-            rows.append({"kind": "act", "id": "commandement", "text": "⌘ commandement", "footer": True})
-            rows.append({"kind": "act", "id": "infos", "text": "󰋽 infos", "footer": True})
+                             "text": "↻ automations", "nop": nop, "ninact": ninact})
+            rows.append({"kind": "act", "id": "commandement", "text": "⌘ org", "footer": True})
+            rows.append({"kind": "act", "id": "infos", "text": "󰋽 info", "footer": True})
             return rows
         rows = [
-            {"kind": "act", "id": "start_here", "text": "démarrer ici · %s" % self.bdir},
-            {"kind": "act", "id": "mksub", "text": "créer un dossier"},
+            {"kind": "act", "id": "start_here", "text": "start here · %s" % self.bdir},
+            {"kind": "act", "id": "mksub", "text": "create a folder"},
         ]
         if self.creating:
             rows.append({"kind": "input", "text": self.newname})
@@ -1627,7 +1627,7 @@ class Picker:
         real = os.path.realpath(self.bdir)
         w = next((x for x in self.ws if x["cwd"] == real), None)
         if w:
-            rows.append({"kind": "header", "text": "reprendre"})
+            rows.append({"kind": "header", "text": "resume"})
             rows.append({"kind": "ws", "w": w, "live": w["name"] in self.live})
         return rows
 
@@ -1938,8 +1938,8 @@ class Picker:
         win.noutrefresh()
 
     def _auto_count(self, machine, cwd):
-        """(total, arrêtées) des gardes rattachées à (machine, cwd) — pour le badge.
-        Matching par CWD (le dossier de l'équipe) et non par nom : robuste même si le nom
+        """(total, arrêtées) des automations rattachées à (machine, cwd) — pour le badge.
+        Matching par CWD (le dossier de le workspace) et non par nom : robuste même si le nom
         de session diffère du basename du cwd. Le 2e nombre alimente le ○ rouge (timer stoppé)."""
         c = (cwd or "").rstrip("/")
         if not c:
@@ -1975,7 +1975,7 @@ class Picker:
             return [("  " + r["text"], curses.A_DIM)]
         if r["kind"] == "subhdr":     # mini-entête grise d'un groupe d'actions
             return [("  " + r["text"], curses.A_DIM)]
-        if r["kind"] == "rcsess":     # « ● <vps>.remote.<equipe> (<n claude>) » — point vert = session avec Claude ;
+        if r["kind"] == "rcsess":     # « ● <vps>.remote.<workspace> (<n claude>) » — point vert = session avec Claude ;
             p = "▸ " if is_sel else "  "   # ○ jaune = thedev actif (watcher vivant) SANS Claude interactif.
             # ● vert = au moins 1 Claude debout, suivi de (n). ○ jaune = 0 Claude → on
             # n'affiche PAS « (0) » (le ○ le dit déjà). Pas de mot « détaché » : toute
@@ -1999,16 +1999,16 @@ class Picker:
             return [("    ▸ " + r.get("text", "") + "▏", self.GREEN | curses.A_BOLD)]
         p = "▸ " if is_sel else "  "
         if r["kind"] == "more":
-            return [(p + "voir plus… (%d de plus)" % r.get("n", 0),
+            return [(p + "show more… (%d more)" % r.get("n", 0),
                      curses.A_REVERSE if is_sel else curses.A_DIM)]
         if r["kind"] == "act":
             if r.get("id") == "update_dev":   # mise à jour dispo : jaune, bien visible
                 return [(p + r["text"], self.YEL | curses.A_BOLD)]
-            if r.get("id") == "autos":        # gardes : ● violet opérationnelles + ○ rouge inactives
+            if r.get("id") == "autos":        # automations : ● violet opérationnelles + ○ rouge inactives
                 segs = [(p + r["text"], self.MAG | curses.A_BOLD)]
                 nop, ninact = r.get("nop"), r.get("ninact")
                 if nop is None:               # autos pas encore récupérées → chargement
-                    segs.append(("  chargement…", curses.A_DIM))
+                    segs.append(("  loading…", curses.A_DIM))
                 else:
                     if nop:                   # pas de puce opérationnelle si 0
                         segs.append(("  ● %d" % nop, self.MAG | curses.A_BOLD))
@@ -2025,7 +2025,7 @@ class Picker:
             return segs
         if r["kind"] == "dir":
             return [(p + r["name"], self.CYAN)]
-        # ws : une équipe de dev (dossier). ● si la session zellij tourne.
+        # ws : un workspace de dev (dossier). ● si la session zellij tourne.
         #   ● 08 Jun  diakhrisma   (vivant : nom en cyan gras)
         #     06 Jun  gus_project  (fermé : nom coloré par projet)
         w = r["w"]
@@ -2052,18 +2052,18 @@ class Picker:
     def header_line(self):
         if self.mode == "sessions":
             if self.filt:
-                return "filtre: %s_   (Esc efface)" % self.filt
+                return "filter: %s_   (Esc clears)" % self.filt
             li = self.left_item() if self.focus == "left" else None
             if li and li.get("kind") == "ws":
                 live = li.get("live") or li["w"]["name"] in self.live
-                base = "↵ ouvrir · ^R renommer · ^Suppr supprimer"
-                return base + " · ^Q fermer" if live else base
+                base = "↵ open · ^R rename · ^Del delete"
+                return base + " · ^Q close" if live else base
             if li and li.get("kind") == "rcsess":
-                return "↵ ouvrir · ^Q fermer"
-            return "thedev · ↑↓ naviguer · ↵ valider · Esc quitter"
+                return "↵ open · ^Q close"
+            return "thedev · ↑↓ navigate · ↵ select · Esc quit"
         nf = count_files(self.bdir)
         nd = len(list_dirs(self.bdir))
-        return "%s · %d dossiers · %d fichiers" % (self.bdir, nd, nf)
+        return "%s · %d folders · %d files" % (self.bdir, nd, nf)
 
     def draw_status(self, H, W):
         """Ligne du bas = barre de statut : où on opère (VPS distant ou local),
@@ -2083,7 +2083,7 @@ class Picker:
             self.scr.addnstr(H - 1, col, self.msg, max(0, W - col - 1), self.YEL)
         # Coin bas-droit : HEURE + BATTERIE, rien d'autre. Les jauges détaillées
         # (fenêtre Claude, RAM, disque, charge) ont déménagé dans la colonne de
-        # gauche du front (`sidebar`), où elles sont visibles en permanence pendant
+        # gauche de la page agents (`sidebar`), où elles sont visibles en permanence pendant
         # le travail — les répéter ici ne ferait que charger l'écran.
         if True:
             segs = [(time.strftime("%H:%M"), curses.A_DIM)]
@@ -2110,49 +2110,49 @@ class Picker:
                     x += len(t)
 
     def draw_carte(self):
-        # Écran Commandement — DEUX panneaux : à gauche l'arbre CHEFS + SESSIONS
+        # Écran org — DEUX panneaux : à gauche l'arbre LEADS + SESSIONS
         # (navigable, jamais les panes) ; à droite le CONTEXTE du nœud sélectionné.
         self.scr.erase()
         H, W = self.scr.getmaxyx()
         DIM = curses.A_DIM
         G, C, R = self.GREEN, self.CYAN, self.RED
         _me = getattr(self, "carte_me", ""); _som = getattr(self, "carte_sommet", "")
-        hdr = "⌘ COMMANDEMENT"
-        if _me: hdr += "  —  vue de %s" % _me
+        hdr = "⌘ ORG"
+        if _me: hdr += "  ·  view from %s" % _me
         self.scr.addnstr(0, 2, hdr, W - 4, C | curses.A_BOLD)
         with self.rc_lock:
             nodes = self.carte_nodes
         if nodes is None:
             try:
                 self.scr.addnstr(1, 2, "─" * (W - 4), W - 4, DIM)
-                self.scr.addnstr(3, 2, "chargement de l'arbre de commandement…", W - 4, DIM)
+                self.scr.addnstr(3, 2, "loading the org tree…", W - 4, DIM)
             except curses.error: pass
             self.scr.refresh(); return
-        # ── sous-en-tête : les appareils que COUVRE l'arbre + qui POSSÈDE le général ──
+        # ── sous-en-tête : les appareils que COUVRE l'arbre + qui POSSÈDE le owner ──
         machines = [n["machine"] for n in nodes if n.get("type") == "chef"]
-        owner = _som or _me                        # la machine qui tient le général en chef
+        owner = _som or _me                        # la machine qui tient le owner
         mlist = " · ".join(machines) or "—"
         try:
             x = 2
-            self.scr.addnstr(1, x, "appareils : ", W - 4, DIM); x += len("appareils : ")
+            self.scr.addnstr(1, x, "machines: ", W - 4, DIM); x += len("machines: ")
             self.scr.addnstr(1, x, mlist, max(0, W - 1 - x), C | curses.A_BOLD); x += len(mlist)
             if owner:
-                tail = "   —   général en chef chez %s" % owner
+                tail = "   ·   owner on %s" % owner
                 self.scr.addnstr(1, x, tail, max(0, W - 1 - x), DIM)
             self.scr.addnstr(2, 2, "─" * (W - 4), W - 4, DIM)
         except curses.error:
             pass
         sel_idx = [i for i, n in enumerate(nodes) if n["sel"]]
         if not sel_idx:
-            try: self.scr.addnstr(3, 2, "(aucune équipe connue — le namespace se peuple à l'ouverture / aux remontées)", W - 4, DIM)
+            try: self.scr.addnstr(3, 2, "(no known workspace: the namespace fills in as workspaces open and sync up)", W - 4, DIM)
             except curses.error: pass
             self.scr.refresh(); return
         self.ci = max(0, min(self.ci, len(sel_idx) - 1))
         cur = sel_idx[self.ci]
         lw = (W * 55) // 100
         # ── gauche : l'arbre, hiérarchie PAR LA COULEUR (un rôle = une couleur) ──
-        #   ⌘ général = magenta · ⬡ chef = cyan + nom machine en clair · ◇ domaine = jaune
-        #   connecteurs grisés · ● N actives en vert · ⚠ blocages en rouge
+        #   ⌘ owner = magenta · ⬡ lead = cyan + nom machine en clair · ◇ domaine = jaune
+        #   connecteurs grisés · ● N actives en vert · ⚠ blockers en rouge
         def lput(row, x0, segs):                   # segments colorés, bornés au panneau gauche
             x = x0
             for s, a in segs:
@@ -2178,7 +2178,7 @@ class Picker:
                 segs = [(prefix, DIM), (n["glyph"] + " ", ga), (n["name"], na)]
                 if n.get("suffix"): segs.append((n["suffix"], DIM))
                 if n.get("nlive"):  segs.append(("  ● %d" % n["nlive"], G | curses.A_BOLD))
-                if n.get("warn"):   segs.append(("  ⚠ réorg", R | curses.A_BOLD))
+                if n.get("warn"):   segs.append(("  ⚠ reorg", R | curses.A_BOLD))
             lput(y, 2, segs)
             nb = n.get("bloc", 0)
             if nb:
@@ -2205,7 +2205,7 @@ class Picker:
         def eq_segs(r):                            # point coloré · nom · état (⚠ rouge) · fraîcheur
             dot, da = {"busy": ("◆", self.ORANGE | curses.A_BOLD),
                        "live": ("●", G | curses.A_BOLD)}.get(r["live"], ("○", DIM))
-            segs = [(dot + " ", da), ("%-16s " % r["equipe"][:16], 0)]
+            segs = [(dot + " ", da), ("%-16s " % r["workspace"][:16], 0)]
             et = r["etat"] or "—"; mb = re.match(r'(⚠\d+)(?: · )?(.*)', et)
             if mb: segs += [(mb.group(1) + " ", R | curses.A_BOLD), (mb.group(2), 0)]
             else:  segs.append((et, 0))
@@ -2213,25 +2213,25 @@ class Picker:
             return segs
         ry = 3
         if n["type"] == "retour":
-            rl(ry, "‹ Retour", C | curses.A_BOLD); ry += 2
-            rl(ry, "↵  revenir à l'accueil   (Esc aussi)", DIM)
+            rl(ry, "‹ Back", C | curses.A_BOLD); ry += 2
+            rl(ry, "↵  back to home   (Esc too)", DIM)
         elif n["type"] in ("chef", "souschef"):
-            # DROITE = enfants DIRECTS : sous-chefs (si scindé) OU sessions directes.
+            # DROITE = enfants DIRECTS : sous-leads (si scindé) OU sessions directes.
             kids = n.get("children", []); nb = n.get("bloc", 0)
             ntot = len(n["rows"]); nlive = sum(1 for r in n["rows"] if r["live"] in ("live", "busy"))
             if n["type"] == "chef":
-                rl(ry, "⬡ CHEF  %s" % n["machine"], C | curses.A_BOLD)
+                rl(ry, "⬡ LEAD  %s" % n["machine"], C | curses.A_BOLD)
             else:
-                rl(ry, "◇ SOUS-CHEF  %s" % n["domaine"], self.YEL | curses.A_BOLD)
+                rl(ry, "◇ SUB-LEAD  %s" % n["domaine"], self.YEL | curses.A_BOLD)
             ry += 1
-            kind_lbl = "sous-chef(s)" if any(k["kind"] == "souschef" for k in kids) else "session(s) directe(s)"
-            meta = [("%d équipes · %d active(s)  ·  %d %s" % (ntot, nlive, len(kids), kind_lbl), DIM)]
+            kind_lbl = "sub-lead(s)" if any(k["kind"] == "souschef" for k in kids) else "direct session(s)"
+            meta = [("%d workspaces · %d active  ·  %d %s" % (ntot, nlive, len(kids), kind_lbl), DIM)]
             if nb: meta.append(("   ⚠%d" % nb, R | curses.A_BOLD))
             puts(ry, meta); ry += 2
             for k in kids:
                 if ry >= H - 1: break
                 if k["kind"] == "souschef":
-                    segs = [("⬡ %-14s " % k["domaine"], C), ("%d éq · %d active(s)" % (k["n"], k["live"]), DIM)]
+                    segs = [("⬡ %-14s " % k["domaine"], C), ("%d ws · %d active" % (k["n"], k["live"]), DIM)]
                     if k["bloc"]: segs.append(("  ⚠%d" % k["bloc"], R | curses.A_BOLD))
                     puts(ry, segs)
                 else:
@@ -2239,8 +2239,8 @@ class Picker:
                 ry += 1
         else:  # general
             rows = n["rows"]; nb = n.get("bloc", 0)
-            rl(ry, "⌘ GÉNÉRAL EN CHEF", self.MAG | curses.A_BOLD); ry += 1
-            meta = [("flotte %s" % (("· sommet %s" % n["sommet"]) if n["sommet"] else "(local)"), DIM)]
+            rl(ry, "⌘ OWNER", self.MAG | curses.A_BOLD); ry += 1
+            meta = [("all machines %s" % (("· top %s" % n["sommet"]) if n["sommet"] else "(local)"), DIM)]
             if nb: meta.append(("   ⚠%d" % nb, R | curses.A_BOLD))
             puts(ry, meta); ry += 2
             for m in ([n["me"]] if any(r["machine"] == n["me"] for r in rows) else []) + \
@@ -2248,11 +2248,11 @@ class Picker:
                 if ry >= H - 1: break
                 mr = [r for r in rows if r["machine"] == m]
                 lv = sum(1 for r in mr if r["live"] in ("live", "busy")); mb2 = sum(r["bloc"] for r in mr)
-                segs = [("⬡ %-14s " % m, 0), ("%d éq · %d active(s)" % (len(mr), lv), DIM)]
+                segs = [("⬡ %-14s " % m, 0), ("%d ws · %d active" % (len(mr), lv), DIM)]
                 if mb2: segs.append(("  ⚠%d" % mb2, R | curses.A_BOLD))
                 puts(ry, segs); ry += 1
         try:
-            self.scr.addnstr(H - 1, 2, "↑↓ naviguer  ·  ↵ chef → discuter · Retour → accueil  ·  Esc accueil", W - 4, DIM)
+            self.scr.addnstr(H - 1, 2, "↑↓ navigate  ·  ↵ lead → chat · Back → home  ·  Esc home", W - 4, DIM)
         except curses.error:
             pass
         self.scr.refresh()
@@ -2291,7 +2291,7 @@ class Picker:
         DIM, B = curses.A_DIM, curses.A_BOLD
         G, Y, R, C = self.GREEN, self.YEL, self.RED, self.CYAN
         COL = {"grn": G, "yel": Y, "red": R}
-        title = "󰋽 " + (self.infos_zoom or "infos").upper()
+        title = "󰋽 " + (self.infos_zoom or "info").upper()
         self.scr.addnstr(0, 2, title, W - 4, G | B)
         try:
             self.scr.addnstr(1, 2, "─" * (W - 4), W - 4, DIM)
@@ -2311,7 +2311,7 @@ class Picker:
                 except curses.error:
                     pass
                 x += len(t)
-        KEYS = {"thedev": "d", "Claude": "c", "système": "s", "réseau": "r"}
+        KEYS = {"thedev": "d", "Claude": "c", "system": "s", "network": "r"}
         def box(top, left, w, h, title, sel=False):
             bd = C if sel else DIM
             key = KEYS.get(title.split(" ")[0]) if not self.infos_zoom else None
@@ -2366,9 +2366,9 @@ class Picker:
                 top += h + 1
         def hint(H):
             try:
-                self.scr.addnstr(H - 2, 2, "d thedev   c Claude   s système   r réseau   "
-                                 "t tester le débit   Échap "
-                                 + ("retour" if self.infos_zoom else "quitter"), W - 4, DIM)
+                self.scr.addnstr(H - 2, 2, "d thedev   c Claude   s system   r network   "
+                                 "t test speed   Esc "
+                                 + ("back" if self.infos_zoom else "quit"), W - 4, DIM)
             except curses.error:
                 pass
 
@@ -2406,7 +2406,7 @@ class Picker:
                     ("  ↑ ", DIM), ("%.1f" % d["up"], COL.get(d["cup"], 0) | B), (" Mb/s", DIM)]
             if d["ping"] is not None:
                 segs += [("   ", 0), ("%d" % d["ping"], COL.get(d["cping"], 0) | B), (" ms", DIM)]
-            segs.append(("   il y a " + d["age"], DIM))
+            segs.append(("   " + d["age"] + " ago", DIM))
             if d.get("autre"):
                 segs.append((" · " + d["where"], DIM))
             return segs
@@ -2415,7 +2415,7 @@ class Picker:
             # Un boîtier lu en cache est grisé : c'est un dernier niveau connu.
             segs = [lab(k)]
             for name, lvl, st in chips:
-                stale = name == "boîtier" and case_age is not None
+                stale = name == "case" and case_age is not None
                 col = DIM if stale else (G if st == 1 else (R if lvl < 15 else 0))
                 segs += [(name + " ", DIM), ("%d%%" % lvl, col | (0 if stale else B))]
                 if stale:
@@ -2423,7 +2423,7 @@ class Picker:
                     # sans l'âge, une vieille mesure se lirait comme l'état actuel.
                     age = ("%d min" % (case_age // 60) if case_age < 3600
                            else "%d h" % (case_age // 3600))
-                    segs.append(("  il y a " + age, DIM))
+                    segs.append(("  " + age + " ago", DIM))
                 segs.append(("   ", 0))
             return segs
         def items_to_rows(items, contentw):
@@ -2454,7 +2454,7 @@ class Picker:
                 if d.get("loading"):
                     out.append([lab(host), ("…", DIM)])
                 elif d.get("error"):
-                    out.append([lab(host), ("○ ", R), ("injoignable", R | B)])
+                    out.append([lab(host), ("○ ", R), ("unreachable", R | B)])
                 else:
                     ss = d.get("sessions", [])
                     if ss:
@@ -2463,11 +2463,11 @@ class Picker:
                                     (" session%s   " % ("s" if len(ss) > 1 else ""), DIM),
                                     (str(np), B), (" Claude", DIM)])
                     else:
-                        out.append([lab(host), ("○ ", DIM), ("vide", DIM)])
+                        out.append([lab(host), ("○ ", DIM), ("empty", DIM)])
             return out
         if data is None:
             try:
-                self.scr.addnstr(3, 2, "chargement…", W - 4, DIM)
+                self.scr.addnstr(3, 2, "loading…", W - 4, DIM)
             except curses.error:
                 pass
             self.draw_status(H, W)
@@ -2483,10 +2483,10 @@ class Picker:
             w = W - 4
             name = {"Claude": "Claude · Max 5x"}.get(z, z)
             cards = [(name, items_to_rows(sec.get(z, []), w - 6)),
-                     ("en détail", items_to_rows([i for i in sec.get(z + "+", [])], w - 6))]
+                     ("details", items_to_rows([i for i in sec.get(z + "+", [])], w - 6))]
             if z == "thedev" and self.rc_hosts:
-                cards.append(("parc", parc_rows()))
-            if z == "système":
+                cards.append(("machines", parc_rows()))
+            if z == "system":
                 tot = 0
                 for ln in _read_file("/proc/meminfo").splitlines():
                     if ln.startswith("MemTotal:"):
@@ -2498,9 +2498,9 @@ class Picker:
                     bw = max(8, min(40, w - 50))
                     f_ = int(round(bw * kb / max(1, top_kb)))
                     rows.append([lab(nm[:12]), ("█" * f_, C), ("░" * (bw - f_), DIM),
-                                 (" %6.0f Mo" % (kb / 1024.0), C | B),
+                                 (" %6.0f MB" % (kb / 1024.0), C | B),
                                  ("  %4.1f %%" % (100.0 * kb / tot if tot else 0), DIM)])
-                cards.append(("RAM par logiciel", rows))
+                cards.append(("RAM by program", rows))
             layout_col(2, cards, 3, H - 3, w)
             hint(H)
             self.draw_status(H, W)
@@ -2517,8 +2517,8 @@ class Picker:
                 ("Claude · Max 5x", items_to_rows(sec.get("Claude", []), contentw))]
         if sec.get("Bluetooth"):
             left.append(("Bluetooth", items_to_rows(sec["Bluetooth"], contentw)))
-        right = [("système", items_to_rows(sec.get("système", []), contentw)),
-                 ("réseau", items_to_rows(sec.get("réseau", []), contentw))]
+        right = [("system", items_to_rows(sec.get("system", []), contentw)),
+                 ("network", items_to_rows(sec.get("network", []), contentw))]
 
         # ── le verdict : tout ce qui est jaune ou rouge dans les cartes, en une ligne.
         # Tiré du RENDU lui-même, pas recalculé : il ne peut pas contredire les cartes.
@@ -2538,10 +2538,10 @@ class Picker:
                                  if t.strip() and t.strip() not in ("●", "○", "►", "↓", "↑")), "?")
                     issues.append((name, worst))
         if not issues:
-            put(2, 2, [("● ", G), ("tout est vert", G | B)], W - 2)
+            put(2, 2, [("● ", G), ("all green", G | B)], W - 2)
         else:
             worst = R if any(c == R for _n, c in issues) else Y
-            segs = [("● ", worst), ("%d à voir   " % len(issues), worst | B)]
+            segs = [("● ", worst), ("%d to check   " % len(issues), worst | B)]
             for n, c in issues:
                 segs += [(n, c | B), ("   ", 0)]
             put(2, 2, segs, W - 2)
@@ -2556,12 +2556,12 @@ class Picker:
     def draw_autos(self):
         self.scr.erase()
         H, W = self.scr.getmaxyx()
-        self.scr.addnstr(0, 2, "↻ LA GARDE", W - 4, self.MAG | curses.A_BOLD)   # magenta = couleur du bouton etat-major
+        self.scr.addnstr(0, 2, "↻ AUTOMATIONS", W - 4, self.MAG | curses.A_BOLD)   # magenta = couleur du bouton home
         try:
             self.scr.addnstr(1, 2, "─" * (W - 4), W - 4, curses.A_DIM)
         except curses.error:
             pass
-        hint = "↵ relancer · s arrêter · e ajuster · d supprimer"
+        hint = "↵ restart · s stop · e adjust · d delete"
         try:
             self.scr.addnstr(2, 2, hint, W - 4, curses.A_DIM)
         except curses.error:
@@ -2590,23 +2590,23 @@ class Picker:
             y[0] += 1
         # bouton Retour — 1er élément navigable, sélectionné par défaut à l'ouverture
         bsel = (self.ai == -1)
-        seg_line([("  " + ("▸ " if bsel else "  "), 0), ("‹ Retour", self.CYAN | curses.A_BOLD)])
+        seg_line([("  " + ("▸ " if bsel else "  "), 0), ("‹ Back", self.CYAN | curses.A_BOLD)])
         if bsel:
             try:
                 self.scr.chgat(y[0] - 1, 2, W - 4, self.SEL)
             except curses.error:
                 pass
         line("", 0)
-        flat = []                         # gardes sélectionnables, dans l'ordre affiché
+        flat = []                         # automations sélectionnables, dans l'ordre affiché
         if autos is None:
-            line("chargement…", curses.A_DIM)
+            line("loading…", curses.A_DIM)
         elif not autos:
             self.ai = -1                  # seul élément navigable : le bouton Retour
-            line("(aucune garde)", curses.A_DIM)
+            line("(no automation)", curses.A_DIM)
             line("", 0)
-            line("Une garde = un timer systemd --user thedev (ex. la veille du matin)", curses.A_DIM)
-            line("qui dépose une mission dans une équipe ouverte. Elle ne tourne que si cette", curses.A_DIM)
-            line("équipe est ouverte/détachée.", curses.A_DIM)
+            line("An automation = a thedev systemd --user timer (e.g. the morning briefing)", curses.A_DIM)
+            line("that drops a task into an open workspace. It only runs while that", curses.A_DIM)
+            line("workspace is open/detached.", curses.A_DIM)
         else:
             if self.ai >= len(autos):     # clamp dans [-1 (Retour) .. n-1]
                 self.ai = len(autos) - 1
@@ -2628,7 +2628,7 @@ class Picker:
                     icon, icol = ("►" if a["state"] == "running" else "●"), self.GREEN
                 else:
                     icon, icol = "○", self.RED
-                dossier = a.get("equipe") or os.path.basename((a.get("cwd") or "").rstrip("/")) or "?"
+                dossier = a.get("workspace") or os.path.basename((a.get("cwd") or "").rstrip("/")) or "?"
                 segs = [("  " + ("▸ " if sel else "  "), 0), (icon + " ", icol),
                         ("%s.%s." % (a["machine"], dossier), curses.A_DIM),
                         (a["name"], self.MAG | curses.A_BOLD)]
@@ -2641,17 +2641,17 @@ class Picker:
                     except curses.error:
                         pass
                     if op:
-                        seg_line([("        ", 0), ("opérationnelle", self.GREEN),
-                                  ("   ·   prochain %s" % a["next"], curses.A_DIM)])
-                        line("        ↵ rejoindre", curses.A_DIM)
+                        seg_line([("        ", 0), ("operational", self.GREEN),
+                                  ("   ·   next %s" % a["next"], curses.A_DIM)])
+                        line("        ↵ join", curses.A_DIM)
                     else:
-                        cause = "timer stoppé" if not actif else "pas de Claude dans l'équipe"
-                        seg_line([("        ", 0), ("arrêtée", self.RED | curses.A_BOLD),
-                                  (" — " + cause, curses.A_DIM)])
+                        cause = "timer stopped" if not actif else "no Claude in the workspace"
+                        seg_line([("        ", 0), ("stopped", self.RED | curses.A_BOLD),
+                                  (": " + cause, curses.A_DIM)])
                         if not actif:
-                            line("        ↵ réactiver le timer", self.CYAN | curses.A_BOLD)
+                            line("        ↵ reactivate the timer", self.CYAN | curses.A_BOLD)
                         else:
-                            line("        ▲ relance un thedev dans %s sur %s (↵)" % (a.get("cwd") or "?", a["machine"]),
+                            line("        ▲ restart a thedev in %s on %s (↵)" % (a.get("cwd") or "?", a["machine"]),
                                  self.YEL | curses.A_BOLD)
         self._autos_flat = flat
         self.draw_status(H, W)
@@ -2676,22 +2676,22 @@ class Picker:
         self.scr.noutrefresh()
         top, bot = 1, H - 1
         # On RÉSERVE en bas une bande « paysage » (~40 % de la hauteur, min 12
-        # lignes) pour la colline + l'avion, quitte à caper la liste des équipes
+        # lignes) pour la colline + l'avion, quitte à caper la liste des workspaces
         # récentes avec un « voir plus ». Déplier (show_all) reprend cette bande →
         # la liste descend jusqu'en bas et sacrifie l'avion.
         _land = max(12, (2 * (H - 2)) // 5)
         self.CAP = max(6, (H - 2) - 9 - _land)
         # Le panneau ACTIONS prend ~1/3 de l'écran (jusqu'à 76 colonnes) ;
-        # le reste va aux ÉQUIPES.
+        # le reste va aux WORKSPACES.
         lw = W - min(76, max(46, (W * 36) // 100))
         lrows, rrows = self.left_rows(), self.right_rows()
         lwin = curses.newwin(bot - top, lw - 1, top, 1)
         rwin = curses.newwin(bot - top, W - lw - 1, top, lw)
-        ltitle = "  ÉQUIPES" if self.mode == "sessions" else "  DOSSIERS"
+        ltitle = "  WORKSPACES" if self.mode == "sessions" else "  FOLDERS"
         self.loff = self.draw_panel(lwin, ltitle, lrows, self.li, self.focus == "left", self.loff)
         self.draw_panel(rwin, "  ACTIONS", rrows, self.ri, self.focus == "right", 0)
         if self.mode == "sessions":
-            # logo pâle dans le HEADER du panneau ÉQUIPES (en bout de filet, à droite)
+            # logo pâle dans le HEADER du panneau WORKSPACES (en bout de filet, à droite)
             pw = lw - 1
             if pw >= 78:
                 import random as _r
@@ -2782,7 +2782,7 @@ class Picker:
         return "quit"
 
     def focused_session(self):
-        """L'équipe ● sous le curseur (panneau actif), ou None. Sert à Ctrl-R
+        """Le workspace ● sous le curseur (panneau actif), ou None. Sert à Ctrl-R
         (fermer & relancer). Renvoie un dict {cwd, id, name, mtime}."""
         it = self.left_item() if self.focus == "left" else self.right_item()
         if it and it.get("kind") == "ws":
@@ -2814,10 +2814,10 @@ class Picker:
             self.decision = ("SERVER", it["host"], it["cwd"])
             return "quit"
         aid = it.get("id")
-        if aid == "autos":           # écran des gardes (Esc pour revenir)
+        if aid == "autos":           # écran des automations (Esc pour revenir)
             self.enter_autos()
             return
-        if aid == "commandement":    # cockpit de commandement : session dédiée (arbre gauche · chef droite)
+        if aid == "commandement":    # cockpit org : session dédiée (arbre gauche · lead droite)
             self.decision = ("COCKPIT",)
             return "quit"
         if aid == "infos":           # écran d'infos pratiques (Esc pour revenir)
@@ -2826,7 +2826,7 @@ class Picker:
         if aid == "update_dev":      # met à jour la config (git pull) côté dev()
             self.decision = ("UPDATE",)
             return "quit"
-        if aid in ("quit", "quit_vps"):  # quitte l'etat-major SANS décision → shell (local) / retour laptop (vps)
+        if aid in ("quit", "quit_vps"):  # quitte l'home SANS décision → shell (local) / retour laptop (vps)
             self.decision = None
             return "quit"
         if aid == "new_menu":        # déplie/replie les cibles « ici / ailleurs »
@@ -2884,7 +2884,7 @@ class Picker:
                 row += 1
             # hint
             row += 1
-            win.addnstr(row, 2, "↵ confirmer  Esc annuler", bw - 4, curses.A_DIM)
+            win.addnstr(row, 2, "↵ confirm  Esc cancel", bw - 4, curses.A_DIM)
             win.refresh()
             ch = self.scr.getch()
             if ch == 27:
@@ -2922,21 +2922,21 @@ class Picker:
                 self.clamp()
                 self.draw()
             except Exception:
-                # Un bug de rendu ne doit PLUS tuer l'etat-major (sortie « sans raison »).
+                # Un bug de rendu ne doit PLUS tuer l'home (sortie « sans raison »).
                 # On logue la trace pour corriger la cause, et on continue.
                 import traceback
                 try:
-                    with open(os.path.expanduser("~/.cache/etat-major-crash.log"), "a") as _f:
+                    with open(os.path.expanduser("~/.cache/home-crash.log"), "a") as _f:
                         _f.write("=== draw crash ===\n" + traceback.format_exc() + "\n")
                 except Exception:
                     pass
-                self.msg = "⚠ erreur d'affichage — voir ~/.cache/etat-major-crash.log"
+                self.msg = "⚠ display error, see ~/.cache/home-crash.log"
             # getch non bloquant tant qu'il y a qqch à rafraîchir (liste RC live,
             # check git en fond, ou écran infos en cours de chargement) ; sinon bloque.
             self._refresh_busy()                      # busy local (throttle interne) → clignotement
             poll = bool(self.rc_hosts) or self.git_checking or self.local_refreshing or (self.metrics is not None) or (self.mode == "infos") or (self.autos is None) or (self.mode == "carte" and self.carte_nodes is None) or bool(self.busy_cwds) or bool(self.waiting_cwds) or bool(self.amb)
             # étoile filante en vol → rafraîchissement rapide (~7 fps) pour un
-            # mouvement fluide ; sinon cadence normale (ambiance/live) ou blocage.
+            # mouvement fluide ; sinon cadence normale (ambiance/live) ou blocker.
             self.scr.timeout(140 if self.star_anim else (400 if poll else -1))
             try:
                 ch = self.scr.getch()
@@ -2962,13 +2962,13 @@ class Picker:
                     if nm:
                         newdir = os.path.join(self.bdir, nm)
                         try:
-                            # Juste créer le dossier : on reste dans l'etat-major, il
+                            # Juste créer le dossier : on reste dans l'home, il
                             # apparaît en haut de la liste (tri par mtime). Pas de
                             # lancement de session — l'utilisateur choisit ensuite.
                             os.makedirs(newdir, exist_ok=True)
-                            self.msg = "dossier créé : %s" % nm
+                            self.msg = "folder created: %s" % nm
                         except OSError as e:
-                            self.msg = "échec : %s" % e
+                            self.msg = "failed: %s" % e
                     self.creating = False; self.newname = ""
                 elif ch == 27:
                     self.creating = False; self.newname = ""
@@ -2977,7 +2977,7 @@ class Picker:
                 elif 32 <= ch < 127:
                     self.newname += chr(ch)
                 continue
-            if self.mode == "autos":                # écran gardes : navigable
+            if self.mode == "autos":                # écran automations : navigable
                 n = len(self._autos_flat)
                 if n == 0:
                     self.ai = -1                    # vide/chargement : focus sur le bouton Retour
@@ -2987,7 +2987,7 @@ class Picker:
                     if ch in (ord("y"), ord("Y"), ord("o"), ord("O")):
                         self._delete_auto(a)
                     else:
-                        self.msg = "suppression annulée"
+                        self.msg = "deletion cancelled"
                     continue
                 if ch == 27:
                     if self.back_page():
@@ -3005,10 +3005,10 @@ class Picker:
                     a = self._autos_flat[self.ai]
                     if a["state"] not in ("active", "running"):   # arrêté → réactiver le timer
                         self._reactivate_auto(a)
-                    else:                                         # actif → rejoindre/rattacher l'équipe
+                    else:                                         # actif → rejoindre/rattacher le workspace
                         cwd = a.get("cwd")
                         if not cwd:
-                            self.msg = "pas de cwd connu — ouvre un thedev manuellement"
+                            self.msg = "no known cwd: open a thedev manually"
                         elif a["machine"] == "local":
                             self.decision = ("NEW", cwd); return
                         else:
@@ -3021,9 +3021,9 @@ class Picker:
                 elif ch in (ord("d"), ord("D")) and 0 <= self.ai < n:   # supprimer (à tout jamais)
                     a = self._autos_flat[self.ai]
                     self.confirm_del = a
-                    self.msg = "supprimer « %s » à tout jamais ? y = oui, autre = non" % a["name"]
+                    self.msg = "delete \"%s\" forever? y = yes, anything else = no" % a["name"]
                 continue
-            if self.mode == "carte":                # écran commandement : ↑↓ navigue · ↵ ouvre le chef · Esc retour
+            if self.mode == "carte":                # écran org : ↑↓ navigue · ↵ ouvre le lead · Esc retour
                 if ch == 27:
                     self.mode = "sessions"; self.focus = "left"
                     self.li = self.ri = 0; self.loff = 0
@@ -3032,7 +3032,7 @@ class Picker:
                 elif ch == curses.KEY_DOWN:
                     self.ci += 1
                 elif ch in (curses.KEY_ENTER, 10, 13):
-                    if self._open_chef() == "quit":   # convoque un chef → décision CHEF, dev() lance
+                    if self._open_chef() == "quit":   # convoque un lead → décision CHEF, dev() lance
                         return
                 continue
             if self.mode == "infos":
@@ -3041,10 +3041,10 @@ class Picker:
                 #   d thedev, c Claude, s système, r réseau, t débit, Échap retour/quitter
                 if ch in (ord("t"), ord("T")) and not self.speed_running:
                     self.speed_running = True
-                    self.msg = "mesure du débit… (~10 s)"
+                    self.msg = "measuring speed… (~10 s)"
                     threading.Thread(target=self._speedtest, daemon=True).start()
                 elif ch in (ord("r"), ord("s"), ord("d"), ord("c")):
-                    z = {ord("r"): "réseau", ord("s"): "système", ord("d"): "thedev",
+                    z = {ord("r"): "network", ord("s"): "system", ord("d"): "thedev",
                          ord("c"): "Claude"}[ch]
                     self.infos_zoom = None if self.infos_zoom == z else z
                 elif ch == 27:
@@ -3067,20 +3067,20 @@ class Picker:
             elif ch in (curses.KEY_ENTER, 10, 13):
                 if (self.activate_left() if self.focus == "left" else self.activate_right()) == "quit":
                     return
-            elif ch == 18:  # Ctrl-R : renommer l'équipe sélectionnée
+            elif ch == 18:  # Ctrl-R : renommer le workspace sélectionnée
                 li = self.left_item() if self.focus == "left" else None
                 if li and li.get("kind") == "ws":
                     w = li["w"]
-                    _body = ["« %s »" % w["name"]]
+                    _body = ["\"%s\"" % w["name"]]
                     if w["name"] in self.live:
-                        _body += ["", "équipe ouverte -> fermée & relancée",
-                                  "(réancrage : soutiens et buffers non sauvés perdus)"]
+                        _body += ["", "open workspace -> closed & restarted",
+                                  "(re-anchoring: jobs and unsaved buffers are lost)"]
                     ok, new_name = self._modal(
-                        "Renommer l'équipe", _body,
-                        input_label="Nouveau nom :", default=w["name"])
+                        "Rename workspace", _body,
+                        input_label="New name:", default=w["name"])
                     if ok and new_name and new_name != w["name"]:
                         if not re.match(r'^[A-Za-z0-9._-]+$', new_name):
-                            self.msg = "nom invalide (alphanum . _ - seulement)"
+                            self.msg = "invalid name (alphanumeric . _ - only)"
                         else:
                             new_cwd = os.path.join(os.path.dirname(w["cwd"]), new_name)
                             try:
@@ -3106,7 +3106,7 @@ class Picker:
                                     _shutil.move(_old_h, _new_h)
                                 # Réécrire le cwd DANS les transcripts : load_workspaces()
                                 # lit le champ "cwd" du jsonl (pas le nom du dossier), et
-                                # il pointe encore vers l'ancien chemin → l'équipe garderait
+                                # il pointe encore vers l'ancien chemin → le workspace garderait
                                 # l'ancien nom et ne matcherait plus la session zellij vivante.
                                 if os.path.isdir(_new_h):
                                     _o = ('"cwd":"%s"' % old_cwd).encode()
@@ -3120,7 +3120,7 @@ class Picker:
                                                     _fh.write(_data.replace(_o, _n))
                                         except OSError:
                                             pass
-                                # réancrage : les process de l'équipe vivante gardent
+                                # réancrage : les process de le workspace vivante gardent
                                 # l'ANCIEN cwd (on ne peut pas chdir un process de
                                 # l'extérieur) → hooks cassés, chemins morts. On relance
                                 # depuis le nouveau chemin via une décision RECREATE
@@ -3130,40 +3130,40 @@ class Picker:
                                 if was_live and os.environ.get("ZELLIJ_SESSION_NAME") != old_name:
                                     self.decision = ("RECREATE", new_cwd, w.get("id") or "")
                                     return
-                                # sinon (équipe fermée, ou etat-major tourne DANS la
+                                # sinon (workspace fermée, ou home tourne DANS la
                                 # session à renommer → un delete-session se tuerait) :
                                 # renommage disque seulement, pas de relance auto.
                                 self._refresh_local()
                                 if was_live:
-                                    self.msg = ("renommé ; détache (Ctrl+Q) puis rouvre "
-                                                "« %s » pour réancrer" % new_name)
+                                    self.msg = ("renamed; detach (Ctrl+Q) then reopen "
+                                                "\"%s\" to re-anchor" % new_name)
                                 else:
-                                    self.msg = "renommé : %s → %s" % (old_name, new_name)
+                                    self.msg = "renamed: %s → %s" % (old_name, new_name)
                             except Exception as e:
-                                self.msg = "échec : %s" % str(e)[:60]
+                                self.msg = "failed: %s" % str(e)[:60]
                     else:
-                        self.msg = "renommage annulé" if ok else ""
+                        self.msg = "rename cancelled" if ok else ""
                 else:
-                    self.msg = "sélectionne une équipe à gauche"
+                    self.msg = "select a workspace on the left"
             elif ch == 17:  # Ctrl-Q : fermer la session ouverte (zellij delete-session)
                 li = self.left_item() if self.focus == "left" else None
                 if li and li.get("kind") == "ws":
                     w = li["w"]
                     if w["name"] not in self.live:
-                        self.msg = "^Q : équipe non ouverte"
+                        self.msg = "^Q: workspace not open"
                         continue
                     ok, _ = self._modal(
-                        "Fermer l'équipe",
-                        ["« %s »" % w["name"], "", "L'équipe sera fermée."])
+                        "Close workspace",
+                        ["\"%s\"" % w["name"], "", "The workspace will be closed."])
                     if ok:
                         subprocess.run(["zellij", "delete-session", w["name"], "--force"],
                                        capture_output=True)
                         self._refresh_local()
-                        self.msg = "équipe « %s » fermée" % w["name"]
+                        self.msg = "workspace \"%s\" closed" % w["name"]
                 elif li and li.get("kind") == "rcsess":
                     ok, _ = self._modal(
-                        "Fermer l'équipe distante",
-                        ["« %s » sur %s" % (li["name"], li["host"]), "", "L'équipe sera fermée."])
+                        "Close remote workspace",
+                        ["\"%s\" on %s" % (li["name"], li["host"]), "", "The workspace will be closed."])
                     if ok:
                         subprocess.run(
                             ["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes",
@@ -3173,24 +3173,24 @@ class Picker:
                              "bash -lic 'zellij delete-session %s --force 2>&1'" % li["name"]],
                             capture_output=True, timeout=10)
                         self._refresh_remote(li["host"])
-                        self.msg = "équipe « %s » fermée sur %s" % (li["name"], li["host"])
+                        self.msg = "workspace \"%s\" closed on %s" % (li["name"], li["host"])
                 else:
-                    self.msg = "sélectionne une équipe à gauche"
+                    self.msg = "select a workspace on the left"
             elif ch in (curses.KEY_DC, 519):  # Suppr / Ctrl+Suppr : supprimer session + historique
                 li = self.left_item() if self.focus == "left" else None
                 if li and li.get("kind") == "ws":
                     w = li["w"]
                     ok, _ = self._modal(
-                        "Supprimer la session et son historique",
-                        ["« %s »" % w["name"], "",
-                         "Supprime : session zellij, dossier projet,",
-                         "registre thedev et historique Claude."])
+                        "Delete the session and its history",
+                        ["\"%s\"" % w["name"], "",
+                         "Deletes: zellij session, project folder,",
+                         "thedev registry and Claude history."])
                     if ok:
                         subprocess.run(["zellij", "delete-session", w["name"], "--force"],
                                        capture_output=True)
                         self._refresh_local()
-                        # registre soldats
-                        subprocess.run([os.path.expanduser("~/.local/bin/reg-soldat"),
+                        # registre agents
+                        subprocess.run([os.path.expanduser("~/.local/bin/agent-register"),
                                         "gc", "0"], capture_output=True)
                         # historique Claude : dossier ~/.claude/projects/<encoded_cwd>
                         cwd = w.get("cwd", "")
@@ -3200,9 +3200,9 @@ class Picker:
                             if os.path.isdir(claude_proj):
                                 import shutil
                                 shutil.rmtree(claude_proj, ignore_errors=True)
-                        self.msg = "session « %s » supprimée" % w["name"]
+                        self.msg = "session \"%s\" deleted" % w["name"]
                 else:
-                    self.msg = "sélectionne une équipe locale à gauche"
+                    self.msg = "select a local workspace on the left"
             elif ch == 27:  # Esc : efface le filtre, sinon revient aux sessions, sinon quitte
                 if self.filt:
                     self.filt = ""; self.li = 0
@@ -3219,7 +3219,7 @@ class Picker:
 
 def main():
     # `--page infos|autos` ouvre DIRECTEMENT cet écran, seul (sans la liste des
-    # sessions derrière) : c'est ainsi que la colonne de gauche du front les
+    # sessions derrière) : c'est ainsi que la colonne de gauche de la page agents les
     # affiche en plein écran. Retour/Esc ferme alors le process (cf. back_page).
     argv = sys.argv[1:]
     page = None

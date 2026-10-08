@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
-# @thedev naming nomme et persiste le titre d'un pane soldat (prefixe VPS auto)
+# @thedev naming names and saves the title of an agent pane (automatic VPS prefix)
 # pane-name "<label>" — renomme le pane zellij courant ET persiste ce nom pour
 # la conversation Claude en cours, afin de le retrouver après avoir quitté puis
 # relancé (le hook SessionStart le ré-applique à la reprise).
 #
-# À utiliser à la place de `zellij action rename-pane` brut quand tu (soldat)
+# À utiliser à la place de `zellij action rename-pane` brut quand tu (agent)
 # nommes ton propre pane « <sujet> » (sans glyphe : le losange ◆ est ajouté
 # automatiquement quand tu travailles, retiré au repos). Voir thedev-prompt.md.
 
-# Assainit : le registre est du TSV (1 ligne par soldat) → tab/newline interdits
+# Assainit : le registre est du TSV (1 ligne par agent) → tab/newline interdits
 # dans le label, sinon la ligne se corrompt.
 name=$(printf '%s' "$*" | tr '\t\n\r' '   ' | sed -e 's/  */ /g' -e 's/^ *//' -e 's/ *$//')
 [ -n "$name" ] || { echo "usage: pane-name <label>" >&2; exit 1; }
 
 # Le losange ◆ est l'indicateur d'ACTIVITÉ (ajouté/retiré aux bornes de tour par
-# le hook), jamais un préfixe de nom : on le strippe si le soldat l'a mis (vieille
+# le hook), jamais un préfixe de nom : on le strippe si l'agent l'a mis (vieille
 # habitude / ancienne guidance), pour ne stocker que le nom nu.
 name=${name#◆ }
 
 # Sur un VPS : insère le repère [<vps>] automatiquement (« [indice] fix x »).
-# Le soldat n'a plus à penser au préfixe ; pas de doublon s'il l'a déjà mis.
+# L'agent n'a plus à penser au préfixe ; pas de doublon s'il l'a déjà mis.
 if [ -f "$HOME/.config/dev-vps" ]; then
   vps=$(cat "$HOME/.config/dev-vps")
   case "$name" in
@@ -28,25 +28,25 @@ if [ -f "$HOME/.config/dev-vps" ]; then
   esac
 fi
 
-# Si un tour est en cours (marqueur busy posé par le hook soldat-track),
+# Si un tour est en cours (marqueur busy posé par le hook agent-track),
 # garde l'effet ◆ sur le titre AFFICHÉ — mais persiste toujours le nom NU au
 # registre (le hook Stop ré-appliquera le nom nu en fin de tour).
 display="$name"
-if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && [ -e "$HOME/.cache/soldat-busy/$CLAUDE_CODE_SESSION_ID" ]; then
+if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && [ -e "$HOME/.cache/agent-busy/$CLAUDE_CODE_SESSION_ID" ]; then
   display="◆ $name"
 fi
 [ -n "${ZELLIJ_PANE_ID:-}" ] && zellij action rename-pane -p "$ZELLIJ_PANE_ID" "$display" 2>/dev/null
 
 # Persiste le nom pour CETTE conversation (id exposé par Claude dans l'env).
-[ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && reg-soldat setname "$CLAUDE_CODE_SESSION_ID" "$name" 2>/dev/null
+[ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && agent-register setname "$CLAUDE_CODE_SESSION_ID" "$name" 2>/dev/null
 
-# Rafraîchit sid → pane_id (posé au SessionStart par soldat-track). Utile aux
-# soldats déjà ouverts AVANT l'arrivée de ce marqueur : le premier renommage
+# Rafraîchit sid → pane_id (posé au SessionStart par agent-track). Utile aux
+# agents déjà ouverts AVANT l'arrivée de ce marqueur : le premier renommage
 # suffit à les rendre joignables depuis la colonne de gauche.
 if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && [ -n "${ZELLIJ_PANE_ID:-}" ]; then
-  mkdir -p "$HOME/.cache/soldat-panes" 2>/dev/null
+  mkdir -p "$HOME/.cache/agent-panes" 2>/dev/null
   printf '%s\t%s\n' "$ZELLIJ_PANE_ID" "${ZELLIJ_SESSION_NAME:-}" \
-    > "$HOME/.cache/soldat-panes/$CLAUDE_CODE_SESSION_ID" 2>/dev/null
+    > "$HOME/.cache/agent-panes/$CLAUDE_CODE_SESSION_ID" 2>/dev/null
 fi
 
 exit 0

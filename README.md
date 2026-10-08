@@ -2,69 +2,70 @@
 
 # thedev
 
-### Pars à la conquête du monde avec une armée d'agents.
+### Run many Claude Code agents in parallel, on every machine you own.
 
-![Claude Code](https://img.shields.io/badge/Claude_Code-natif-D97757?logo=anthropic&logoColor=white)
-![zellij](https://img.shields.io/badge/zellij-base-2563EB)
-![Tailscale](https://img.shields.io/badge/Tailscale-0_port_ouvert-242424?logo=tailscale&logoColor=white)
-![Bash](https://img.shields.io/badge/Bash-la_colle-4EAA25?logo=gnubash&logoColor=white)
-![Abonnement](https://img.shields.io/badge/coût-abonnement_seul-22C55E)
+![Claude Code](https://img.shields.io/badge/Claude_Code-native-D97757?logo=anthropic&logoColor=white)
+![zellij](https://img.shields.io/badge/zellij-based-2563EB)
+![Tailscale](https://img.shields.io/badge/Tailscale-0_open_ports-242424?logo=tailscale&logoColor=white)
+![Bash](https://img.shields.io/badge/Bash-the_glue-4EAA25?logo=gnubash&logoColor=white)
+![Subscription](https://img.shields.io/badge/cost-subscription_only-22C55E)
 
-<!-- DÉMO — génère le GIF puis décommente la ligne dessous :  vhs demo.tape  →  demo.gif -->
-<!-- ![thedev — l'accueil : ton parc de Claude en un coup d'œil](demo.gif) -->
+<!-- DEMO: render the GIF, then uncomment the line below:  vhs demo.tape  →  demo.gif -->
+<!-- ![thedev home: every agent you run, at a glance](demo.gif) -->
 
 </div>
 
-> **Sais-tu diriger des hommes ?** 3 ou 4, peut-être. Mais en 2030, avec l'IA, ce sera 100 ou 1000 : une armée obéissante et flexible, qui te connaît autant que tu la connais. **C'est thedev.**
+thedev is a multi-agent dev environment for Claude Code. One project on one machine is a
+**workspace**: a terminal session where several agents work side by side, your long-running
+processes run in their own page, and your own shells stay out of the agents' reach.
 
-Une armée trop libre ne sait plus où elle va, et ses soldats désertent jusqu'à ce que plus personne n'écoute les ordres. Une armée trop cadrée, elle, étouffe la moindre initiative sous la procédure, les validations, la paperasse. Tout l'art du chef tient dans cet équilibre — **faire confiance à ses soldats sans jamais lâcher la chaîne de commandement.**
+Workspaces live on your laptop and on your servers alike. Close the laptop and the server
+keeps working; send a task from one machine to an agent on another; schedule an agent to
+work while you sleep. Everything runs on your **Claude subscription**, not on API credits.
 
-**C'est ce chef que thedev te donne l'occasion de devenir.** Qu'ils soient 3 ou 300, tu connais chacun de tes soldats et tu sais où te placer dans la chaîne de commandement. Armée à coût fixe et réplicable plutôt que mercenaires payés au coup, la tienne tient sur ton **abonnement**, pas à l'API.
+## 🚀 Install
 
-## 🚀 Installer
+**There is no sign-up for thedev.** No account, no server of ours, no extra subscription:
+it is a tool that lives on your machine. The only account you need is **Claude**: thedev
+drives [Claude Code](https://claude.com/claude-code), so you need a Claude subscription and
+the CLI logged in. Everything else is free and open.
 
-**Il n'y a pas d'inscription à thedev.** Pas de compte, pas de serveur à nous, pas
-d'abonnement en plus : c'est un outil qui vit sur ta machine. Le seul compte dont tu as
-besoin est celui de **Claude**. thedev pilote [Claude Code](https://claude.com/claude-code),
-donc il te faut un abonnement Claude et la CLI connectée. Tout le reste est libre et gratuit.
-
-thedev tourne sous **Linux**. Sur **Windows**, WSL fait tourner un vrai Linux à l'intérieur
-de Windows : rien à partitionner, réversible en une commande.
+thedev runs on **Linux**. On **Windows**, WSL runs a real Linux inside Windows: nothing to
+partition, and it can be removed with one command.
 
 <details>
-<summary><b>Je suis sur Windows</b> : installer Linux d'abord (2 minutes)</summary>
+<summary><b>I am on Windows</b>: install Linux first (2 minutes)</summary>
 
 <br>
 
-Ouvre le **Terminal Windows en administrateur** (clic droit sur le menu Démarrer →
-« Terminal (admin) » ou « PowerShell (admin) » selon ta version), puis :
+Open **Windows Terminal as administrator** (right-click the Start menu, then
+"Terminal (Admin)" or "PowerShell (Admin)" depending on your version), then:
 
 ```powershell
 wsl --install
 ```
 
-Redémarre quand Windows te le demande, ouvre **Ubuntu** depuis le menu Démarrer, et
-reprends ci-dessous : tu es maintenant dans un Linux.
-[Guide officiel Microsoft](https://learn.microsoft.com/windows/wsl/install)
+Restart when Windows asks, open **Ubuntu** from the Start menu, and continue below: you
+are now in Linux. [Official Microsoft guide](https://learn.microsoft.com/windows/wsl/install)
 
 </details>
 
-### 1. Les outils
+### 1. The tools
 
-thedev est de la colle : il s'appuie sur des outils existants et n'en installe aucun
-à ta place. Cette étape est donc obligatoire, y compris sur un WSL neuf.
+thedev is glue: it builds on existing tools and installs none of them for you. This step
+is required, including on a fresh WSL.
 
 ```bash
 sudo apt update && sudo apt install -y git python3 jq fzf inotify-tools neovim
 mkdir -p ~/.local/bin && export PATH="$HOME/.local/bin:$PATH"
 
-# zellij (le multiplexeur sur lequel thedev est bâti), absent des dépôts Ubuntu
+# zellij (the terminal multiplexer thedev is built on), not in the Ubuntu repositories
 curl -L https://github.com/zellij-org/zellij/releases/latest/download/zellij-x86_64-unknown-linux-musl.tar.gz \
   | tar xz -C ~/.local/bin
 
 # Claude Code
 curl -fsSL https://claude.ai/install.sh | bash
-claude   # connecte-toi à ton compte Claude, puis quitte avec /exit
+claude   # log in to your Claude account, then leave with /exit
 ```
 
 ### 2. thedev
@@ -75,98 +76,96 @@ cd thedev && ./install.sh
 source ~/.bashrc
 ```
 
-### 3. Ouvrir un projet
+### 3. Open a project
 
 ```bash
 dev
 ```
 
-C'est la seule commande à retenir. Elle ouvre l'accueil : choisis **nouvelle équipe**,
-pointe un dossier, et ton premier Claude démarre dedans.
+That is the only command to remember. It opens **home**: pick **new workspace**, point it
+at a folder, and your first agent starts there.
 
-> Quelque chose cloche ? **`thedev-doctor`** vérifie l'installation ligne par ligne et
-> dit quoi relancer. Il ne répare rien tout seul, il diagnostique.
+> Something wrong? **`thedev-doctor`** checks the install line by line and tells you what
+> to rerun. It repairs nothing by itself, it only diagnoses.
 
 <details>
-<summary>Ce que l'installation touche, et comment faire marche arrière</summary>
+<summary>What the install touches, and how to undo it</summary>
 
 <br>
 
-`install.sh` ne pose ni démon ni service. Il crée des liens symboliques (tout fichier
-existant est sauvegardé en `.bak.<date>`) :
+`install.sh` creates symbolic links (any existing file is backed up as `.bak.<date>`):
 
-- les 50 commandes de thedev dans `~/.local/bin/`
-- la config zellij : `~/.config/zellij/{config.kdl, themes/, layouts/, plugins/}`
-- un bloc délimité dans `~/.bashrc` (c'est lui qui fournit la commande `dev`)
-- le hook `soldat-track` fusionné dans `~/.claude/settings.json`
+- thedev's commands in `~/.local/bin/`
+- the zellij config: `~/.config/zellij/{config.kdl, themes/, layouts/, plugins/}`
+- a delimited block in `~/.bashrc` (it provides the `dev` command)
+- the `agent-track` hook, merged into `~/.claude/settings.json`
 
-Pour tout retirer :
+To remove everything:
 
 ```bash
 cd ~/thedev && ./bin/thedev-manifest --scripts | xargs -I{} rm -f ~/.local/bin/{}
 rm -f ~/.config/zellij/config.kdl ~/.config/zellij/themes/muted.kdl \
-      ~/.config/zellij/layouts/dev.kdl ~/.config/zellij/layouts/commandement.kdl \
+      ~/.config/zellij/layouts/dev.kdl ~/.config/zellij/layouts/org.kdl \
       ~/.config/zellij/plugins
 sed -i '/# >>> thedev >>>/,/# <<< thedev <<</d' ~/.bashrc
 rm -rf ~/thedev
 ```
 
-Les liens zellij pointent *dans* le dossier cloné : retire-les avant de supprimer
-`~/thedev`, sinon zellij se retrouve avec une config qui ne mène nulle part. Si tu avais
-déjà une config zellij, `install.sh` l'avait mise de côté en `.bak.<date>` — c'est là
-qu'elle t'attend.
+The zellij links point *into* the cloned folder: remove them before deleting `~/thedev`,
+or zellij is left with a config that leads nowhere. If you already had a zellij config,
+`install.sh` set it aside as `.bak.<date>`: that is where it is waiting.
 
 </details>
 
-## 🎖️ L'arsenal
+## What you get
 
-**Le socle**
-- 🖥️ **App TUI, en arrière-plan** — tout vit dans le terminal (zellij) ; ça tourne détaché : tu fermes, tu te rebranches, c'est toujours là
-- 📁 **Une session par dossier** — 1 projet = 1 équipe, modèle simple
-- 🤖 **Claude Code natif** — le moteur tourne en interactif, sur ton abonnement
-- 🐚 **Bash + fichiers** — la colle de l'outil : lisible, modifiable, auditable, pas de boîte noire
-- 🛡️ **Tailscale** — réseau privé entre tes machines, 0 port ouvert
-- 🐧 **Linux + nvim** — ou Windows via WSL ; TUI minimaliste, pensé pour ton poste de dev
+**The basics**
+- 🖥️ **A terminal app that keeps running**: everything lives in zellij and runs detached. Close it, come back, it is still there.
+- 📁 **One session per folder**: one project is one workspace.
+- 🤖 **Native Claude Code**: agents run interactively, on your subscription.
+- 🐚 **Bash and plain files**: readable, editable, auditable, no black box.
+- 🛡️ **Tailscale**: a private network between your machines, no open port.
+- 🐧 **Linux and nvim**, or Windows through WSL.
 
-**Commander ton armée**
-- 👁️ **Vue du parc** — tous tes Claude et leur état d'un coup d'œil
-- 🧩 **Claude en renfort** — autant d'agents que tu veux par espace
-- 🏷️ **Auto-nommage** — les panes se nomment seuls au fil du sujet
-- 🔌 **Reprise 1 clic** — reprends une session locale ou distante
+**Many agents at once**
+- 👁️ **Home**: every agent you run, and its state, at a glance.
+- 🧩 **Spawn agents**: as many as you want per workspace.
+- 🏷️ **Self-naming panes**: each agent names its pane after its current topic.
+- 🔌 **One-click resume**: reopen a local or remote session where you left it.
 
-**Tes machines, partout**
-- 🌍 **Multi-machines** — poste + serveurs sous un même commandement
-- 📨 **Missions** — envoie une tâche à un Claude distant (au modèle de ton choix)
-- 🚚 **Partage entre machines** — des dossiers entiers, en respectant `.gitignore`
-- 📲 **Pilotage à distance** — pilote ton serveur depuis l'app
-- 🛰️ **Headless** — tourne en arrière-plan sur un serveur, sans interface
-- ⏰ **Automatisations distantes** — des tâches rejouées dans le temps
+**Your machines, everywhere**
+- 🌍 **Multi-machine**: laptop and servers in one view.
+- 📨 **Tasks**: send work to an agent on another machine, and get the result back.
+- 🚚 **Folder transfer**: push whole folders between machines, respecting `.gitignore`.
+- 📲 **Remote control**: drive your server from the app.
+- 🛰️ **Headless**: workspaces keep running on a server with nothing attached.
+- ⏰ **Automations**: scheduled work, replayed over time.
 
-**Tu gardes la main**
-- ▶️ **Commandes longues** — terminal dédié pour `npm start`, builds, watchers
-- 🖧 **Tes terminaux** — vois les logs, tape une commande sans l'IA
-- 🙈 **Page « my space »** — un terminal privé, hors de portée de Claude
-- 🧹 **Fermeture propre** — vois ce que tu coupes avant de fermer (Ctrl+Q)
-- 📊 **Ressources en direct** — RAM, disque, CPU en permanence
+**You stay in control**
+- ▶️ **Jobs page**: long-running commands (`npm start`, builds, watchers) in their own page.
+- 🖧 **Shell page**: your own terminals, out of the agents' reach.
+- 🧹 **Clean exit**: see what you stop before closing (Ctrl+Q).
+- 📊 **Live diagnostics**: RAM, disk, CPU, heat, network, Bluetooth devices, Claude usage.
 
-**Sûr et souverain**
-- 💳 **Sur ton abo** — sur l'abonnement Claude, zéro coût API
-- 🔒 **Secrets hors chat** — mdp / clé / sudo sans que l'IA les voie
-- 🌐 **Exposition 0 port** — publie un site HTTPS via Tailscale, sans ouvrir de port
-- ⏳ **Fenêtre Claude 5h** — le % restant avant le rate-limit, en direct
+**Safe and self-hosted**
+- 💳 **Subscription only**: on your Claude plan, no API cost.
+- 🔒 **Secrets out of the chat**: passwords, keys and sudo without the agent seeing them.
+- 🌐 **Publish with no open port**: serve a site over HTTPS through Tailscale.
+- ⏳ **Claude usage limits**: the 5-hour and weekly windows, live.
 
-<sub>Ex. d'automatisation : « sur mon VPS, chaque matin, génère un article + son podcast audio et envoie-moi le lien sur Telegram. »</sub>
+<sub>Automation example: "on my server, every morning, write an article and its audio podcast, then send me the link on Telegram."</sub>
 
-## Aller plus loin
+## Learn more
 
-- **Pourquoi thedev existe (le cap durable)** : [`VISION.md`](VISION.md)
-- **Toutes les commandes** : [`MANIFEST.md`](MANIFEST.md) (généré) ou `./bin/thedev-manifest`
-- **État du parc en direct** : `thedev-status` · **usage Claude** : la barre en bas
+- **Vocabulary**: [`NAMING.md`](NAMING.md)
+- **Why thedev exists**: [`VISION.md`](VISION.md)
+- **Every command**: [`MANIFEST.md`](MANIFEST.md) (generated), or `./bin/thedev-manifest`
+- **Live state of all machines**: `thedev-status`
 
 ---
 
 <div align="center">
 
-Fait pour coder avec Claude sans louer le cloud. ⭐ si ça te parle.
+Built to code with Claude without renting the cloud. ⭐ if it speaks to you.
 
 </div>

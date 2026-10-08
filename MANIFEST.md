@@ -1,107 +1,106 @@
-# thedev — manifest
+# thedev: manifest
 
-> **Généré** par `thedev-manifest` depuis les tags `# @thedev` des scripts `bin/`.
-> Ne pas éditer à la main. Régénérer : `thedev-manifest --write`. 53 commandes.
+> **Generated** by `thedev-manifest` from the `# @thedev` tags of the `bin/` scripts.
+> Do not edit by hand. Regenerate: `thedev-manifest --write`. 50 commands.
 
-## Modèle mental
+## Mental model
 
-**machine** → **equipe** (1 projet × 1 machine, tous pairs) → **pages** (`le front` = la sidebar + la stack des soldats · `le camp` = territoire la garde/soutiens · `la tente` = terminaux humains) → **panes**.
-Un **soutien** = un pane long-running lancé dans le camp. Les equipes s'échangent des **missions** cross-machine (interactif, sur l'abonnement). Vocabulaire complet : `NAMING.md` · liens : `plans/thedev-liens.md`.
+**machine** → **workspace** (1 project × 1 machine, all peers) → **pages** (`agents` = the sidebar + the agent stack, `jobs` = automations/jobs area, `shell` = human terminals) → **panes**.
+A **job** = a long-running pane started in jobs. Workspaces exchange cross-machine **tasks** (`delegate`, interactive, on the subscription). The **owner** sits at the root, **leads** above workspaces (`org-tree`). Full vocabulary: `NAMING.md`, links: `plans/thedev-liens.md`.
 
-## Commandes
+## Commands
 
-### Lancement (etat-major)
-- **etat-major** — selecteur de machine/projet au lancement (fzf, multi-serveurs)
+### Launch (home)
+- **home** — machine/project picker at startup (fzf, multi-server)
 
 ### Session & panes
-- **aside-button** — barre + pour ajouter un soldat aside a la stack
-- **debrief-impact** — ce que « fermer cette equipe » va COUPER (Ctrl+Q) — un fait par ligne.
-- **debrief-menu** — menu de fermeture propre de la session
-- **editor-pane** — pane nvim de la code page (badge VPS)
-- **garnison** — pane de garnison de la sandbox (badge VPS)
-- **git-pane** — pane git-centric (alias g/gs)
-- **lever-equipe** — crée un nouveau projet en déléguant le bootstrap à un soldat distant (VPS auto)
-- **renfort** — ouvre un soldat secondaire empile (aside) sans toucher la session
-- **shell-pane** — pane shell perso de my space (badge VPS)
-- **sidebar** — sidebar — colonne gauche du front : menu cliquable (accueil, files, soldats, sessions…)
-- **soldat-pane** — lance le soldat principal d'un pane (surcouche prompt, remote-control, auto-open liens)
-- **team-open** — ouvre un equipe (local ou distant) DÉTACHÉ avec un soldat déjà briefé (prompt injecté)
+- **agent-pane** — launches the main agent of a pane (prompt overlay, remote-control, link auto-open)
+- **aside-button** — + bar to add an aside agent to the stack
+- **editor-pane** — nvim pane of the code page (VPS badge)
+- **git-pane** — git-centric pane (aliases g/gs)
+- **jobs-pane** — welcome pane of the jobs page (VPS badge)
+- **quit-impact** — what closing this workspace will stop (Ctrl+Q), one fact per line
+- **quit-menu** — menu to cleanly close the session
+- **shell-pane** — personal shell pane of my space (VPS badge)
+- **sidebar** — sidebar: left column of the agents page, clickable menu (home, files, agents, sessions...)
+- **spawn** — opens an extra stacked agent (aside) without touching the session
+- **workspace-new** — creates a new project by handing the bootstrap to a remote agent (auto VPS)
+- **workspace-open** — opens a workspace (local or remote) DETACHED with an already briefed agent (injected prompt)
 
-### Nommage
-- **claude-goto-waiting** — saute au pane soldat qui « t'attend » (QCM bloquant) — bind Alt+W
-- **pane-name** — nomme et persiste le titre d'un pane soldat (prefixe VPS auto)
-- **pane-pulse** — anime (pulse ◆↔◇) le titre des panes soldat en cours de réponse
-- **wait-bar** — alerte rouge « action t'attend · Alt+W » dans la barre zjstatus
+### Org (leads, summaries, directives)
+- **blocker** — workspace blockers: open points that get opened and closed
+- **briefing** — pushes the briefing (the org tree) to Telegram via tg
+- **directive** — directive: TOP-DOWN instruction from the owner to a workspace
+- **directives** — directives: the directives RECEIVED from the owner (target machine side)
+- **lead** — lead: opens an interactive Claude briefed as THIS lead (on demand)
+- **milestone** — workspace timeline: manual milestones plus git commits (auto)
+- **note** — workspace context: a note = one line signed by an agent
+- **org-driver** — right pane of the org view (launches the briefed lead Claude)
+- **org-nav** — left navigator of the org view (tree → opens the lead on the right)
+- **org-tree** — org tree: the tree of workspaces, grouped by domain
+- **partition** — partition: sorts a machine's workspaces into themed domains
+- **reorg** — reorg: the breathing, splitting/merging levels (brick 3)
+- **summary** — workspace summary: THE shared headline that syncs up to the lead
+- **sync-up** — syncs local cards and reports up to the top (VPS)
+- **workspace** — workspace card + report on quit (brick 1 of the org plan)
 
-### Registre
-- **reg-soldat** — registre des soldats ouverts (resume + noms de pane persistants)
+### Naming
+- **claude-goto-waiting** — jumps to the agent pane waiting for you (blocking question), bound to Alt+W
+- **pane-name** — names and saves the title of an agent pane (automatic VPS prefix)
+- **pane-pulse** — animates (pulse ◆↔◇) the title of agent panes while they answer
+- **wait-bar** — red alert "action waiting for you, Alt+W" in the zjstatus bar
 
-### Exécution (soutien)
-- **soutien** — lance et gere tout process long-running dans la sandbox (dedup, vivacite, soutien alive)
+### Registry
+- **agent-register** — registry of open agents (resume + persistent pane names)
 
-### Liens cross-machine
-- **garde-list** — état de la garde thedev de CETTE machine (timers systemd --user)
-- **mission** — envoie une mission a une equipe distante (async par defaut, result/list/cancel)
-- **ship** — pousse un dossier local vers une machine (rsync, respecte gitignore)
-- **thedev-link** — ouvre une equipe aux missions entrantes (watcher inbox, modele via Model:)
-- **thedev-status** — board cross-machine compact (equipes ouvertes, missions en cours, soutiens)
+### Run (job)
+- **job** — launches and manages any long-running process in the jobs page (dedup, liveness, job alive)
 
-### Liens — déprécié
-- **cremote** — commande claude one-shot distante (DEPRECATED: claude -p = pool credits, prefere mission)
+### Cross-machine links
+- **automation-list** — state of the thedev automations on THIS machine (systemd --user timers)
+- **delegate** — sends a task to a remote workspace (async by default, result/list/cancel)
+- **ship** — pushes a local folder to a machine (rsync, honours gitignore)
+- **thedev-link** — opens a workspace to incoming tasks (inbox watcher, model via Model:)
+- **thedev-status** — compact cross-machine board (open workspaces, running tasks, jobs)
 
-### Exposition réseau
-- **tsnode** — expose un service local 127.0.0.1 en HTTPS public (Tailscale Funnel)
+### Links (deprecated)
+- **cremote** — one-shot remote claude command (DEPRECATED: claude -p = credit pool, prefer delegate)
+
+### Network exposure
+- **tsnode** — exposes a local 127.0.0.1 service as public HTTPS (Tailscale Funnel)
 
 ### Infra
-- **claude-window-usage** — % d'utilisation de la fenêtre de rate-limit Max 5x (5h/7d) — GRATUIT
-- **garnison-run** — heartbeat autonome (DORMANT, coupe 2026-06 pour cout)
-- **pose** — règle la machine selon l'endroit où le PC est posé (lit / bureau)
-- **thedev-doctor** — diagnostic d'installation : deps, scripts symlinkés, engine, hooks, lancement
-- **thedev-manifest** — genere le manifest de thedev depuis les tags @thedev des scripts bin/
-- **thedev-metrics** — métriques limitantes locales (RAM/disque/load/chaleur) — source unique
+- **claude-window-usage** — usage % of the Max 5x rate-limit window (5h/7d), FREE
+- **headless-run** — autonomous heartbeat (DORMANT, cut in 2026-06 for cost)
+- **thedev-doctor** — install diagnostic: deps, symlinked scripts, engine, hooks, launch
+- **thedev-manifest** — generates the thedev manifest from the @thedev tags of the bin/ scripts
+- **thedev-metrics** — local limiting metrics (RAM/disk/load/heat), single source
 
-### Autres
-- **arbre** (commandement) — arbre de commandement : l'arbre des equipes, groupe par domaine
-- **blocage** (commandement) — blocages d'equipe : points ouverts qui s'ouvrent et se ferment
-- **briefing** (commandement) — pousse le briefing (l'arbre carte) sur Telegram via tg
-- **chef** (commandement) — chef — ouvre un Claude interactif briefé comme CE chef (convocable)
-- **commandement-driver** (commandement) — pane de droite du cockpit commandement (lance le Claude chef briefé)
-- **commandement-nav** (commandement) — navigateur de gauche du cockpit commandement (arbre → ouvre le chef à droite)
-- **equipe** (commandement) — carte d'equipe + debrief-au-quit (brique 1 du plan commandement)
-- **jalon** (commandement) — timeline d'equipe : jalons manuels ⊕ commits git (auto)
-- **note** (commandement) — contexte d'equipe : une note = une ligne signee par un soldat
-- **ordre** (commandement) — ordre — commande VERTICALE du général vers une équipe
-- **ordres** (commandement) — ordres — les ordres REÇUS du général (côté machine cible)
-- **partition** (commandement) — partition : range les équipes d'une machine en domaines par thème
-- **remonter** (commandement) — remonte les cartes+debriefs locaux vers le sommet (VPS)
-- **reorg** (commandement) — reorg — la respiration : scission/fusion d'etages (brique 3)
-- **resume** (commandement) — resume d'equipe : LE headline partage qui remonte au chef
-- **engine** (moteur) — façade moteur-agnostique : lance/liste/lit/observe un agent (voir ENGINE-ADAPTER.md)
-- **thedev-landing** (ui) — landing animée du boot d'un pane claude — île nature + oiseaux
-- **feed** (veille) — déclenche un feed (cron-as-mission) : dépose une mission locale dans l'inbox
-- **inbox** (veille) — lit/cherche plusieurs boîtes IMAP (lecture seule, multi-comptes) — pour Claude & veilles
-- **tg** (veille) — envoie texte/photo sur Telegram (Bot API, curl) — livraison des feeds & alertes
-- **veille-tts** (veille) — synthèse vocale réaliste d'un texte via Gemini TTS (clé AI Studio)
+### Other
+- **engine** (moteur) — engine-agnostic facade: launches/lists/reads/watches an agent (see ENGINE-ADAPTER.md)
+- **thedev-landing** (ui) — animated boot screen of a claude pane (nature island and birds)
+- **feed** (veille) — triggers a feed (cron-as-task): drops a local task in the inbox
+- **tg** (veille) — sends text/photo to Telegram (Bot API, curl): delivery of feeds & alerts
 
-## Dépendances externes
+## External dependencies
 
-| Commande | Paquet | Portée | |
+| Command | Package | Scope | |
 |---|---|---|---|
-| `zellij` | zellij | core | requis |
-| `claude` | claude CLI | core | requis |
-| `nvim` | neovim | core | requis |
-| `python3` | python3 | core | requis |
-| `git` | git | core | requis |
-| `jq` | jq | core | requis |
-| `fzf` | fzf (>=0.50) | core | requis |
-| `inotifywait` | inotify-tools | core | requis |
-| `ssh` | openssh-client | liens | requis |
-| `rsync` | rsync | liens | requis |
-| `tailscale` | tailscale | expose | optionnel |
+| `zellij` | zellij | core | required |
+| `claude` | claude CLI | core | required |
+| `nvim` | neovim | core | required |
+| `python3` | python3 | core | required |
+| `git` | git | core | required |
+| `jq` | jq | core | required |
+| `fzf` | fzf (>=0.50) | core | required |
+| `inotifywait` | inotify-tools | core | required |
+| `ssh` | openssh-client | liens | required |
+| `rsync` | rsync | liens | required |
+| `tailscale` | tailscale | expose | optional |
 
 ## Installation
 
-- **Globale** (config perso complète) : `./install.sh [--with-deps] [--gnome] [--vps=<label>]`
-- **thedev seul** (sans toucher .bashrc/.claude perso) : `./install-dev.sh [--vps=<label>]`
-  — la liste des scripts installés est dérivée de ce manifest (`thedev-manifest --scripts`).
-- **Vérifier les dépendances** : `thedev-manifest --check-deps`
+- **Global** (full personal config): `./install.sh [--with-deps] [--gnome] [--vps=<label>]`
+- **thedev only** (without touching the personal .bashrc/.claude): `./install-dev.sh [--vps=<label>]`
+  (the list of installed scripts is derived from this manifest: `thedev-manifest --scripts`).
+- **Check dependencies**: `thedev-manifest --check-deps`

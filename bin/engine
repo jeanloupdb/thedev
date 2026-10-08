@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# @thedev moteur façade moteur-agnostique : lance/liste/lit/observe un agent (voir ENGINE-ADAPTER.md)
+# @thedev moteur engine-agnostic facade: launches/lists/reads/watches an agent (see ENGINE-ADAPTER.md)
 # bin/engine — façade unique entre thedev et le moteur d'agent (aujourd'hui Claude
 # Code). But : découpler thedev des internals d'un moteur précis (VISION.md principe 1,
 # ENGINE-COUPLING.md). Frontière d'abstraction = le SCHÉMA : args stables en entrée,
@@ -10,11 +10,11 @@ set -u
 THEDEV_ENGINE="${THEDEV_ENGINE:-claude}"
 
 # Repo thedev résolu depuis l'emplacement RÉEL de ce script (relocatable, marche
-# même appelé via symlink depuis ~/.local/bin) — même idiome que soldat-pane.
+# même appelé via symlink depuis ~/.local/bin) — même idiome que agent-pane.
 _self="$0"; case "$_self" in */*) ;; *) _self="$(command -v -- "$_self")" ;; esac
 ROOT="$(cd "$(dirname "$(readlink -f -- "$_self")")/.." && pwd)"
 BACKEND="$ROOT/lib/engine/$THEDEV_ENGINE.sh"
-[ -f "$BACKEND" ] || { echo "engine: backend '$THEDEV_ENGINE' introuvable ($BACKEND)" >&2; exit 1; }
+[ -f "$BACKEND" ] || { echo "engine: backend '$THEDEV_ENGINE' not found ($BACKEND)" >&2; exit 1; }
 # shellcheck source=/dev/null
 . "$BACKEND"
 
@@ -32,8 +32,8 @@ case "$verb" in
         --resume)         resume="$2"; shift 2 ;;
         --init)           init="$2"; shift 2 ;;
         --init-file)      initfile="$2"; shift 2 ;;
-        --remote-control) shift 2 ;;   # auto sur VPS (soldat-pane) — accepté, délégué
-        --system-append)  shift 2 ;;   # prompt zellij natif (soldat-pane) — délégué
+        --remote-control) shift 2 ;;   # auto sur VPS (agent-pane) — accepté, délégué
+        --system-append)  shift 2 ;;   # prompt zellij natif (agent-pane) — délégué
         --)               shift; extra+=("$@"); break ;;
         *)                extra+=("$1"); shift ;;
       esac
@@ -57,7 +57,7 @@ case "$verb" in
     engine_list "$cwd" "$all" "$json"
     ;;
   read)
-    id="" last=1 role=assistant json=0 ref=""   # défaut : dernier message assistant (= résultat de mission)
+    id="" last=1 role=assistant json=0 ref=""   # défaut : dernier message assistant (= résultat de task)
     while [ $# -gt 0 ]; do
       case "$1" in
         --last)       last=1; shift ;;
@@ -69,7 +69,7 @@ case "$verb" in
         *)            [ -n "$id" ] || id="$1"; shift ;;
       esac
     done
-    [ -n "$id" ] || [ -n "$ref" ] || { echo "engine read: ID ou --transcript requis" >&2; exit 1; }
+    [ -n "$id" ] || [ -n "$ref" ] || { echo "engine read: ID or --transcript required" >&2; exit 1; }
     engine_read "$id" "$last" "$role" "$json" "$ref"
     ;;
   usage)
@@ -92,7 +92,7 @@ case "$verb" in
         *)            shift ;;
       esac
     done
-    [ -n "$type" ] && [ -n "$session" ] || { echo "engine event: TYPE et --session requis" >&2; exit 1; }
+    [ -n "$type" ] && [ -n "$session" ] || { echo "engine event: TYPE and --session required" >&2; exit 1; }
     engine_event "$type" "$session" "$cwd" "$title" "$transcript"
     ;;
   install-hooks)
@@ -110,26 +110,26 @@ case "$verb" in
     lst=$(engine_list "" 1 0 2>/dev/null)
     n=$(printf '%s' "$lst" | grep -c .)
     bad=$(printf '%s\n' "$lst" | awk -F'\t' 'NF && NF!=5' | grep -c .)
-    if   [ "$n" -gt 0 ] && [ "$bad" -eq 0 ]; then ok list "$n espaces, TSV à 5 colonnes valide"
-    elif [ "$n" -eq 0 ]; then ko list "0 espace listé — le format du moteur a peut-être changé"
-    else ko list "$bad ligne(s) TSV malformée(s)"; fi
+    if   [ "$n" -gt 0 ] && [ "$bad" -eq 0 ]; then ok list "$n workspaces, valid 5-column TSV"
+    elif [ "$n" -eq 0 ]; then ko list "0 workspaces listed, the engine format may have changed"
+    else ko list "$bad malformed TSV line(s)"; fi
 
     # running : doit être un entier.
     r=$(engine_running "" 2>/dev/null)
-    case "$r" in ""|*[!0-9]*) ko running "valeur inattendue : '$r'" ;; *) ok running "$r process moteur vivant(s)" ;; esac
+    case "$r" in ""|*[!0-9]*) ko running "unexpected value: '$r'" ;; *) ok running "$r live engine process(es)" ;; esac
 
     # usage : TSV, ou exit 2 (non supporté), ou vide (pas de token) — jamais d'erreur dure.
     u=$(engine_usage 0 2>/dev/null); rc=$?
-    if   [ "$rc" = 2 ]; then ok usage "non supporté par ce moteur (exit 2)"
+    if   [ "$rc" = 2 ]; then ok usage "not supported by this engine (exit 2)"
     elif [ -n "$u" ];   then ok usage "$(printf '%s' "$u" | tr '\n\t' '  ')"
-    else ok usage "pas de donnée (hors-ligne / pas de token)"; fi
+    else ok usage "no data (offline / no token)"; fi
 
     # read : dernier message assistant de la session la plus récente.
     fid=$(printf '%s' "$lst" | head -1 | cut -f1)
     if [ -n "$fid" ]; then
-      msg=$(engine_read "$fid" 1 assistant 0 2>/dev/null) && ok read "session lue (${#msg} car.)" \
-        || ko read "engine read a échoué"
-    else ok read "aucune session à lire (ok)"; fi
+      msg=$(engine_read "$fid" 1 assistant 0 2>/dev/null) && ok read "session read (${#msg} chars)" \
+        || ko read "engine read failed"
+    else ok read "no session to read (ok)"; fi
 
     # event : round-trip busy → turn-end sur un id jetable (ne touche pas au registre).
     tsid=__engine_selftest__
@@ -139,11 +139,11 @@ case "$verb" in
       engine_event turn-end "$tsid" /tmp "" "" 2>/dev/null
       b2=$([ -f "$CC_BUSY_DIR/$tsid" ] && echo y || echo n)
       rm -f "$CC_BUSY_DIR/$tsid" 2>/dev/null
-      { [ "$b1" = y ] && [ "$b2" = n ]; } && ok event "busy posé puis retiré (round-trip)" \
-        || ko event "round-trip KO (posé=$b1 retiré=$b2)"
+      { [ "$b1" = y ] && [ "$b2" = n ]; } && ok event "busy set then cleared (round-trip)" \
+        || ko event "round-trip failed (set=$b1 cleared=$b2)"
     else
       engine_event busy "$tsid" /tmp "" "" 2>/dev/null && engine_event turn-end "$tsid" /tmp "" "" 2>/dev/null \
-        && ok event "busy/turn-end sans erreur" || ko event "engine_event a échoué"
+        && ok event "busy/turn-end without error" || ko event "engine_event failed"
     fi
 
     [ "$fail" -eq 0 ] && printf '\033[32mPASS\033[0m (%d/%d)\n' "$pass" "$((pass+fail))" \
@@ -152,10 +152,10 @@ case "$verb" in
     ;;
   ""|-h|--help|help)
     cat >&2 <<'USAGE'
-engine — façade moteur-agnostique (backend via $THEDEV_ENGINE, défaut : claude)
+engine: engine-agnostic facade (backend via $THEDEV_ENGINE, default: claude)
 
   engine launch  [--cwd D] [--model M] [--resume ID] [--init MSG|--init-file F] [-- EXTRA…]
-  engine resume  ID [mêmes options que launch]
+  engine resume  ID [same options as launch]
   engine list    [--cwd D] [--all] [--json]
   engine read    ID|--transcript REF [--last|--all] [--role assistant|user|any] [--json]
   engine usage   [--json]
@@ -163,14 +163,14 @@ engine — façade moteur-agnostique (backend via $THEDEV_ENGINE, défaut : clau
   engine event   TYPE --session ID --cwd D [--title T] [--transcript REF]
                  TYPE ∈ session-start | busy | turn-end | session-end
   engine install-hooks
-  engine selftest   # vérifie le contrat (à lancer après une mise à jour du moteur)
+  engine selftest   # checks the contract (run it after an engine update)
 
-Exit : 0 ok · 2 non supporté par ce moteur · 1 erreur. Voir ENGINE-ADAPTER.md.
+Exit: 0 ok · 2 not supported by this engine · 1 error. See ENGINE-ADAPTER.md.
 USAGE
     exit 1
     ;;
   *)
-    echo "engine: verbe inconnu '$verb' (engine --help)" >&2
+    echo "engine: unknown verb '$verb' (engine --help)" >&2
     exit 1
     ;;
 esac

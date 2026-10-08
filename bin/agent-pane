@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# @thedev session lance le soldat principal d'un pane (surcouche prompt, remote-control, auto-open liens)
+# @thedev session launches the main agent of a pane (prompt overlay, remote-control, link auto-open)
 # Keep the zellij pane alive even if claude exits. On exit, drop into a
 # shell with the launch command preloaded in history — press ↑ to relaunch.
 #
@@ -20,7 +20,7 @@ export CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1
 
 # Repo thedev résolu depuis l'emplacement RÉEL de ce script (relocatable : marche
 # quel que soit l'endroit où thedev est cloné). $0 peut être un nom nu (exec
-# soldat-pane) → on le résout via PATH avant readlink. Résolu AVANT le loader :
+# agent-pane) → on le résout via PATH avant readlink. Résolu AVANT le loader :
 # thedev-landing est lancé par ce chemin (pas via PATH — les scripts sont exposés
 # par symlinks individuels dans ~/.local/bin, un nouveau script n'en a pas forcément).
 _self="$0"; case "$_self" in */*) ;; *) _self="$(command -v -- "$_self")" ;; esac
@@ -40,8 +40,8 @@ _loader_stop() {
 if { [ -z "${CLAUDE_PANE_ONCE:-}" ] || [ -n "${CLAUDE_PANE_LANDING:-}" ]; } && [ -t 1 ]; then
   # Landing thedev (scène nature animée + logo) — externalisée dans thedev-landing,
   # lancée par son chemin réel. Repli spinner minimal si le script manque.
-  # CLAUDE_PANE_LANDING=1 force la landing même en mode « once » (ex. chef du cockpit
-  # commandement, ouvert ponctuellement mais qui mérite l'animation de chargement).
+  # CLAUDE_PANE_LANDING=1 force la landing même en mode « once » (ex. lead de la vue
+  # org, ouvert ponctuellement mais qui mérite l'animation de chargement).
   if [ -x "$THEDEV_ROOT/bin/thedev-landing" ]; then
     "$THEDEV_ROOT/bin/thedev-landing" >/dev/tty 2>/dev/null &
     _loader_pid=$!
@@ -64,7 +64,7 @@ if { [ -z "${CLAUDE_PANE_ONCE:-}" ] || [ -n "${CLAUDE_PANE_LANDING:-}" ]; } && [
 fi
 
 # Delay startup to avoid I/O storm when zellij spawns all panes at once.
-# Les soldats secondaires (aside) sont lancés seuls à la demande → pas de storm,
+# Les agents secondaires (aside) sont lancés seuls à la demande → pas de storm,
 # ouverture directe.
 [ -z "${CLAUDE_PANE_ONCE:-}" ] && sleep 2
 
@@ -81,7 +81,7 @@ append=""
 prompt_args=()
 [ -n "$append" ] && prompt_args=(--append-system-prompt "$append")
 
-# Message initial (ex. « ajuster la garde » depuis l'etat-major) : passé en
+# Message initial (ex. « ajuster l'automatisation » depuis l'home) : passé en
 # positionnel à claude → 1er message de la conversation neuve. One-shot (la relance
 # manuelle via ↑ rejoue `claude` nu, sans ce prompt). Deux sources : CLAUDE_PANE_INIT
 # (inline) ou CLAUDE_PANE_INIT_FILE (chemin — évite le quoting à travers ssh/zellij ;
@@ -133,7 +133,7 @@ for a in (data if isinstance(data, list) else []):
             print(pid)
 ' 2>/dev/null)
   if [ -n "$_bg_pids" ]; then
-    echo "[reopen] récupération de la conversation : arrêt du background agent ($_bg_pids)…"
+    echo "[reopen] recovering the conversation: stopping the background agent ($_bg_pids)…"
     for _p in $_bg_pids; do kill "$_p" 2>/dev/null; done
     sleep 1.5   # laisse le verrou de session se libérer avant le --resume
   fi
@@ -141,17 +141,17 @@ fi
 
 # Sur un VPS distant : ajoute le label au titre du pane (« claude [indice] »)
 # pour voir d'un coup d'œil qu'on n'est pas en local. rename-pane fixe le nom →
-# claude ne peut pas l'écraser via son titre OSC. (Les soldats secondaires sont
-# nommés par renfort, pas ici.)
+# claude ne peut pas l'écraser via son titre OSC. (Les agents secondaires sont
+# nommés par spawn, pas ici.)
 if [ -f "$HOME/.config/dev-vps" ] && [ -z "${CLAUDE_PANE_ONCE:-}" ] && [ -n "${ZELLIJ_PANE_ID:-}" ]; then
   zellij action rename-pane -p "$ZELLIJ_PANE_ID" "claude [$(cat "$HOME/.config/dev-vps")]" 2>/dev/null
 fi
 
-# ANCRE de la stack des soldats : où vit le soldat principal de cette equipe.
-# `zellij run --stacked` s'empile sur le pane FOCUS — donc un nouveau soldat
-# atterrissait dans la colonne de gauche si l'utilisateur s'y trouvait. renfort
+# ANCRE de la stack des agents : où vit l'agent principal de ce workspace.
+# `zellij run --stacked` s'empile sur le pane FOCUS — donc un nouveau agent
+# atterrissait dans la colonne de gauche si l'utilisateur s'y trouvait. spawn
 # lit cette ancre pour viser la bonne stack quel que soit le focus. Posée AVANT
-# la restauration des asides (qui passe par renfort) et par le principal seul.
+# la restauration des asides (qui passe par spawn) et par le principal seul.
 if [ -z "${CLAUDE_PANE_ONCE:-}" ] && [ -n "${ZELLIJ_PANE_ID:-}" ]; then
   _anch="$HOME/.cache/thedev/front-stack"
   mkdir -p "$_anch" 2>/dev/null
@@ -159,21 +159,21 @@ if [ -z "${CLAUDE_PANE_ONCE:-}" ] && [ -n "${ZELLIJ_PANE_ID:-}" ]; then
     > "$_anch/$(printf '%s' "${ZELLIJ_SESSION_NAME:-$(basename "$(pwd -P)")}" | tr -c 'A-Za-z0-9._-' '_')" 2>/dev/null
 fi
 
-# Restauration des soldats secondaires (asides) ouverts avant un « quitter » (kill).
+# Restauration des agents secondaires (asides) ouverts avant un « quitter » (kill).
 # Le launcher pose DEV_RESTORE=1 sur une reprise (pas sur une session NEUVE) ; on
-# relit le registre pour CE dossier et on respawn un aside --resume par soldat
+# relit le registre pour CE dossier et on respawn un aside --resume par agent
 # secondaire. Pane principal uniquement (pas en mode once), une seule fois.
-if [ "${DEV_RESTORE:-}" = "1" ] && [ -z "${CLAUDE_PANE_ONCE:-}" ] && command -v reg-soldat >/dev/null 2>&1; then
+if [ "${DEV_RESTORE:-}" = "1" ] && [ -z "${CLAUDE_PANE_ONCE:-}" ] && command -v agent-register >/dev/null 2>&1; then
   _real=$(realpath "$(pwd -P)" 2>/dev/null || pwd -P)
   while IFS=$'\t' read -r _aid _acwd _arole _aname _azs _ast _aen; do
     [ "$_arole" = "aside" ] && [ -n "$_aid" ] || continue
-    renfort --resume "$_aid" --name "$_aname" 2>/dev/null
-  done < <(reg-soldat restore "$_real" 2>/dev/null)
+    spawn --resume "$_aid" --name "$_aname" 2>/dev/null
+  done < <(agent-register restore "$_real" 2>/dev/null)
 fi
 unset DEV_RESTORE
 
 # Nom du pane transmis au hook SessionStart comme défaut (évite que le hook
-# écrase le nom). Pour un aside, renfort l'a déjà posé → on ne touche pas ;
+# écrase le nom). Pour un aside, spawn l'a déjà posé → on ne touche pas ;
 # pour le principal, c'est « claude » (ou « claude [vps] »).
 if [ -z "${CLAUDE_PANE_NAME:-}" ]; then
   CLAUDE_PANE_NAME="claude"
@@ -188,8 +188,8 @@ export CLAUDE_PANE_NAME
 # l'appareil une fois (claude.ai/code ou app) pour que la session soit pilotable
 # — sinon la session interactive marche quand même, juste non exposée.
 rc_args=()
-# CLAUDE_PANE_RC : marqueur hérité par le hook SessionStart → reg-soldat, pour
-# que le registre sache si CE pane est RÉELLEMENT lancé en remote control (l'etat-major
+# CLAUDE_PANE_RC : marqueur hérité par le hook SessionStart → agent-register, pour
+# que le registre sache si CE pane est RÉELLEMENT lancé en remote control (l'home
 # n'affiche « remote » que dans ce cas). 1 uniquement quand --remote-control est posé.
 export CLAUDE_PANE_RC=0
 if [ -f "$HOME/.config/dev-vps" ] && [ -z "${CLAUDE_PANE_ONCE:-}" ]; then
@@ -197,22 +197,22 @@ if [ -f "$HOME/.config/dev-vps" ] && [ -z "${CLAUDE_PANE_ONCE:-}" ]; then
   CLAUDE_PANE_RC=1
 fi
 
-# Sur VPS : auto-open des liens thedev — l'equipe devient joignable par des missions
+# Sur VPS : auto-open des liens thedev — le workspace devient joignable par des tâches
 # dès son démarrage (watcher dans la sandbox), sans avoir à taper `thedev-link open`.
 # Pane principal seulement. Délai pour laisser la session/sandbox se mettre en place.
 if [ -f "$HOME/.config/dev-vps" ] && [ -z "${CLAUDE_PANE_ONCE:-}" ] && command -v thedev-link >/dev/null 2>&1; then
   ( sleep 6; thedev-link open >/dev/null 2>&1 ) &
 fi
 
-# Modèle imposé (ex. mission distante avec Model:) → --model. Vide = défaut de
+# Modèle imposé (ex. tâche distante avec Model:) → --model. Vide = défaut de
 # la machine (réglage settings.json local).
 model_args=()
 [ -n "${CLAUDE_PANE_MODEL:-}" ] && model_args=(--model "$CLAUDE_PANE_MODEL")
 
 _loader_stop   # claude prend l'écran → on retire le spinner de chargement
 
-# Un appelant (ex. le driver du cockpit commandement) peut demander le PID du soldat
-# pour pouvoir le cibler ensuite (bascule de chef) : $$ survit à l'exec ci-dessous →
+# Un appelant (ex. le driver de la vue org) peut demander le PID de l'agent
+# pour pouvoir le cibler ensuite (bascule de lead) : $$ survit à l'exec ci-dessous →
 # c'est le PID de claude lui-même.
 [ -n "${CLAUDE_PANE_PIDFILE:-}" ] && printf '%s\n' "$$" > "$CLAUDE_PANE_PIDFILE" 2>/dev/null
 
@@ -225,7 +225,7 @@ CLAUDE_CODE_NO_FLICKER=1 claude \
   "${init_args[@]}" \
   "$@"
 
-# Mode "once" (soldat secondaire via `aside`) : pas de keep-alive → le pane se
+# Mode "once" (agent secondaire via `aside`) : pas de keep-alive → le pane se
 # ferme dès que tu quittes Claude (/exit), combiné à `zellij run --close-on-exit`.
 [ -n "${CLAUDE_PANE_ONCE:-}" ] && exit 0
 
@@ -238,5 +238,5 @@ rm -f "$tmprc"
 EOF
 
 echo
-echo "[claude terminé — ↑ pour relancer]"
+echo "[claude exited, press ↑ to relaunch]"
 exec bash --rcfile "$tmprc"

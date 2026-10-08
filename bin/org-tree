@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# @thedev commandement arbre de commandement : l'arbre des equipes, groupe par domaine
-# arbre — agrege les cartes d'equipe (equipes/*.md) + le DERNIER debrief de chacune
+# @thedev org org tree: the tree of workspaces, grouped by domain
+# org-tree — agrege les cartes de workspace (workspaces/*.md) + le DERNIER report de chacun
 # (debriefs/<cle>/) du namespace ~/.cache/thedev/command/, et rend l'ARBRE groupe par
-# `domaine`. Tant que l'arbre est plat, le domaine EST le proto-chef. C'est le verbe
-# « donne-moi l'arbre » du contrat (plans/commandement.md, brique 2). Read-only.
+# `domaine`. Tant que l'arbre est plat, le domaine EST le proto-lead. C'est le verbe
+# « donne-moi l'arbre » du contrat (plans/org.md, brique 2). Read-only.
 #
-#   arbre                 rend l'arbre (depuis une FEUILLE : demande la flotte complète au sommet)
-#   arbre --local         force la vue LOCALE (ne consulte pas le sommet)
-#   arbre --data          sortie machine-lisible (pour l'état-major)
-#   (ordre vers une feuille = `mission <machine>/<equipe> "<ordre>"`, transport existant)
+#   org-tree              rend l'arbre (depuis une FEUILLE : demande la flotte complète au sommet)
+#   org-tree --local      force la vue LOCALE (ne consulte pas le sommet)
+#   org-tree --data       sortie machine-lisible (pour le home)
+#   (directive vers une feuille = `directive <machine>/<workspace> "<directive>"`, transport existant)
 set -u
 DATA=0; LOCAL=0
 for a in "$@"; do case "$a" in --data) DATA=1 ;; --local) LOCAL=1 ;; esac; done
@@ -20,8 +20,8 @@ _fm()      { awk -v k="$2" 'NR==1&&$0=="---"{fm=1;next} fm&&$0=="---"{exit} fm&&
 _section() { awk -v t="$2" '$0=="## "t{f=1;next} f&&/^## /{exit} f&&NF{print;exit}' "$1"; }
 machine_self() { local m; m="$(head -n1 "$HOME/.config/dev-vps" 2>/dev/null)"; [ -n "$m" ] || m="$(hostname -s)"; printf '%s' "$m"; }
 # régime d'étage d'une machine (brique 3, écrit par `reorg`) : "split" = l'étage des
-# sous-chefs de domaine est matérialisé, "flat" sinon. Local sous ROOT, distant sous
-# le miroir de flotte. Lecture pure : carte ne DÉCIDE jamais (cf. reorg = écrivain).
+# sous-leads de domaine est matérialisé, "flat" sinon. Local sous ROOT, distant sous
+# le miroir de flotte. Lecture pure : org-tree ne DÉCIDE jamais (cf. reorg = écrivain).
 _regime_of() {
   local m="$1" f
   for f in "$ROOT/etages/$m" "$FLEET/$m/command/etages/$m"; do
@@ -30,28 +30,28 @@ _regime_of() {
   printf 'flat'
 }
 
-_ago() {   # $1 = timestamp ISO → "il y a X" (ou vide si illisible)
+_ago() {   # $1 = timestamp ISO → "X ago" (ou vide si illisible)
   local t now d; [ -n "$1" ] || return 0
   t=$(date -d "$1" +%s 2>/dev/null) || return 0
   now=$(date +%s); d=$(( now - t )); [ "$d" -lt 0 ] && d=0
-  if   [ "$d" -lt 3600 ];  then printf 'il y a %dmin' $(( d/60 ))
-  elif [ "$d" -lt 86400 ]; then printf 'il y a %dh'   $(( d/3600 ))
-  else                          printf 'il y a %dj'   $(( d/86400 )); fi
+  if   [ "$d" -lt 3600 ];  then printf '%dmin ago' $(( d/60 ))
+  elif [ "$d" -lt 86400 ]; then printf '%dh ago'   $(( d/3600 ))
+  else                          printf '%dd ago'   $(( d/86400 )); fi
 }
-_ago_epoch() {   # $1 = epoch → "il y a X" (ou vide)
+_ago_epoch() {   # $1 = epoch → "X ago" (ou vide)
   local now d; case "${1:-}" in ''|*[!0-9]*) return 0;; esac
   now=$(date +%s); d=$(( now - $1 )); [ "$d" -lt 0 ] && d=0
-  if   [ "$d" -lt 3600 ];  then printf 'il y a %dmin' $(( d/60 ))
-  elif [ "$d" -lt 86400 ]; then printf 'il y a %dh'   $(( d/3600 ))
-  else                          printf 'il y a %dj'   $(( d/86400 )); fi
+  if   [ "$d" -lt 3600 ];  then printf '%dmin ago' $(( d/60 ))
+  elif [ "$d" -lt 86400 ]; then printf '%dh ago'   $(( d/3600 ))
+  else                          printf '%dd ago'   $(( d/86400 )); fi
 }
-# HEADLINE d'une équipe = corps du `resume` partagé (root $1, clé $2), replié sur 1 ligne.
+# HEADLINE d'un workspace = corps du `summary` partagé (root $1, clé $2), replié sur 1 ligne.
 # Lu depuis le root courant → marche pour le local ET le miroir de flotte.
 _resume_of()     { local f="$1/resume/$2.md"; [ -f "$f" ] && tail -n +2 "$f" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g; s/ *$//'; }
 _resume_epoch()  { local f="$1/resume/$2.md"; [ -f "$f" ] && head -n1 "$f" 2>/dev/null | cut -f1; }
-# nb de blocages OUVERTS (open sans done) — ce qu'un chef veut voir en premier
+# nb de blockers OUVERTS (open sans done) — ce qu'un lead veut voir en premier
 _bloc_open_of()  {
-  local f="$1/blocage/$2.md"; [ -f "$f" ] || { printf 0; return; }
+  local f="$1/blocker/$2.md"; [ -f "$f" ] || { printf 0; return; }
   awk -F'\t' '$3=="open"&&$4!=""{o[$4]=1} $3=="done"&&$4!=""{o[$4]=0} END{n=0;for(k in o)if(o[k])n++;print n}' "$f"
 }
 
@@ -62,21 +62,21 @@ sommet="$(grep -vE '^\s*#|^\s*$' "$HOME/.config/thedev-sommet" 2>/dev/null | hea
 # ── Vue de flotte depuis une FEUILLE ────────────────────────────────────────────
 # La vue COMPLÈTE (toutes les machines) vit sur le SOMMET, qui tient le miroir. Si on
 # n'est PAS le sommet et qu'il est déclaré, on lui demande l'arbre entier (lecture
-# seule, ssh borné, `bash -lc` pour le PATH, jamais `-p`). Ainsi le chef distant est
+# seule, ssh borné, `bash -lc` pour le PATH, jamais `-p`). Ainsi le lead distant est
 # visible depuis n'importe quelle machine. Fallback silencieux sur la vue locale si le
 # sommet est injoignable. `--local` court-circuite (et évite toute récursion côté sommet).
 if [ "$LOCAL" = 0 ] && [ -n "$sommet" ] && [ "$me" != "$sommet" ] && [ "$(hostname -s)" != "$sommet" ]; then
-  # résilient au rollout : le sommet peut encore avoir l'ancien nom `carte` (avant maj).
-  _rq='arbre --local || carte'; [ "$DATA" = 1 ] && _rq='arbre --data --local || carte --data'
+  # résilient au rollout : le sommet peut encore avoir l'ancien nom `arbre` (avant maj).
+  _rq='org-tree --local'; [ "$DATA" = 1 ] && _rq='org-tree --data --local'
   remote="$(ssh -o ConnectTimeout=6 -o BatchMode=yes "$sommet" "bash -lc '$_rq'" 2>/dev/null)"
   [ -n "$remote" ] && { printf '%s\n' "$remote"; exit 0; }
 fi
 if [ -n "$sommet" ] && { [ "$me" = "$sommet" ] || [ "$(hostname -s)" = "$sommet" ]; }; then
-  title="⌘ général — $me  ·  tu es au sommet"
+  title="⌘ owner: $me  ·  you are at the top"
 elif [ -n "$sommet" ]; then
-  title="⌘ général — sommet: $sommet   ·   vue locale de $me (le sommet tient la flotte complète)"
+  title="⌘ owner: top $sommet   ·   local view of $me (the top holds the full fleet)"
 else
-  title="⌘ $me   (local, pas de sommet)"
+  title="⌘ $me   (local, no top)"
 fi
 roots=("$ROOT")
 if [ -d "$FLEET" ]; then
@@ -84,20 +84,20 @@ if [ -d "$FLEET" ]; then
 fi
 
 # --- état VIVANT (registre local, vérité-terrain) ---------------------------------
-# Une équipe OUVERTE ne tire pas son état d'un débrief (qui n'existe qu'à la fermeture)
+# Un workspace OUVERT ne tire pas son état d'un report (qui n'existe qu'à la fermeture)
 # mais du REGISTRE live : un process `claude` tourne dans son cwd (même détection que
-# l'état-major) → on montre son sujet + busy, en direct, sans jamais rien fermer. Le
-# débrief reste le fallback des équipes FERMÉES. Local seulement : l'état live des
-# équipes distantes viendra quand le registre sera remonté (brique 2.5).
-REG="$HOME/.cache/soldats"
+# l'home) → on montre son sujet + busy, en direct, sans jamais rien fermer. Le
+# report reste le fallback des workspaces FERMÉS. Local seulement : l'état live des
+# workspaces distants viendra quand le registre sera remonté (brique 2.5).
+REG="$HOME/.cache/agents"
 live_cwds=$'\n'
 for _p in $(pgrep -x claude 2>/dev/null); do
   _c=$(readlink "/proc/$_p/cwd" 2>/dev/null) && live_cwds+="$_c"$'\n'
 done
-busy_sids=$(find "$HOME/.cache/soldat-busy" -type f -mmin -30 -printf '%f\n' 2>/dev/null)
+busy_sids=$(find "$HOME/.cache/agent-busy" -type f -mmin -30 -printf '%f\n' 2>/dev/null)
 
-# _live <cwd> → "sujet\tlive|busy" pour l'équipe ouverte à ce cwd (ended==0 = ouvert),
-# le sujet = nom de pane du soldat ouvert le plus récent ; busy si un de ses sids a un
+# _live <cwd> → "sujet\tlive|busy" pour le workspace ouvert à ce cwd (ended==0 = ouvert),
+# le sujet = nom de pane de l'agent ouvert le plus récent ; busy si un de ses sids a un
 # marqueur frais. Rien n'est écrit : lecture pure du registre.
 _live() {
   local cwd="$1" subj s state=live
@@ -111,56 +111,56 @@ _live() {
 
 # rien du tout ?
 have=0
-for r in "${roots[@]}"; do ls -1 "$r"/equipes/*.md >/dev/null 2>&1 && { have=1; break; }; done
+for r in "${roots[@]}"; do ls -1 "$r"/workspaces/*.md >/dev/null 2>&1 && { have=1; break; }; done
 if [ "$have" = 0 ]; then
   [ "$DATA" = 1 ] && { printf '#meta\t%s\t%s\n' "$me" "$sommet"; exit 0; }
   echo "$title"
-  echo "  (aucune equipe connue — le namespace se peuple a l'ouverture des equipes / aux remontees)"
+  echo "  (no known workspace: the namespace fills up as workspaces open and sync up)"
   exit 0
 fi
 
-# collecte : 1 ligne TSV par equipe → domaine \t equipe \t statut \t etat \t ago \t live
+# collecte : 1 ligne TSV par workspace → domaine \t workspace \t statut \t etat \t ago \t live
 # (dedup par cle : local prioritaire, puis les remontees ; jamais de doublon)
 tmp=$(mktemp); declare -A seen
 for r in "${roots[@]}"; do
-  eqd="$r/equipes"; dbd="$r/debriefs"
+  eqd="$r/workspaces"; dbd="$r/debriefs"
   [ -d "$eqd" ] || continue
   for f in "$eqd"/*.md; do
     [ -e "$f" ] || continue
     key=$(basename "$f" .md)
     [ -n "${seen[$key]:-}" ] && continue
     seen[$key]=1
-    eq=$(_fm "$f" equipe); dom=$(_fm "$f" domaine); st=$(_fm "$f" statut)
+    eq=$(_fm "$f" workspace); dom=$(_fm "$f" domaine); st=$(_fm "$f" statut)
     mc=$(_fm "$f" machine); cwd=$(_fm "$f" cwd)
     [ -n "$eq" ]  || eq="$key"
     # override de regroupement (écrit par `partition`) : prime sur le domaine déclaré.
     # Lu depuis $r → local ET flotte.
     [ -f "$r/grouping/$key" ] && { g=$(head -n1 "$r/grouping/$key" 2>/dev/null); [ -n "$g" ] && dom="$g"; }
-    [ -n "$dom" ] || dom="(sans domaine)"
+    [ -n "$dom" ] || dom="(no domain)"
     [ -n "$st" ]  || st="actif"
     [ -n "$mc" ]  || mc="$me"
     etat="—"; ago=""; live=0
     if { [ -z "$mc" ] || [ "$mc" = "$me" ]; } && [ -n "$cwd" ] && grep -qxF "$cwd" <<<"$live_cwds"; then
-      # équipe LOCALE avec un claude vivant → état LIVE (registre), pas débrief
+      # workspace LOCAL avec un claude vivant → état LIVE (registre), pas report
       IFS=$'\t' read -r etat live < <(_live "$cwd")
-      # état de SUIVI (le soldat l'a enrichi via `equipe etat`) prime sur le titre de pane
+      # état de SUIVI (l'agent l'a enrichi via `workspace state`) prime sur le titre de pane
       if [ -f "$ROOT/etat-live/$key" ]; then
         e=$(grep -v '^[[:space:]]*$' "$ROOT/etat-live/$key" 2>/dev/null | tail -1)
         [ -n "$e" ] && etat="$e"
       fi
-      ago="actif"; [ "$live" = busy ] && ago="en cours"
+      ago="active"; [ "$live" = busy ] && ago="running"
     else
-      # équipe FERMÉE (ou distante) → dernier débrief
+      # workspace FERMÉ (ou distant) → dernier report
       last=$(ls -1 "$dbd/$key"/*.md 2>/dev/null | sort | tail -1)
       if [ -n "$last" ]; then
         e=$(_section "$last" "Etat"); [ -n "$e" ] && etat="$e"
         ago=$(_ago "$(_fm "$last" quand)")
       fi
     fi
-    # ── Rebranchement 3-temps : le HEADLINE vient du `resume` partagé (le présent
-    # authored) s'il existe → il prime sur le sujet de pane / le débrief mort. Les
-    # blocages ouverts s'affichent en tête (⚠N). Fraîcheur = epoch du resume si l'équipe
-    # est fermée/distante. Lu depuis $r → local ET flotte, sans distinction.
+    # ── Rebranchement 3-temps : le HEADLINE vient du `summary` partagé (le présent
+    # authored) s'il existe → il prime sur le sujet de pane / le report mort. Les
+    # blockers ouverts s'affichent en tête (⚠N). Fraîcheur = epoch du summary si le workspace
+    # est fermé/distant. Lu depuis $r → local ET flotte, sans distinction.
     rz=$(_resume_of "$r" "$key"); [ -n "$rz" ] && etat="$rz"
     if [ "$live" = 0 ]; then rza=$(_ago_epoch "$(_resume_epoch "$r" "$key")"); [ -n "$rza" ] && ago="$rza"; fi
     nbloc=$(_bloc_open_of "$r" "$key")
@@ -171,11 +171,11 @@ for r in "${roots[@]}"; do
   done
 done
 
-# --data : sortie machine-lisible pour l'état-major (page Commandement navigable).
-# #meta<TAB>me<TAB>sommet, puis 1 ligne/équipe : machine<TAB>domaine<TAB>equipe<TAB>live<TAB>etat<TAB>ago
+# --data : sortie machine-lisible pour l'home (page org navigable).
+# #meta<TAB>me<TAB>sommet, puis 1 ligne/workspace : machine<TAB>domaine<TAB>workspace<TAB>live<TAB>etat<TAB>ago
 if [ "$DATA" = 1 ]; then
   printf '#meta\t%s\t%s\n' "$me" "$sommet"
-  # régime d'étage par machine (brique 3) : l'état-major matérialise les sous-chefs
+  # régime d'étage par machine (brique 3) : l'home matérialise les sous-leads
   # quand "split". Une ligne par machine présente dans la collecte.
   for m in $(cut -f2 "$tmp" | sort -u); do
     [ -n "$m" ] && printf '#etage\t%s\t%s\n' "$m" "$(_regime_of "$m")"
@@ -186,26 +186,26 @@ if [ "$DATA" = 1 ]; then
   rm -f "$tmp"; exit 0
 fi
 
-# ── apex (général) → chef par machine → ◆ domaine → équipe ────────────────────
+# ── apex (owner) → lead par machine → ◆ domaine → workspace ────────────────────
 echo "$title"
-# machines : self d'abord (ton chef local), puis les autres (alpha). 1 machine = 1 chef.
+# machines : self d'abord (ton lead local), puis les autres (alpha). 1 machine = 1 lead.
 machines=$( { awk -F'\t' -v m="$me" '$2==m{print m; exit}' "$tmp"; cut -f2 "$tmp" | sort -u | grep -vxF "$me"; } )
 nm=$(printf '%s\n' "$machines" | grep -c .)
 mi=0
 printf '%s\n' "$machines" | while IFS= read -r m; do
   [ -n "$m" ] || continue
   mi=$((mi+1)); mbr="├─"; mcont="│  "; [ "$mi" = "$nm" ] && { mbr="└─"; mcont="   "; }
-  # régime d'étage (brique 3). SCINDÉ : un domaine qui GROUPE (≥2 équipes) devient un
-  # vrai sous-chef `⬡` (étage de commandement) ; à plat, ce n'est qu'un label `◆`. Les
-  # singletons restent des feuilles DIRECTES sous le chef (pas d'étage pour 1 équipe).
+  # régime d'étage (brique 3). SCINDÉ : un domaine qui GROUPE (≥2 workspaces) devient un
+  # vrai sous-lead `⬡` (étage d'org) ; à plat, ce n'est qu'un label `◆`. Les
+  # singletons restent des feuilles DIRECTES sous le lead (pas d'étage pour 1 workspace).
   reg=$(_regime_of "$m")
   mdoms=$(awk -F'\t' -v m="$m" '$2==m{print $3}' "$tmp" | sort -u)
   ndm=$(printf '%s\n' "$mdoms" | grep -c .)
   # ⚠ : scindé mais toujours > N enfants directs → les domaines ne partitionnent pas
-  # assez, le général doit répartir (sous-chefs sémantiques = chef-agent, à venir).
-  warn=""; [ "$reg" = split ] && [ "$ndm" -gt "$N_SPAN" ] && warn="  ⚠ réorg (le général doit répartir)"
-  if [ "$m" = "$me" ]; then printf '%s ⬡ chef local — %s%s\n' "$mbr" "$m" "$warn"
-  else                      printf '%s ⬡ chef — %s%s\n'       "$mbr" "$m" "$warn"; fi
+  # assez, l'owner doit répartir (sous-leads sémantiques = lead-agent, à venir).
+  warn=""; [ "$reg" = split ] && [ "$ndm" -gt "$N_SPAN" ] && warn="  ⚠ reorg (the owner must redistribute)"
+  if [ "$m" = "$me" ]; then printf '%s ⬡ local lead: %s%s\n' "$mbr" "$m" "$warn"
+  else                      printf '%s ⬡ lead: %s%s\n'       "$mbr" "$m" "$warn"; fi
   di=0
   printf '%s\n' "$mdoms" | while IFS= read -r d; do
     [ -n "$d" ] || continue
@@ -213,7 +213,7 @@ printf '%s\n' "$machines" | while IFS= read -r m; do
     rows=$(awk -F'\t' -v m="$m" -v d="$d" '$2==m && $3==d{print}' "$tmp")
     ne=$(printf '%s\n' "$rows" | grep -c .)
     if [ "$ne" -ge 2 ]; then
-      # domaine qui groupe → étage : sous-chef `⬡` si scindé, label `◆` sinon
+      # domaine qui groupe → étage : sous-lead `⬡` si scindé, label `◆` sinon
       if [ "$reg" = split ]; then printf '%s%s ⬡ %s\n' "$mcont" "$dbr" "$d"
       else                        printf '%s%s ◆ %s\n' "$mcont" "$dbr" "$d"; fi
       ei=0
@@ -223,7 +223,7 @@ printf '%s\n' "$machines" | while IFS= read -r m; do
         printf '%s%s%s %s %-24s %s %s\n' "$mcont" "$dcont" "$eb" "$dot" "${eq#*/}" "$etat" "${ago:+· $ago}"
       done
     else
-      # singleton → feuille directe sous le chef ; suffixe `· domaine` si déclaré (≠ nom d'équipe)
+      # singleton → feuille directe sous le lead ; suffixe `· domaine` si déclaré (≠ nom de workspace)
       printf '%s\n' "$rows" | while IFS=$'\t' read -r live machine dom eq st etat ago; do
         case "$live" in busy) dot="◆" ;; live) dot="●" ;; *) dot="○" ;; esac
         eqn="${eq#*/}"; suf=""; { [ "$d" != "$eqn" ] && [ "$d" != "$eq" ]; } && suf="  · $d"

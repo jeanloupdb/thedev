@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# @thedev infra heartbeat autonome (DORMANT, coupe 2026-06 pour cout)
-# garnison-run — battement de cœur proactif du serveur (inspiré d'OpenClaw).
+# @thedev infra autonomous heartbeat (DORMANT, cut in 2026-06 for cost)
+# headless-run — battement de cœur proactif du serveur (inspiré d'OpenClaw).
 #
-# Un timer systemd --user lance ce script périodiquement. Il exécute un soldat
-# en garnison qui lit ~/HEARTBEAT.md (checklist : checks récurrents, inbox, rappels),
+# Un timer systemd --user lance ce script périodiquement. Il exécute un agent
+# en headless qui lit ~/HEARTBEAT.md (checklist : checks récurrents, inbox, rappels),
 # fait ce qui est dû, journalise, et n'émet « NOTIFY: <msg> » QUE si quelque
 # chose mérite l'attention de l'utilisateur → le script l'envoie sur Telegram.
 #
-#   garnison-run                   # un battement (défaut)
-#   garnison-run install [30min]   # crée + active le timer systemd --user
-#   garnison-run status            # état timer + dernier journal
-#   garnison-run off               # désactive le timer
+#   headless-run                   # un battement (défaut)
+#   headless-run install [30min]   # crée + active le timer systemd --user
+#   headless-run status            # état timer + dernier journal
+#   headless-run off               # désactive le timer
 #
 # Config : ~/.config/heartbeat/heartbeat.env →
 #   TELEGRAM_BOT_TOKEN=…   TELEGRAM_CHAT_ID=…   (notification ; optionnel)
@@ -42,19 +42,19 @@ notify() { # notify <texte> — best-effort, silencieux si pas de config telegra
 
 cmd_beat() {
   [ -s "$HB_FILE" ] || exit 0          # pas de checklist → rien à faire
-  command -v claude >/dev/null || die "claude CLI introuvable"
+  command -v claude >/dev/null || die "claude CLI not found"
 
   # anti-chevauchement (battement précédent encore en cours)
   exec 9>"$CACHE/.lock"
   flock -n 9 || exit 0
 
-  MISSION="Tu es le HEARTBEAT de ce serveur (exécution automatique périodique, personne ne lit ta sortie en direct).
-1. Lis ~/HEARTBEAT.md.
-2. Fais UNIQUEMENT ce qui y est listé et dû maintenant (checks récurrents ; tâches de la section Inbox ; rappels dont la date est passée).
-3. Mets à jour ~/HEARTBEAT.md : retire/coche les tâches ponctuelles et rappels traités. NE MODIFIE PAS les checks récurrents.
-4. Ajoute UNE ligne au journal ~/.cache/heartbeat/journal.md : « - $(date -Iminutes) : <résumé très bref> ».
-5. Si — et seulement si — quelque chose mérite l'attention de l'utilisateur (anomalie détectée, action corrective faite, rappel échu, tâche d'inbox terminée), termine ta réponse par une ou plusieurs lignes commençant exactement par « NOTIFY: » suivies d'un message concis en français.
-Rien d'anormal et rien de dû → ne notifie pas. Ne lance aucune commande longue (>1 min). Ne touche à rien hors de ce que la checklist demande."
+  MISSION="You are the HEARTBEAT of this server (periodic automatic run, nobody reads your output live).
+1. Read ~/HEARTBEAT.md.
+2. Do ONLY what is listed there and due now (recurring checks; tasks in the Inbox section; reminders whose date has passed).
+3. Update ~/HEARTBEAT.md: remove/tick the one-off tasks and reminders you handled. DO NOT CHANGE the recurring checks.
+4. Add ONE line to the log ~/.cache/heartbeat/journal.md: \"- $(date -Iminutes): <very short summary>\".
+5. If, and only if, something deserves the user's attention (anomaly found, corrective action taken, reminder due, inbox task finished), end your reply with one or more lines starting exactly with \"NOTIFY:\" followed by a concise message.
+Nothing abnormal and nothing due: do not notify. Do not run any long command (>1 min). Touch nothing beyond what the checklist asks."
 
   # Sous systemd --user, le manager peut avoir démarré AVANT un ajout de groupe
   # (ex. docker) → ses services n'ont pas le groupe alors que l'utilisateur l'a.
@@ -80,15 +80,15 @@ cmd_install() {
   mkdir -p "$UNIT_DIR"
   cat > "$UNIT_DIR/heartbeat.service" <<EOF
 [Unit]
-Description=Heartbeat proactif (soldat en garnison lit HEARTBEAT.md)
+Description=Proactive heartbeat (headless agent reads HEARTBEAT.md)
 [Service]
 Type=oneshot
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/.local/bin/garnison-run
+ExecStart=%h/.local/bin/headless-run
 EOF
   cat > "$UNIT_DIR/heartbeat.timer" <<EOF
 [Unit]
-Description=Heartbeat toutes les $every
+Description=Heartbeat every $every
 [Timer]
 OnBootSec=5min
 OnUnitActiveSec=$every
@@ -99,19 +99,19 @@ WantedBy=timers.target
 EOF
   systemctl --user daemon-reload
   systemctl --user enable --now heartbeat.timer
-  printf '✓ heartbeat.timer actif (toutes les %s)\n' "$every"
+  printf '✓ heartbeat.timer active (every %s)\n' "$every"
 }
 
 cmd_status() {
   systemctl --user list-timers heartbeat.timer --no-pager 2>/dev/null | head -3
-  echo "--- journal (5 derniers battements) ---"
-  tail -5 "$CACHE/journal.md" 2>/dev/null || echo "(pas encore de journal)"
+  echo "--- log (last 5 beats) ---"
+  tail -5 "$CACHE/journal.md" 2>/dev/null || echo "(no log yet)"
 }
 
 case "${1:-}" in
   install) shift; cmd_install "$@" ;;
   status)  cmd_status ;;
-  off)     systemctl --user disable --now heartbeat.timer && echo "✓ timer coupé" ;;
+  off)     systemctl --user disable --now heartbeat.timer && echo "✓ timer off" ;;
   ""|now)  cmd_beat ;;
-  *) die "usage: garnison-run [now|install [30min]|status|off]" ;;
+  *) die "usage: headless-run [now|install [30min]|status|off]" ;;
 esac

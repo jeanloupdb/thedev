@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# @thedev commandement remonte les cartes+debriefs locaux vers le sommet (VPS)
-# remonter — pousse ~/.cache/thedev/command/ de CETTE machine vers le SOMMET, dans
+# @thedev org syncs local cards and reports up to the top (VPS)
+# sync-up — pousse ~/.cache/thedev/command/ de CETTE machine vers le SOMMET, dans
 # son sous-arbre command-fleet/<machine>/command/. rsync sur SSH (meme tuyau que ship).
 # Un sous-dossier par machine => --delete sans danger (chacun ne touche que le sien).
 # No-op propre si : pas de sommet declare, sommet injoignable (rattrape au prochain
-# appel), ou si CETTE machine EST le sommet (ses cartes sont deja locales pour carte).
+# appel), ou si CETTE machine EST le sommet (ses cartes sont deja locales pour org-tree).
 #
-#   remonter            pousse maintenant
-#   remonter -n         dry-run : montre les commandes, n'execute rien
+#   sync-up             pousse maintenant
+#   sync-up -n          dry-run : montre les commandes, n'execute rien
 set -u
 SRC="$HOME/.cache/thedev/command"
 SOMMET_FILE="$HOME/.config/thedev-sommet"
@@ -16,22 +16,22 @@ DRY=0; [ "${1:-}" = "-n" ] || [ "${1:-}" = "--dry-run" ] && DRY=1
 machine_self() { local m; m="$(head -n1 "$HOME/.config/dev-vps" 2>/dev/null)"; [ -n "$m" ] || m="$(hostname -s)"; printf '%s' "$m"; }
 me="$(machine_self)"
 
-[ -f "$SOMMET_FILE" ] || { echo "remonter: aucun sommet declare (~/.config/thedev-sommet) — cross-machine off."; exit 0; }
+[ -f "$SOMMET_FILE" ] || { echo "sync-up: no top declared (~/.config/thedev-sommet), cross-machine off."; exit 0; }
 sommet="$(grep -vE '^\s*#|^\s*$' "$SOMMET_FILE" | head -n1 | tr -d '[:space:]')"
-[ -n "$sommet" ] || { echo "remonter: sommet vide — off."; exit 0; }
+[ -n "$sommet" ] || { echo "sync-up: top is empty, off."; exit 0; }
 
 if [ "$me" = "$sommet" ] || [ "$(hostname -s)" = "$sommet" ]; then
-  echo "remonter: cette machine ($me) EST le sommet — rien a pousser (carte lit deja le local)."
+  echo "sync-up: this machine ($me) IS the top, nothing to push (org-tree already reads local data)."
   exit 0
 fi
-[ -d "$SRC" ] || { echo "remonter: rien a pousser (pas de $SRC)."; exit 0; }
+[ -d "$SRC" ] || { echo "sync-up: nothing to push (no $SRC)."; exit 0; }
 
 dest="~/.cache/thedev/command-fleet/$me/command"
 mk="ssh -o ConnectTimeout=10 $sommet mkdir -p $dest"
 rs="rsync -az --delete -e 'ssh -o ConnectTimeout=10' $SRC/ $sommet:$dest/"
 
 if [ "$DRY" = 1 ]; then
-  echo "# dry-run — commandes qui SERAIENT lancees :"
+  echo "# dry-run: commands that WOULD be run:"
   echo "$mk"
   echo "$rs"
   exit 0
@@ -43,13 +43,13 @@ exec 9>"$HOME/.cache/thedev/remonter.lock" 2>/dev/null && { flock -n 9 2>/dev/nu
 
 # 1) prepare le sous-arbre distant (echoue vite si le sommet dort)
 if ! ssh -o ConnectTimeout=10 "$sommet" "mkdir -p $dest" 2>/dev/null; then
-  echo "remonter: sommet '$sommet' injoignable — la remontee attend (retentee au prochain appel)."
+  echo "sync-up: top '$sommet' unreachable, sync up is waiting (retried on next call)."
   exit 0
 fi
 # 2) pousse (--delete borne a MON sous-arbre)
 if rsync -az --delete -e "ssh -o ConnectTimeout=10" "$SRC/" "$sommet:$dest/" 2>/dev/null; then
-  echo "remonter: ✓ arbre mémoire (resume/note/jalon/blocage + cartes) remonté vers $sommet:command-fleet/$me/"
+  echo "sync-up: ✓ memory tree (summary/note/milestone/blocker + cards) synced up to $sommet:command-fleet/$me/"
 else
-  echo "remonter: rsync a echoue vers '$sommet' — reessayer plus tard."
+  echo "sync-up: rsync to '$sommet' failed, retry later."
   exit 0
 fi

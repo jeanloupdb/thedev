@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# @thedev commandement pousse le briefing (l'arbre carte) sur Telegram via tg
-# briefing — envoie l'etat de l'armee (la carte) sur ton Telegram. La "peau" PUSH
-# du contrat (plans/commandement.md). Sur le SOMMET, carte voit toute la flotte
+# @thedev org pushes the briefing (the org tree) to Telegram via tg
+# briefing — envoie l'etat de la flotte (l'org tree) sur ton Telegram. La "peau" PUSH
+# du contrat (plans/org.md). Sur le SOMMET, org-tree voit toute la flotte
 # => briefing complet ; ailleurs, la vue locale. Schedulable (cron/timer) pour un
-# briefing du matin. Sens phone->thedev (ordres) = bot officiel + carte/mission.
+# briefing du matin. Sens phone->thedev (directives) = bot officiel + org-tree/delegate.
 set -u
 TG="$HOME/.local/bin/tg";       [ -x "$TG" ]    || TG=tg
-CARTE="$HOME/.local/bin/arbre"; [ -x "$CARTE" ] || CARTE=arbre
+CARTE="$HOME/.local/bin/org-tree"; [ -x "$CARTE" ] || CARTE=org-tree
 
-command -v "$TG" >/dev/null 2>&1 || { echo "briefing: 'tg' introuvable (canal telegram non configure)"; exit 1; }
+command -v "$TG" >/dev/null 2>&1 || { echo "briefing: 'tg' not found (telegram channel not configured)"; exit 1; }
 
 body="$("$CARTE" 2>/dev/null)"
-[ -n "$body" ] || body="(carte vide)"
+[ -n "$body" ] || body="(empty org tree)"
 # --plain : la carte contient des glyphes d'arbre + des noms libres → pas de Markdown
-"$TG" --plain "briefing — $(date '+%a %d %b %H:%M')
+"$TG" --plain "briefing: $(date '+%a %d %b %H:%M')
 $body"

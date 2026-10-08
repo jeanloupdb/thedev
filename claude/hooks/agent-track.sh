@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 # Hook multi-events Claude Code → TRADUCTEUR vers l'adaptateur moteur (engine event)
 # + animation du titre de pane (pulse ◆↔◇ pendant un tour). L'ÉTAT (registre, busy,
-# sentinelles de mission) est délégué à `engine event` ; restent ICI les mécanismes
+# sentinelles de tâche) est délégué à `engine event` ; restent ICI les mécanismes
 # propres au hook Claude : rename de pane, pulse ◆, et nudge pane-name (stdout injecté
-# dans le contexte du soldat). No-op hors d'un pane zellij.
+# dans le contexte de l'agent). No-op hors d'un pane zellij.
 
-BUSY_DIR="$HOME/.cache/soldat-busy"        # 1 fichier par session active
-NUDGE_DIR="$HOME/.cache/soldat-nudge"      # 1 fichier par session (mtime = dernier nudge pane-name)
-NOTE_NUDGE_DIR="$HOME/.cache/soldat-note-nudge" # idem, pour le rappel « note add » (contexte d'équipe)
-JALON_NUDGE_DIR="$HOME/.cache/soldat-jalon-nudge" # idem, pour le rappel « jalon » (timeline) — rare
-PART_NUDGE_DIR="$HOME/.cache/soldat-partition-nudge" # idem, pour le rappel « reorg » (machine déborde)
-HEAD_MARK_DIR="$HOME/.cache/soldat-head"   # dernier HEAD git vu par session (détecte un commit → nudge resume)
-WAITING_DIR="$HOME/.cache/soldat-waiting"  # Soldat bloqué sur un QCM (contenu = pane_id\tsession)
-PANES_DIR="$HOME/.cache/soldat-panes"      # sid → pane_id\tsession, PERSISTANT tant que le soldat vit
+BUSY_DIR="$HOME/.cache/agent-busy"        # 1 fichier par session active
+NUDGE_DIR="$HOME/.cache/agent-nudge"      # 1 fichier par session (mtime = dernier nudge pane-name)
+NOTE_NUDGE_DIR="$HOME/.cache/agent-note-nudge" # idem, pour le rappel « note add » (contexte de workspace)
+MILESTONE_NUDGE_DIR="$HOME/.cache/agent-milestone-nudge" # idem, pour le rappel « milestone » (timeline) — rare
+PART_NUDGE_DIR="$HOME/.cache/agent-partition-nudge" # idem, pour le rappel « reorg » (machine déborde)
+HEAD_MARK_DIR="$HOME/.cache/agent-head"   # dernier HEAD git vu par session (détecte un commit → nudge summary)
+WAITING_DIR="$HOME/.cache/agent-waiting"  # Agent bloqué sur un QCM (contenu = pane_id\tsession)
+PANES_DIR="$HOME/.cache/agent-panes"      # sid → pane_id\tsession, PERSISTANT tant que l'agent vit
                                            # (busy/waiting ne portent l'info que pendant leur état ;
-                                           #  la colonne de gauche doit pouvoir sauter sur un soldat AU REPOS)
+                                           #  la colonne de gauche doit pouvoir sauter sur un agent AU REPOS)
 
 # Adaptateur moteur résolu en VOISIN (le hook est câblé en chemin absolu du repo dans
 # settings.json → $0 = ce fichier ; ../../bin/engine = l'engine du repo). Pas de
@@ -33,8 +33,8 @@ tp=$(printf '%s' "$payload"  | jq -r '.transcript_path // empty' 2>/dev/null)
 [ -n "$cwd" ] || cwd="$PWD"
 cwd=$(realpath "$cwd" 2>/dev/null || printf '%s' "$cwd")
 
-# Pane « géré » = lancé par soldat-pane/renfort (CLAUDE_PANE_NAME posé) et pas
-# une mission (pane soutien « mission-… »). Seuls ces panes voient leur titre touché.
+# Pane « géré » = lancé par agent-pane/spawn (CLAUDE_PANE_NAME posé) et pas
+# une tâche déléguée (pane job « mission-… »). Seuls ces panes voient leur titre touché.
 is_managed_pane() {
   [ -n "${ZELLIJ_PANE_ID:-}" ] && [ -n "${CLAUDE_PANE_NAME:-}" ] || return 1
   case "$CLAUDE_PANE_NAME" in mission-*) return 1 ;; esac
@@ -47,7 +47,7 @@ is_managed_pane() {
 pane_busy_title() {   # $1 = 1 (en cours) | 0 (au repos)
   is_managed_pane || return 0
   local nm
-  nm=$(reg-soldat get "$sid" 2>/dev/null | cut -f4)
+  nm=$(agent-register get "$sid" 2>/dev/null | cut -f4)
   [ -n "$nm" ] || nm="$CLAUDE_PANE_NAME"
   nm=${nm#◆ }
   [ "$1" = "1" ] && nm="◆ $nm"
@@ -71,58 +71,58 @@ _mark_busy() {
 
 case "$ev" in
   SessionStart)
-    # engine event tient le registre (+ sentinelle de mission) et renvoie le nom de
-    # pane (vide pour une mission → pas de rename). Au démarrage on n'est pas en tour
+    # engine event tient le registre (+ sentinelle de tâche) et renvoie le nom de
+    # pane (vide pour une tâche → pas de rename). Au démarrage on n'est pas en tour
     # → titre nu (strip d'un vieux « ◆ … »). Garde-fou : ne renomme que les panes
     # GÉRÉS (un `claude` tapé à la main dans shell/git garde son nom).
     name=$("$ENGINE" event session-start --session "$sid" --cwd "$cwd" --transcript "$tp" 2>/dev/null)
     if [ -n "${CLAUDE_PANE_NAME:-}" ] && [ -n "$name" ]; then
       zellij action rename-pane -p "$ZELLIJ_PANE_ID" "${name#◆ }" 2>/dev/null
     fi
-    # Où vit ce soldat : sid → pane_id. C'est ce qui permet de lui SAUTER dessus
+    # Où vit cet agent : sid → pane_id. C'est ce qui permet de lui SAUTER dessus
     # depuis la colonne de gauche (focus-pane-id), même quand il est au repos.
     mkdir -p "$PANES_DIR" 2>/dev/null
     printf '%s\t%s\n' "$ZELLIJ_PANE_ID" "${ZELLIJ_SESSION_NAME:-}" > "$PANES_DIR/$sid" 2>/dev/null
-    # Carte d'equipe (brique 1 commandement) : (re)construit le miroir runtime depuis
-    # .thedev/equipe.md + les derives. Principal d'une VRAIE equipe seulement
-    # (is_managed_pane exclut les missions ; -z CLAUDE_PANE_ONCE exclut les asides).
+    # Carte de workspace (brique 1 org) : (re)construit le miroir runtime depuis
+    # .thedev/workspace.md + les derives. Principal d'une VRAIE workspace seulement
+    # (is_managed_pane exclut les tâches ; -z CLAUDE_PANE_ONCE exclut les asides).
     # Best-effort, jamais bloquant.
     if is_managed_pane && [ -z "${CLAUDE_PANE_ONCE:-}" ]; then
-      equipe card --cwd "$cwd" >/dev/null 2>&1 || true
-      # Balayage : matérialise les cartes MANQUANTES des équipes locales récentes (même
-      # source que la liste ÉQUIPES de l'accueil) → aucune équipe ne reste « sans chef »
-      # faute de carte. La carte remonte ensuite au sommet (Stop → remonter). Détaché,
+      workspace card --cwd "$cwd" >/dev/null 2>&1 || true
+      # Balayage : matérialise les cartes MANQUANTES des workspaces locales récentes (même
+      # source que la liste WORKSPACES de l'home) → aucune workspace ne reste « sans lead »
+      # faute de carte. La carte remonte ensuite au sommet (Stop → sync-up). Détaché,
       # best-effort, borné : jamais bloquant pour le SessionStart.
-      setsid timeout 8 equipe sweep </dev/null >/dev/null 2>&1 &
-      # pane-id + sid + transcript du soldat PRINCIPAL, persistés par session → le
-      # débrief riche (debrief-menu, option « r ») sait quel pane cibler et quel
+      setsid timeout 8 workspace sweep </dev/null >/dev/null 2>&1 &
+      # pane-id + sid + transcript de l'agent PRINCIPAL, persistés par session → le
+      # report riche (quit-menu, option « r ») sait quel pane cibler et quel
       # transcript lire au moment du close. Clé = nom de session assaini.
       if [ -n "${ZELLIJ_SESSION_NAME:-}" ]; then
-        md="$HOME/.cache/soldat-main"; mkdir -p "$md" 2>/dev/null \
+        md="$HOME/.cache/agent-main"; mkdir -p "$md" 2>/dev/null \
           && printf '%s\t%s\t%s\n' "$ZELLIJ_PANE_ID" "$sid" "$tp" \
              > "$md/$(printf '%s' "$ZELLIJ_SESSION_NAME" | tr -c 'A-Za-z0-9._-' '_')" 2>/dev/null || true
       fi
-      # Respiration (brique 3 commandement) : une équipe qui NAÎT peut faire déborder le
-      # chef-machine (> N équipes) → matérialiser l'étage des sous-chefs de domaine. La
+      # Respiration (brique 3 org) : un workspace qui NAÎT peut faire déborder le
+      # lead-machine (> N workspaces) → matérialiser l'étage des sous-leads de domaine. La
       # surcharge est « remarquée pendant une session quelconque » (doctrine, event-driven,
       # pas de moniteur debout). `reorg` = écrivain unique du régime ; borné, jamais bloquant.
       timeout 5 reorg >/dev/null 2>&1 || true
-      # GC du contexte d'équipe (`note`) : purge les notes des soldats VRAIMENT quittés
-      # (fermeture délibérée hors rafale du quit), piloté par la cohorte reg-soldat.
-      # Tourne à la RÉOUVERTURE (équipe vivante) — jamais sur SessionEnd. Une équipe
+      # GC du contexte de workspace (`note`) : purge les notes des agents VRAIMENT quittés
+      # (fermeture délibérée hors rafale du quit), piloté par la cohorte agent-register.
+      # Tourne à la RÉOUVERTURE (workspace vivante) — jamais sur SessionEnd. Un workspace
       # close ne déclenche rien → contexte préservé. Best-effort, borné.
       timeout 5 note gc --cwd "$cwd" >/dev/null 2>&1 || true
     fi
     ;;
   UserPromptSubmit)
-    # Un tour démarre → « calcule » (busy + animations). Pour un soldat non géré,
-    # engine event busy pose juste le marqueur vide (l'etat-major n'utilise que le sid).
+    # Un tour démarre → « calcule » (busy + animations). Pour un agent non géré,
+    # engine event busy pose juste le marqueur vide (l'home n'utilise que le sid).
     _mark_busy
 
-    # --- Nudge « note » (stdout → contexte du soldat) : rend le soldat conscient qu'il
-    # enrichit le contexte de l'équipe EN CONTINU (`note add`), pas à la fermeture.
+    # --- Nudge « note » (stdout → contexte de l'agent) : rend l'agent conscient qu'il
+    # enrichit le contexte de le workspace EN CONTINU (`note add`), pas à la fermeture.
     # Établi dès le 1er tour (awareness), puis rafraîchi au plus toutes les 45 min.
-    # Panes gérés, jamais les missions.
+    # Panes gérés, jamais les tâches.
     if [ -n "${CLAUDE_PANE_NAME:-}" ]; then
       case "$CLAUDE_PANE_NAME" in
         mission-*) ;;
@@ -135,21 +135,21 @@ case "$ev" in
             : > "$nnf"                                   # tour 1 : on amorce, on ne dit rien
           elif [ ! -s "$nnf" ]; then
             printf '%s' "$nnow" > "$nnf"                 # tour 2 : note d'intro
-            printf '[note] Ton sujet est clair : pose ta **note d'\''intro** — `note add "<qui tu es · sur quoi tu bosses>"`. Puis enrichis le contexte de l'\''équipe au fil de l'\''eau (pas à la fin).\n'
+            printf '[note] Your topic is clear: write your **intro note**, `note add "<who you are, what you work on>"`. Then feed the workspace context as you go (not at the end).\n'
           else
             nlast=$(cat "$nnf" 2>/dev/null || echo 0)
             if [ $(( nnow - nlast )) -ge 2700 ]; then
               printf '%s' "$nnow" > "$nnf"
-              printf '[note] Entretiens tes notes plutôt que d'\''empiler : regarde `note ls`, `set`/`rm` l'\''obsolète, `add` seulement le vraiment neuf. Le déroulé va dans `jalon`, pas ici.\n'
+              printf '[note] Maintain your notes instead of piling them up: check `note ls`, `set`/`rm` what is stale, `add` only what is truly new. The chronology goes in `milestone`, not here.\n'
             fi
           fi
-          # Rappel « jalon » (timeline), beaucoup plus rare : les commits git nourrissent
-          # déjà la timeline, un jalon manuel ne vaut que pour un cap/décision hors commit.
-          jnf="$JALON_NUDGE_DIR/$sid"
+          # Rappel « milestone » (timeline), beaucoup plus rare : les commits git nourrissent
+          # déjà la timeline, un milestone manuel ne vaut que pour un cap/décision hors commit.
+          jnf="$MILESTONE_NUDGE_DIR/$sid"
           jlast=0; [ -f "$jnf" ] && jlast=$(stat -c %Y "$jnf" 2>/dev/null || echo 0)
           if [ $(( nnow - jlast )) -ge 5400 ]; then
-            mkdir -p "$JALON_NUDGE_DIR" 2>/dev/null && : > "$jnf"
-            printf '[jalon] Un cap franchi ou une décision structurante depuis tout à l'\''heure ? Pose-le dans la timeline : `jalon "<événement>"` (tes commits y remontent déjà tout seuls).\n'
+            mkdir -p "$MILESTONE_NUDGE_DIR" 2>/dev/null && : > "$jnf"
+            printf '[milestone] Reached a step or made a structural decision since earlier? Log it in the timeline: `milestone "<event>"` (your commits already show up there on their own).\n'
           fi
           # Rappel « reorg » : la machine DÉBORDE (état dérivé, PERSISTANT — survit à la
           # fermeture/relance de thedev). Fire dès le 1er tour d'une session relancée, puis
@@ -160,14 +160,14 @@ case "$ev" in
           if [ $(( nnow - plast )) -ge 1800 ]; then
             mkdir -p "$PART_NUDGE_DIR" 2>/dev/null && : > "$pnf"
             pst=$(partition status 2>/dev/null)
-            if printf '%s' "$pst" | grep -q 'déborde'; then
+            if printf '%s' "$pst" | grep -qE 'déborde|overflow'; then
               phead=$(printf '%s' "$pst" | head -1 | sed 's/^ *//')
-              printf '[reorg] %s → déborde le span. Range par thème : `partition prep`, regroupe en ≤7 domaines clairs, `partition apply` (ou délègue à un soldat dédié). L'\''état persiste tant que ce n'\''est pas rangé.\n' "$phead"
+              printf '[reorg] %s → over the span. Group by theme: `partition prep`, regroup into ≤7 clear domains, `partition apply` (or delegate to a dedicated agent). The state persists until it is sorted.\n' "$phead"
             fi
           fi
-          # Rappel « resume » sur COMMIT — déclencheur NATUREL : tu viens de livrer, c'est
-          # exactement quand le résumé d'équipe doit bouger. Fort et ciblé (fire seulement
-          # si un commit est apparu depuis ton dernier tour ET que le resume n'a pas bougé
+          # Rappel « summary » sur COMMIT — déclencheur NATUREL : tu viens de livrer, c'est
+          # exactement quand le résumé de workspace doit bouger. Fort et ciblé (fire seulement
+          # si un commit est apparu depuis ton dernier tour ET que le summary n'a pas bougé
           # récemment → pas de bruit si tu l'as déjà fait).
           newhead=$(git -C "$cwd" rev-parse --short HEAD 2>/dev/null)
           if [ -n "$newhead" ]; then
@@ -176,7 +176,7 @@ case "$ev" in
               nk="$( { head -n1 "$HOME/.config/dev-vps" 2>/dev/null || hostname -s; } | tr -c 'A-Za-z0-9._-' '_')__$(printf '%s' "${ZELLIJ_SESSION_NAME:-}" | tr -c 'A-Za-z0-9._-' '_')"
               rf="$HOME/.cache/thedev/command/resume/$nk.md"; rmt=0; [ -f "$rf" ] && rmt=$(stat -c %Y "$rf" 2>/dev/null || echo 0)
               if [ $(( nnow - rmt )) -ge 300 ]; then
-                printf '[resume] Tu as commité (%s) depuis ton dernier tour, mais le `resume` de l'\''équipe n'\''a pas bougé. Mets-le à jour EN UNE PHRASE maintenant — `resume --suggest` te propose un brouillon. Un chef ne te voit qu'\''à travers lui.\n' "$newhead"
+                printf '[summary] You committed (%s) since your last turn, but the workspace `summary` has not changed. Update it IN ONE SENTENCE now: `summary --suggest` drafts one for you. A lead only sees you through it.\n' "$newhead"
               fi
             fi
             mkdir -p "$HEAD_MARK_DIR" 2>/dev/null; printf '%s' "$newhead" > "$hmk"
@@ -184,11 +184,11 @@ case "$ev" in
       esac
     fi
 
-    # --- Nudge pane-name (stdout → contexte du soldat) — mécanisme propre au hook ---
-    # Uniquement pour les panes gérés, jamais pour les missions.
+    # --- Nudge pane-name (stdout → contexte de l'agent) — mécanisme propre au hook ---
+    # Uniquement pour les panes gérés, jamais pour les tâches.
     [ -n "${CLAUDE_PANE_NAME:-}" ] || exit 0
     case "$CLAUDE_PANE_NAME" in mission-*) exit 0 ;; esac
-    row=$(reg-soldat get "$sid" 2>/dev/null)
+    row=$(agent-register get "$sid" 2>/dev/null)
     [ -n "$row" ] || exit 0
     name=$(printf '%s' "$row" | cut -f4)
     started=$(printf '%s' "$row" | cut -f6)
@@ -202,7 +202,7 @@ case "$ev" in
         # pire que le défaut (il oriente vers la mauvaise conversation).
         if [ "$age" -ge 2700 ] && [ "$since" -ge 2700 ]; then
           mkdir -p "$NUDGE_DIR" 2>/dev/null && : > "$nf"
-          printf '[pane-name] Ton pane s'\''appelle « %s ». Si la discussion a bifurqué vers un autre sujet, mets-le à jour : pane-name "◆ <2-3 mots>". Sinon ignore ce rappel.\n' "$name"
+          printf '[pane-name] Your pane is named "%s". If the discussion moved to another topic, update it: pane-name "◆ <2-3 words>". Otherwise ignore this reminder.\n' "$name"
         fi
         ;;
       *)
@@ -210,26 +210,26 @@ case "$ev" in
         # toutes les 20 min.
         if [ "$age" -ge 600 ] && [ "$since" -ge 1200 ]; then
           mkdir -p "$NUDGE_DIR" 2>/dev/null && : > "$nf"
-          printf '[pane-name] Ce pane s'\''appelle encore « %s ». Si un sujet s'\''est dégagé dans cette conversation, nomme-le : pane-name "◆ <2-3 mots>". Sinon ignore ce rappel.\n' "$name"
+          printf '[pane-name] This pane is still named "%s". If a topic has emerged in this conversation, name it: pane-name "◆ <2-3 words>". Otherwise ignore this reminder.\n' "$name"
         fi
         ;;
     esac
     ;;
   Stop)
-    # Fin de tour → plus busy (+ sentinelle turn-ended de mission, via l'adaptateur),
+    # Fin de tour → plus busy (+ sentinelle turn-ended de tâche, via l'adaptateur),
     # puis titre du pane remis au nom nu.
     "$ENGINE" event turn-end --session "$sid" --cwd "$cwd" --transcript "$tp" 2>/dev/null
     pane_busy_title 0
     # Remontée quasi-live vers le sommet (multi-machine) : à la fin d'un tour, pousse le
     # cache mémoire → DÉBOUNCÉE (≥45s), en ARRIÈRE-PLAN détaché, bornée (ConnectTimeout
-    # dans remonter). rsync delta-only, zéro Claude/crédit. No-op si pas de sommet / on
-    # EST le sommet (remonter s'auto-annule) ; verrou non-bloquant côté remonter.
+    # dans sync-up). rsync delta-only, zéro Claude/crédit. No-op si pas de sommet / on
+    # EST le sommet (sync-up s'auto-annule) ; verrou non-bloquant côté sync-up.
     if is_managed_pane; then
       rmk="$HOME/.cache/thedev/last-remonter"
       rlast=0; [ -f "$rmk" ] && rlast=$(stat -c %Y "$rmk" 2>/dev/null || echo 0)
       if [ $(( $(date +%s) - rlast )) -ge 45 ]; then
         mkdir -p "$HOME/.cache/thedev" 2>/dev/null && : > "$rmk"
-        setsid remonter </dev/null >/dev/null 2>&1 &
+        setsid sync-up </dev/null >/dev/null 2>&1 &
       fi
     fi
     ;;
@@ -237,20 +237,20 @@ case "$ev" in
     # Quit/exit → l'adaptateur horodate la fin (markend) et nettoie busy/nudge ; on
     # remet le titre nu (nettoie un ◆ figé, ex. /exit → shell keep-alive).
     "$ENGINE" event session-end --session "$sid" --cwd "$cwd" 2>/dev/null
-    # Plus de débrief-au-quit : le contexte d'équipe ne se résume PLUS à la fermeture.
-    # Il est alimenté EN CONTINU par les soldats (`note add`), et ces notes persistent
+    # Plus de report-au-quit : le contexte de workspace ne se résume PLUS à la fermeture.
+    # Il est alimenté EN CONTINU par les agents (`note add`), et ces notes persistent
     # (fichiers cache) après le close. Rien à flusher ici — l'info est déjà remontée.
     # Cosmétique (titre nu) : peut hanger sans conséquence (session qui ferme), et le
     # `timeout` de pane_busy_title borne l'attente.
     pane_busy_title 0
     # Flush final vers le sommet : pousse les derniers écrits (best-effort, détaché ;
-    # verrou non-bloquant → saute si un remonter tourne déjà).
-    if is_managed_pane; then setsid remonter </dev/null >/dev/null 2>&1 & fi
+    # verrou non-bloquant → saute si un sync-up tourne déjà).
+    if is_managed_pane; then setsid sync-up </dev/null >/dev/null 2>&1 & fi
     ;;
   PreToolUse)
     # Rafraîchit aussi le marqueur busy (activité en cours).
     [ -f "$BUSY_DIR/$sid" ] && touch "$BUSY_DIR/$sid" 2>/dev/null
-    # Le soldat va poser un QCM bloquant (AskUserQuestion) → il TE bloque, état « t'attend »
+    # L'agent va poser un QCM bloquant (AskUserQuestion) → il TE bloque, état « t'attend »
     # (≠ « calcule »). Le matcher du hook restreint déjà à cet outil ; on revérifie
     # tool_name par sécurité.
     case "$(printf '%s' "$payload" | jq -r '.tool_name // empty' 2>/dev/null)" in
@@ -270,7 +270,7 @@ case "$ev" in
     # pas purgé par le filet anti-orphelin de pane-pulse. Un tour INTERROMPU (Stop non tiré)
     # cesse d'être rafraîchi → le marqueur vieillit → pane-pulse le purge → le ◆ s'éteint.
     [ -f "$BUSY_DIR/$sid" ] && touch "$BUSY_DIR/$sid" 2>/dev/null
-    # Tu as répondu au QCM → le soldat reprend : retour en « calcule ».
+    # Tu as répondu au QCM → l'agent reprend : retour en « calcule ».
     case "$(printf '%s' "$payload" | jq -r '.tool_name // empty' 2>/dev/null)" in
       AskUserQuestion) _mark_busy ;;
     esac

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# @thedev session menu de fermeture propre de la session
-"""debrief-menu — modal déclenché par Ctrl+Q, et par « accueil » dans la
+# @thedev session menu to cleanly close the session
+"""quit-menu — modal déclenché par Ctrl+Q, et par « home » dans la
 colonne de gauche. Lancé en pane FLOTTANT close_on_exit.
 
 Trois lignes SÉLECTIONNABLES (↑↓ ou clic, Entrée valide) :
@@ -8,9 +8,9 @@ Trois lignes SÉLECTIONNABLES (↑↓ ou clic, Entrée valide) :
     fermer     tuer la session
     annuler
 
-Ce que « fermer » coupe (missions, soutiens, gardes qui TOURNENT) est écrit
+Ce que « fermer » coupe (tâches, jobs, automatisations qui TOURNENT) est écrit
 sous « fermer » comme une phrase en clair et en atténué — « ça coupe aussi
-2 soutiens ». C'était auparavant un « ✗ 2 soutiens » rouge, aligné nulle part :
+2 jobs ». C'était auparavant un « ✗ 2 jobs » rouge, aligné nulle part :
 le glyphe et la couleur criaient l'alerte sans jamais dire ce qui se passait.
 L'information est la même, mais elle se lit.
 
@@ -36,7 +36,7 @@ def sh(cmd, timeout=4):
         return ""
 
 
-def equipe():
+def workspace():
     """Nom de session FIABLE : dans un pane lancé par un keybind,
     $ZELLIJ_SESSION_NAME peut être vide → repli sur la session marquée
     « (current) ». CRITIQUE : sans ce repli, `delete-session --force ""` (nom
@@ -52,22 +52,22 @@ def equipe():
 
 def impact(eq):
     """Ce que « fermer » va couper, en morceaux de phrase prêts à assembler
-    (« 2 soutiens », « la garde « veille » »). Vide si l'equipe est inerte."""
+    (« 2 jobs », « automation veille »). Vide si le workspace est inerte."""
     if not eq:
         return []
-    return [l.strip() for l in sh(["debrief-impact", eq]).splitlines() if l.strip()]
+    return [l.strip() for l in sh(["quit-impact", eq]).splitlines() if l.strip()]
 
 
 def enumere(parts):
-    """« a », « a et b », « a, b et c » — une énumération qui se lit à voix
+    """« a », « a and b », « a, b and c » — une énumération qui se lit à voix
     haute. Le « · » d'avant était un séparateur de tableau posé dans une phrase."""
     if len(parts) <= 1:
         return "".join(parts)
-    return ", ".join(parts[:-1]) + " et " + parts[-1]
+    return ", ".join(parts[:-1]) + " and " + parts[-1]
 
 
 def main(scr):
-    eq = equipe()
+    eq = workspace()
     hits = impact(eq)
     curses.use_default_colors()
     try:
@@ -89,25 +89,25 @@ def main(scr):
     scr.keypad(True)
 
     # (touche, libellé, description, couleur, décision)
-    opts = [("d", "détacher", "la session reste vivante", GREEN, "detach"),
-            ("f", "fermer",   "tuer la session",          RED,   "kill"),
-            (None, "annuler", "",                         DIM,   None)]
+    opts = [("d", "detach", "session keeps running", GREEN, "detach"),
+            ("c", "close",  "kill the session",      RED,   "kill"),
+            (None, "cancel", "",                      DIM,   None)]
     # La colonne des descriptions se cale sur le plus long libellé — trois
     # espaces après, jamais une tabulation devinée. Ajouter une entrée ne
     # décale donc plus rien à la main.
     col = max(len(o[1]) for o in opts) + 3
-    note = ("ça coupe aussi " + enumere(hits)) if hits else ""
+    note = ("also stops " + enumere(hits)) if hits else ""
     sel = 0
 
     while True:
         scr.erase()
         h, w = scr.getmaxyx()
         # Le bloc est construit d'abord (lignes + largeur), puis posé centré :
-        # sa taille dépend du nom d'équipe et de l'annotation, on ne peut pas
+        # sa taille dépend du nom de workspace et de l'annotation, on ne peut pas
         # la coder en dur.
-        head = "Quitter %s" % (eq or "?")
+        head = "Quit %s" % (eq or "?")
         # L'annotation passe à la ligne plutôt que d'être coupée : une liste
-        # tronquée à « 2 missions, 3 soutiens… » cacherait précisément ce qu'on
+        # tronquée à « 2 tasks, 3 jobs… » cacherait précisément ce qu'on
         # est en train de tuer.
         nlines = textwrap.wrap(note, max(12, min(w - 4, 48) - col)) if note else []
         lines = [("head", None), ("blank", None)]
@@ -127,8 +127,8 @@ def main(scr):
                 break
             try:
                 if kind == "head":
-                    scr.addnstr(y, x, "Quitter", max(0, w - x - 1), curses.A_BOLD)
-                    scr.addnstr(y, x + 8, eq or "?", max(0, w - x - 9), DIM)
+                    scr.addnstr(y, x, "Quit", max(0, w - x - 1), curses.A_BOLD)
+                    scr.addnstr(y, x + 5, eq or "?", max(0, w - x - 6), DIM)
                 elif kind == "note":
                     scr.addnstr(y, x + col, nlines[i], max(0, w - x - col - 1), DIM)
                 elif kind == "opt":
@@ -165,7 +165,7 @@ def main(scr):
             return opts[sel][4]
         elif c in (ord("d"), ord("D")):
             return "detach"
-        elif c in (ord("f"), ord("F")):
+        elif c in (ord("c"), ord("C")):
             return "kill"
         elif c == curses.KEY_MOUSE:
             try:
@@ -180,7 +180,7 @@ def main(scr):
 
 
 if __name__ == "__main__":
-    eq_name = equipe()
+    eq_name = workspace()
     decision = curses.wrapper(main)
     if decision == "detach":
         subprocess.run(["zellij", "action", "detach"])
@@ -188,6 +188,6 @@ if __name__ == "__main__":
         # FERMER = tuer la session, POINT. Garde-fou : jamais delete-session
         # sans nom confirmé (un nom vide viserait toutes les sessions).
         if not eq_name:
-            sys.stderr.write("Session introuvable — rien fermé (sécurité).\n")
+            sys.stderr.write("Session not found, nothing closed (safety).\n")
             sys.exit(1)
         subprocess.run(["zellij", "delete-session", "--force", eq_name])

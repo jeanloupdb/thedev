@@ -1,28 +1,28 @@
 #!/usr/bin/env bash
-# @thedev liens ouvre une equipe aux missions entrantes (watcher inbox, modele via Model:)
-# thedev-link — ouvre/ferme une EQUIPE aux MISSIONS (liens thedev, cross-machine).
-# Voir NAMING.md + plans/thedev-liens.md. Modèle plat : des equipes pairs s'envoient
-# des missions ; ici on est le CÔTÉ QUI REÇOIT (le watcher + l'exécution).
+# @thedev liens opens a workspace to incoming tasks (inbox watcher, model via Model:)
+# thedev-link — ouvre/ferme une WORKSPACE aux TASKS (liens thedev, cross-machine).
+# Voir NAMING.md + plans/thedev-liens.md. Modèle plat : des workspaces pairs s'envoient
+# des tasks ; ici on est le CÔTÉ QUI REÇOIT (le watcher + l'exécution).
 #
-#   thedev-link open      lance le watcher de l'equipe courante (dans le camp) + s'inscrit
+#   thedev-link open      lance le watcher de le workspace courante (dans jobs) + s'inscrit
 #   thedev-link close     arrête le watcher + se désinscrit
-#   thedev-link status    ouvert ? combien de missions en cours ?
+#   thedev-link status    ouvert ? combien de tasks en cours ?
 #
-# Le watcher (soutien bash, gratuit) surveille l'inbox ; à l'arrivée d'une mission il lance
-# un soutien-mission = `claude "<mission>"` INTERACTIF (abonnement, pas `-p`/crédits), qui
-# écrit son résultat dans l'outbox. Séquentiel (1 mission à la fois). Timeout 600s défaut.
-# Une mission plus vieille que MISSION_TTL (défaut 600s) est écartée (stale) sans être exécutée.
+# Le watcher (job bash, gratuit) surveille l'inbox ; à l'arrivée d'une task il lance
+# un job-task = `claude "<task>"` INTERACTIF (abonnement, pas `-p`/crédits), qui
+# écrit son résultat dans l'outbox. Séquentiel (1 task à la fois). Timeout 600s défaut.
+# Une task plus vieille que MISSION_TTL (défaut 600s) est écartée (stale) sans être exécutée.
 set -u
 ROOT="$HOME/.cache/thedev"
 me="$(basename "$0")"
 
 # Adaptateur moteur (engine read …) résolu en VOISIN de ce script (relocatable) :
 # le watcher reçoit déjà $0 en chemin absolu (readlink -f). Permet d'extraire le
-# résultat d'une mission sans connaître le schéma de transcript du moteur.
+# résultat d'une task sans connaître le schéma de transcript du moteur.
 _self="$0"; case "$_self" in */*) ;; *) _self="$(command -v -- "$_self")" ;; esac
 ENGINE="$(dirname "$(readlink -f -- "$_self")")/engine"
 
-equipe_name()  { printf '%s' "${ZELLIJ_SESSION_NAME:-$(basename "$(pwd -P)")}"; }
+workspace_name()  { printf '%s' "${ZELLIJ_SESSION_NAME:-$(basename "$(pwd -P)")}"; }
 machine_name() { cat "$HOME/.config/dev-vps" 2>/dev/null || hostname -s; }
 
 # alias → id de modèle complet (l'émetteur peut écrire `Model: fable`). Un id
@@ -38,44 +38,44 @@ _norm_model() {
 }
 
 cmd_open() {
-  local eq cwd; eq="$(equipe_name)"; cwd="$(pwd -P)"
-  command -v soutien >/dev/null 2>&1 || { echo "✗ soutien requis (le camp)"; exit 1; }
-  soutien "link-$eq" -- "$(readlink -f "$0")" __watch "$eq" "$cwd"
-  echo "✓ equipe '$eq' OUVERTE aux missions — watcher dans le camp ('soutien list')."
+  local eq cwd; eq="$(workspace_name)"; cwd="$(pwd -P)"
+  command -v job >/dev/null 2>&1 || { echo "✗ job is required (jobs page)"; exit 1; }
+  job "link-$eq" -- "$(readlink -f "$0")" __watch "$eq" "$cwd"
+  echo "✓ workspace '$eq' OPEN to tasks, watcher in jobs ('job list')."
 }
 
 cmd_close() {
-  local eq; eq="$(equipe_name)"
-  soutien kill "link-$eq" 2>/dev/null
+  local eq; eq="$(workspace_name)"
+  job kill "link-$eq" 2>/dev/null
   rm -f "$ROOT/links/$eq"
-  echo "✓ equipe '$eq' FERMÉE aux missions."
+  echo "✓ workspace '$eq' CLOSED to tasks."
 }
 
 cmd_status() {
-  local eq; eq="$(equipe_name)"
+  local eq; eq="$(workspace_name)"
   if [ -f "$ROOT/links/$eq" ]; then
-    echo "● OUVERT :"; sed 's/^/   /' "$ROOT/links/$eq"
-    echo "   missions en cours : $(find "$ROOT/spaces/$eq/work" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)"
+    echo "● OPEN:"; sed 's/^/   /' "$ROOT/links/$eq"
+    echo "   running tasks: $(find "$ROOT/spaces/$eq/work" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)"
   else
-    echo "○ FERMÉ — l'equipe '$eq' n'écoute pas (thedev-link open pour ouvrir)."
+    echo "○ CLOSED: workspace '$eq' is not listening (thedev-link open to open it)."
   fi
 }
 
-# ── LE WATCHER (tourne comme soutien dans le camp) ───────────────────────────
+# ── LE WATCHER (tourne comme job dans jobs) ───────────────────────────
 cmd_watch() {
   local eq="$1" cwd="$2"
   local sdir="$ROOT/spaces/$eq" reg="$ROOT/links/$eq"
   WATCHER_START=$(date +%s)   # global lu par _process pour distinguer backlog / file live
   mkdir -p "$sdir"/inbox "$sdir"/outbox "$sdir"/work "$sdir"/done "$ROOT/links"
   cat > "$reg" <<EOF
-equipe=$eq
+workspace=$eq
 machine=$(machine_name)
 cwd=$cwd
 watcher_pid=$$
 opened=$(date -Iseconds)
 EOF
-  trap 'rm -f "$reg"; echo "🔗 watcher '"'"$eq"'"' arrêté."; exit 0' EXIT INT TERM
-  echo "🔗 watcher '$eq' ACTIF — inbox: $sdir/inbox (Ctrl-C pour fermer)"
+  trap 'rm -f "$reg"; echo "🔗 watcher '"'"$eq"'"' stopped."; exit 0' EXIT INT TERM
+  echo "🔗 watcher '$eq' ACTIVE, inbox: $sdir/inbox (Ctrl-C to close)"
   local m id
   while true; do
     for m in "$sdir"/inbox/*.mission; do
@@ -83,9 +83,9 @@ EOF
       id="$(basename "$m" .mission)"
       mkdir -p "$sdir/work/$id"
       mv "$m" "$sdir/work/$id/mission" 2>/dev/null || continue
-      echo "→ mission $id reçue, traitement…"
+      echo "→ task $id received, processing…"
       _process "$eq" "$cwd" "$id"
-      echo "✓ mission $id terminée."
+      echo "✓ task $id done."
     done
     if command -v inotifywait >/dev/null 2>&1; then
       inotifywait -q -t 30 -e create,moved_to,close_write "$sdir/inbox" >/dev/null 2>&1
@@ -100,37 +100,37 @@ _process() {
   local sdir="$ROOT/spaces/$eq" wdir="$ROOT/spaces/$eq/work/$3"
   local out="$sdir/outbox/$id.result"
 
-  # Garde-fou TTL — n'écarte QUE le BACKLOG : une mission déposée AVANT le démarrage
+  # Garde-fou TTL — n'écarte QUE le BACKLOG : une task déposée AVANT le démarrage
   # de CE watcher (file restée d'une session précédente, émetteur très probablement
-  # parti) ET trop vieille. Une mission arrivée APRÈS le démarrage = file LIVE → jamais
-  # écartée, même si elle a patienté des heures derrière une longue mission (en async,
-  # son résultat reste récupérable via `mission result`). Surchargeable via MISSION_TTL.
+  # parti) ET trop vieille. Une task arrivée APRÈS le démarrage = file LIVE → jamais
+  # écartée, même si elle a patienté des heures derrière une longue task (en async,
+  # son résultat reste récupérable via `delegate result`). Surchargeable via MISSION_TTL.
   local created cepoch age ttl="${MISSION_TTL:-600}"
   created="$(grep -i '^Created:' "$wdir/mission" | head -1 | cut -d' ' -f2-)"
   cepoch="$(date -d "$created" +%s 2>/dev/null || echo 0)"
   if [ "${cepoch:-0}" -gt 0 ] && [ "$cepoch" -lt "${WATCHER_START:-0}" ]; then
     age=$(( $(date +%s) - cepoch ))
     if [ "$age" -gt "$ttl" ]; then
-      printf 'Status: stale\nFinished: %s\n\nMission écartée : backlog déposé il y a %ss (TTL %ss) avant le démarrage du watcher — émetteur probablement parti, non exécutée.\n' \
+      printf 'Status: stale\nFinished: %s\n\nTask discarded: backlog dropped %ss ago (TTL %ss) before the watcher started, sender probably gone, not run.\n' \
         "$(date -Iseconds)" "$age" "$ttl" > "$out"
       cp "$out" "$wdir/result" 2>/dev/null
       rm -rf "$sdir/done/$id" 2>/dev/null; mv "$wdir" "$sdir/done/$id" 2>/dev/null
-      echo "⏭ mission $id écartée (backlog stale : ${age}s > ${ttl}s)"
+      echo "⏭ task $id discarded (stale backlog: ${age}s > ${ttl}s)"
       return 0
     fi
   fi
 
   # Attente du résultat : pilotée par la VIVACITÉ du pane, pas par un timeout fixe.
-  # Un `Timeout:` dans la mission = plafond DUR optionnel (utile pour borner une
-  # mission courte). Absent = pas de plafond : on attend tant que le soutien-mission
+  # Un `Timeout:` dans la task = plafond DUR optionnel (utile pour borner une
+  # task courte). Absent = pas de plafond : on attend tant que le job-task
   # tourne (un workflow de refonte peut durer des heures). Garde-fou ultime
   # MISSION_HARDCAP (défaut 6 h) pour qu'un process vivant-mais-bloqué ne fige
-  # pas l'equipe indéfiniment (le watcher est séquentiel). 0 = aucun plafond.
+  # pas le workspace indéfiniment (le watcher est séquentiel). 0 = aucun plafond.
   local timeout body hardcap="${MISSION_HARDCAP:-21600}"
-  timeout="$(grep -i '^Timeout:' "$wdir/mission" | head -1 | tr -dc '0-9')"   # vide = pas de plafond mission
+  timeout="$(grep -i '^Timeout:' "$wdir/mission" | head -1 | tr -dc '0-9')"   # vide = pas de plafond task
   body="$(awk 'f{print} /^[[:space:]]*$/{f=1}' "$wdir/mission")"
 
-  # Modèle imposé par la mission (en-tête `Model:`). Absent = défaut machine.
+  # Modèle imposé par la task (en-tête `Model:`). Absent = défaut machine.
   local model model_id="" model_line=""
   model="$(grep -i '^Model:' "$wdir/mission" | head -1 | cut -d: -f2- | tr -d '[:space:]')"
   if [ -n "$model" ]; then
@@ -138,43 +138,44 @@ _process() {
     model_line="export CLAUDE_PANE_MODEL=$(printf '%q' "$model_id")"
   fi
   cat > "$wdir/prompt" <<EOF
-Tu es un soutien-mission de thedev (réseau d'equipes pairs — voir ~/.claude/CLAUDE.md et NAMING.md).
-On t'a envoyé cette MISSION via un lien depuis une autre equipe :
+You are a thedev task job (network of peer workspaces, see ~/.claude/CLAUDE.md and NAMING.md).
+This TASK was sent to you through a link from another workspace:
 
---- MISSION ---
+--- TASK ---
 $body
---- FIN MISSION ---
+--- END TASK ---
 
-Exécute-la dans cette equipe (« $eq », dossier $cwd). Tu peux lancer d'autres soutiens si utile.
-Quand tu as TERMINÉ, écris ton résultat (texte clair, concis, le résultat seulement) ainsi :
-  1. écris-le dans : $out.tmp
-  2. puis renomme : mv $out.tmp $out
-N'écris ce fichier qu'UNE fois, à la toute fin — c'est lui qui signale la fin
-(et déclenche la fermeture de ce pane). Si tu lances un workflow ou des agents
-en arrière-plan, ATTENDS leur fin complète avant d'écrire ce fichier : l'écrire
-trop tôt tuerait le travail encore en cours.
-(Filet : si tu n'écris pas ce fichier, ta DERNIÈRE réponse sera capturée comme
-résultat — termine donc toujours par le résultat complet, autonome.)
-Reste STRICTEMENT dans le périmètre de cette equipe (règles de ~/.claude/CLAUDE.md).
+Carry it out in this workspace ("$eq", folder $cwd). You may launch other jobs if useful.
+When you are DONE, write your result (plain, concise text, the result only) like this:
+  1. write it to: $out.tmp
+  2. then rename it: mv $out.tmp $out
+Write this file only ONCE, at the very end: it is what signals completion
+(and triggers closing this pane). If you launch a workflow or agents
+in the background, WAIT until they have fully finished before writing this file: writing it
+too early would kill the work still in progress.
+(Safety net: if you do not write this file, your LAST reply will be captured as the
+result, so always end with the complete, self-contained result.)
+Stay STRICTLY within the scope of this workspace (rules in ~/.claude/CLAUDE.md).
 EOF
   cat > "$wdir/run.sh" <<EOF
 #!/usr/bin/env bash
 cd $(printf '%q' "$cwd") || exit 1
-# Via engine launch (→ soldat-pane) : le soldat de mission reçoit la surcouche
-# zellij (soutien, pane-name, vocabulaire thedev) et les bons flags. ONCE=1 →
+# Via engine launch (→ agent-pane) : l'agent de task reçoit la surcouche
+# zellij (job, pane-name, vocabulaire thedev) et les bons flags. ONCE=1 →
 # pas de keep-alive ni de sleep ; PANE_NAME=mission-* → le hook SessionStart
-# n'enregistre pas et ne renomme pas (pane géré par soutien).
-unset CLAUDE_RESUME_ID   # une mission est toujours une session neuve
-export CLAUDE_PANE_ONCE=1 CLAUDE_PANE_NAME=$(printf '%q' "mission-$id")
+# n'enregistre pas et ne renomme pas (pane géré par job).
+unset CLAUDE_RESUME_ID   # une task est toujours une session neuve
+export CLAUDE_PANE_ONCE=1 CLAUDE_PANE_NAME=$(printf '%q' "task-$id")
 $model_line
 exec engine launch -- "\$(cat $(printf '%q' "$wdir/prompt"))"
 EOF
   chmod +x "$wdir/run.sh"
-  soutien "mission-$id" -- "$wdir/run.sh"
-  # Boucle tant que : pas de résultat ET (pane vivant) ET (sous le plafond mission,
-  # s'il y en a un) ET (sous le hardcap). On sonde la vivacité du pane via soutien
+  # --close : le pane se ferme seul a la fin de claude (sinon les panes EXITED s empilent dans jobs)
+  job --close "task-$id" -- "$wdir/run.sh"
+  # Boucle tant que : pas de résultat ET (pane vivant) ET (sous le plafond task,
+  # s'il y en a un) ET (sous le hardcap). On sonde la vivacité du pane via job
   # plutôt que de parier sur une durée. grace : laisse 2 sondes au pane pour
-  # apparaître dans le registre soutien avant de le croire mort.
+  # apparaître dans le registre job avant de le croire mort.
   local waited=0 grace=0 reason="" te tp tmt now idle="${MISSION_IDLE_GRACE:-30}" tidle="${MISSION_TRANSCRIPT_IDLE:-150}"
   while [ ! -f "$out" ]; do
     sleep 3; waited=$((waited+3)); now=$(date +%s)
@@ -194,7 +195,7 @@ EOF
       tmt=$(stat -c %Y "$tp" 2>/dev/null || echo "$now")
       [ $(( now - tmt )) -ge "$tidle" ] && { reason="transcript-idle"; break; }
     fi
-    if [ "$grace" -ge 4 ] && ! soutien alive "mission-$id" 2>/dev/null; then reason="dead"; break; fi
+    if [ "$grace" -ge 4 ] && ! job alive "task-$id" 2>/dev/null; then reason="dead"; break; fi
     # Boot-grace : aucun signe de vie de la SESSION (ni transcript_path posé par
     # SessionStart, ni turn-ended) après boot s → la session n'a jamais démarré
     # (dialogue trust/permissions bloquant, crash au boot…). On conclut tout de
@@ -206,9 +207,9 @@ EOF
   done
 
   # Capture d'écran du pane AVANT de le tuer (révèle un dialogue interactif bloquant,
-  # une erreur au boot…) → archivée avec la mission. Puis kill.
-  soutien logs "mission-$id" > "$wdir/screen.txt" 2>/dev/null || true
-  soutien kill "mission-$id" 2>/dev/null
+  # une erreur au boot…) → archivée avec la task. Puis kill.
+  job logs "task-$id" > "$wdir/screen.txt" 2>/dev/null || true
+  job kill "task-$id" 2>/dev/null
 
   # SOURCE DE VÉRITÉ : le transcript JSONL (écrit par Claude Code, pas par le LLM).
   # Toujours archivé → on a TOUJOURS le déroulé exact, succès comme échec.
@@ -232,9 +233,9 @@ EOF
       # Pas même un message dans le transcript → la session n'a jamais vraiment
       # démarré (dialogue interactif bloquant ? crash au boot ?). screen.txt joint.
       local st="failed"
-      case "$reason" in dead) st="crashed" ;; hardcap) st="hung" ;; never-started) st="never-started (dossier non approuvé ? dialogue bloquant ? voir screen.txt)" ;; esac
-      printf 'Status: %s\nReason: %s\nFinished: %s\n\nAucune réponse dans le transcript (%s). Session jamais démarrée ? Voir done/%s/{screen.txt,transcript.jsonl} sur la machine.\n' \
-        "$st" "${reason:-arrêt}" "$(date -Iseconds)" "${tp:-transcript_path inconnu}" "$id" > "$out"
+      case "$reason" in dead) st="crashed" ;; hardcap) st="hung" ;; never-started) st="never-started (folder not trusted? blocking dialog? see screen.txt)" ;; esac
+      printf 'Status: %s\nReason: %s\nFinished: %s\n\nNo reply in the transcript (%s). Session never started? See done/%s/{screen.txt,transcript.jsonl} on the machine.\n' \
+        "$st" "${reason:-stopped}" "$(date -Iseconds)" "${tp:-unknown transcript_path}" "$id" > "$out"
     fi
   fi
   cp "$out" "$wdir/result" 2>/dev/null

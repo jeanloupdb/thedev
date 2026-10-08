@@ -1,26 +1,28 @@
 #!/usr/bin/env bash
-# @thedev run lance et gere tout process long-running dans la sandbox (dedup, vivacite, soutien alive)
-# soutien — wrapper zellij pour piloter les panes de la sandbox (lancés par Claude ou toi).
+# @thedev run launches and manages any long-running process in the jobs page (dedup, liveness, job alive)
+# job — wrapper zellij pour piloter les panes de la sandbox (lancés par Claude ou toi).
 #
 # Usage:
-#   soutien <name> -- <cmd>             # lance dans la sandbox par défaut
-#   soutien --tab <tab> <name> -- <cmd> # tab spécifique (créée si absente)
-#   soutien --floating <name> -- <cmd>  # pane flottant au lieu d'intégré
-#   soutien list                        # liste les agents actifs
-#   soutien kill <name>                 # tue un agent par nom
-#   soutien cleanup                     # ferme les panes dont le process est mort
+#   job <name> -- <cmd>             # lance dans la sandbox par défaut
+#   job --tab <tab> <name> -- <cmd> # tab spécifique (créée si absente)
+#   job --floating <name> -- <cmd>  # pane flottant au lieu d'intégré
+#   job list                        # liste les jobs actifs
+#   job kill <name>                 # tue un job par nom
+#   job cleanup                     # ferme les panes dont le process est mort
 #
-# Registre : ~/.cache/thedev-soutien (1 ligne par agent, format TSV)
+# Registre : ~/.cache/thedev-jobs (1 ligne par job, format TSV)
 #   name<TAB>tab<TAB>pane_id<TAB>started_at<TAB>cmd
 
 set -u
 
-REGISTRY="$HOME/.cache/thedev-soutien"
-PID_DIR="$HOME/.cache/thedev-soutien-pids"
-DEFAULT_TAB="le camp"
-HOME_TAB="le front"
-# Pane de garnison de la sandbox : son id est publié par garnison (par session).
-WELCOME_ID="$HOME/.cache/garnison-${ZELLIJ_SESSION_NAME:-default}.id"
+REGISTRY="$HOME/.cache/thedev-jobs"
+PID_DIR="$HOME/.cache/thedev-jobs-pids"
+DEFAULT_TAB="jobs"
+HOME_TAB="agents"
+# pane d'accueil de la sandbox : son id est publié par jobs-pane (par session).
+WELCOME_ID="$HOME/.cache/jobs-welcome-${ZELLIJ_SESSION_NAME:-default}.id"
+# Verrou de création d'onglet, par session (cf. ensure_tab).
+TAB_LOCK="$HOME/.cache/thedev-tab-${ZELLIJ_SESSION_NAME:-default}.lock"
 
 mkdir -p "$(dirname "$REGISTRY")" "$PID_DIR"
 touch "$REGISTRY"
@@ -35,7 +37,7 @@ info() { printf '\033[1;34m▸\033[0m %s\n' "$*"; }
 # `thedev-status` appelle EN SSH (où $ZELLIJ est vide) pour la visu distante.
 case "${1:-}" in
   alive) ;;
-  *) [ -n "${ZELLIJ:-}" ] || die "Pas dans une session zellij (\$ZELLIJ vide)." ;;
+  *) [ -n "${ZELLIJ:-}" ] || die "Not in a zellij session (\$ZELLIJ is empty)." ;;
 esac
 
 # --- Registry helpers ---
@@ -52,28 +54,51 @@ current_tab() {
     | awk -F: '/^name:|^Name:|name=/ {gsub(/.*[:=] */, ""); gsub(/ +$/, ""); print; exit}'
 }
 
-# Un client zellij est-il attaché ? Sans client (session garnison : laptop
+# Un client zellij est-il attaché ? Sans client (session headless : laptop
 # détaché, ou pilotage via Remote Control), `current-tab-info` renvoie
 # « No active tab found for current client » → aucun nom. Le focus zellij étant
 # PAR-CLIENT, `go-to-tab-name` est alors un no-op : impossible de cibler un
 # onglet de façon fiable. C'était la cause des doublons d'onglets + panes mal
-# placés (un soutien lancé pendant que le laptop était éteint).
+# placés (un job lancé pendant que le laptop était éteint).
 client_attached() { current_tab | grep -q .; }
 
-# L'onglet existe-t-il ? Via `dump-layout`, qui marche MÊME sans client attaché
-# (contrairement à current-tab-info). Source de vérité fiable → on ne crée plus
-# de doublon en se fiant à un current_tab() vide.
-tab_exists() { zellij action dump-layout 2>/dev/null | grep -q "tab name=\"$1\""; }
-
-# Liste ordonnée des noms d'onglets (de gauche à droite), un par ligne.
+# Liste ordonnée des noms d'onglets (gauche → droite), un par ligne.
+# `dump-layout` marche MÊME sans client attaché (contrairement à
+# current-tab-info) — mais sur une machine chargée il sort VIDE par
+# intermittence (mesuré : 3 échecs sur 12 sur un VPS à charge 8). D'où le
+# retry, et surtout le code de retour distinct : renvoie 1 si AUCUNE lecture
+# n'a abouti. Confondre « lecture ratée » et « pas d'onglet » est exactement
+# ce qui empilait les « jobs » en double.
 tab_names() {
-  zellij action dump-layout 2>/dev/null \
-    | grep -oE 'tab name="[^"]+"' | sed -E 's/tab name="([^"]+)"/\1/'
+  local out i
+  for i in 1 2 3 4 5; do
+    out=$(zellij action dump-layout 2>/dev/null \
+      | grep -oE 'tab name="[^"]+"' | sed -E 's/tab name="([^"]+)"/\1/')
+    [ -n "$out" ] && { printf '%s\n' "$out"; return 0; }
+    sleep 0.25
+  done
+  return 1
+}
+
+# 0 = l'onglet est là · 1 = il n'y est pas · 2 = on n'a pas pu savoir.
+# Comparaison sur la ligne ENTIÈRE : « jobs » ne doit pas matcher
+# « jobs-old ».
+tab_exists() {
+  local names
+  names=$(tab_names) || return 2
+  printf '%s\n' "$names" | grep -qxF "$1"
+}
+
+# Combien d'onglets portent ce nom (0 si layout illisible).
+tab_count() {
+  local names
+  names=$(tab_names) || { printf '0'; return 1; }
+  printf '%s' "$(printf '%s\n' "$names" | grep -cxF "$1")"
 }
 
 # `new-tab` ajoute TOUJOURS l'onglet en fin de liste — il n'existe pas d'« insérer
 # en position N ». Donc une sandbox recréée (après s'être vidée → zellij ferme les
-# onglets vides) renaît APRÈS « la tente » → l'ordre s'intervertit. On la repousse
+# onglets vides) renaît APRÈS « shell » → l'ordre s'intervertit. On la repousse
 # à gauche jusqu'à sa place : juste après HOME_TAB. `move-tab` agit sur l'onglet
 # focus, et `new-tab` vient justement de le focus → ça tombe juste.
 reposition_sandbox() {
@@ -84,7 +109,7 @@ reposition_sandbox() {
     [ "${names[$i]}" = "$HOME_TAB" ]    && idx_home=$i
   done
   [ "$idx_sb" -lt 0 ] && return 0
-  local target=$(( idx_home + 1 ))           # juste après le front (ou 0 si absent)
+  local target=$(( idx_home + 1 ))           # juste après agents (ou 0 si absent)
   [ "$idx_home" -lt 0 ] && target=0
   local steps=$(( idx_sb - target ))
   while [ "$steps" -gt 0 ]; do
@@ -94,21 +119,42 @@ reposition_sandbox() {
 }
 
 ensure_tab() {
-  local tab="$1"
-  if tab_exists "$tab"; then
-    zellij action go-to-tab-name "$tab" >/dev/null 2>&1   # focus (no-op si garnison)
-    sleep 0.2
-  else
-    zellij action new-tab --name "$tab" >/dev/null 2>&1   # création (OK garnison)
-    sleep 0.4
-    [ "$tab" = "$DEFAULT_TAB" ] && reposition_sandbox     # sandbox → toujours en 2ᵉ
-  fi
+  local tab="$1" rc
+  # Verrou inter-processus : deux jobs lancés en même temps (un agent + le
+  # watcher de liens, par exemple) voyaient tous les deux l'onglet absent et le
+  # créaient chacun de leur côté.
+  exec 9>"$TAB_LOCK"
+  flock -w 10 9 2>/dev/null || true
+
+  tab_exists "$tab"; rc=$?
+  case "$rc" in
+    0)
+      zellij action go-to-tab-name "$tab" >/dev/null 2>&1   # focus (no-op si headless)
+      sleep 0.2
+      ;;
+    1)
+      zellij action new-tab --name "$tab" >/dev/null 2>&1   # création (OK headless)
+      sleep 0.4
+      [ "$tab" = "$DEFAULT_TAB" ] && reposition_sandbox     # sandbox → toujours en 2ᵉ
+      # Filet : si une course a quand même produit un doublon, on le dit plutôt
+      # que de le laisser s'accumuler en silence.
+      [ "$(tab_count "$tab")" -gt 1 ] && \
+        warn "duplicate tab '$tab': run \`job fix-tabs\` to tidy up."
+      ;;
+    *)
+      # Layout illisible : impossible de trancher. On ne crée RIEN — le pane
+      # atterrira dans l'onglet courant, ce qui se répare d'un coup d'œil,
+      # contrairement à une pile d'onglets homonymes.
+      warn "zellij layout unreadable (server busy): tab '$tab' not created, the pane will go to the current tab."
+      ;;
+  esac
+  exec 9>&-
 }
 
 # Client zellij FANTÔME éphémère. Le ciblage d'onglet exige un client attaché
-# (focus par-client). En garnison (laptop détaché / Remote Control), on attache
+# (focus par-client). en headless (laptop détaché / Remote Control), on attache
 # un client via un pty détaché (`script`) le temps de placer le pane, puis on le
-# tue → soutien se comporte comme s'il y avait un vrai client, sans laisser de
+# tue → job se comporte comme s'il y avait un vrai client, sans laisser de
 # process. Requiert `script(1)` (util-linux). Renvoie 0 si un client est dispo.
 PHANTOM_PID=""
 ensure_client() {
@@ -117,9 +163,9 @@ ensure_client() {
   local sess="${ZELLIJ_SESSION_NAME:-}"
   [ -n "$sess" ] || return 1
   # CRITIQUE : `zellij attach <sess>` lancé DEPUIS la session panique (« attach to the
-  # current session is not supported »). Le watcher/soutien tournant DANS un pane zellij,
+  # current session is not supported »). Le watcher/job tournant DANS un pane zellij,
   # $ZELLIJ est défini → sans ce env -u, le fantôme ne s'attachait JAMAIS et les panes
-  # de mission/la garde atterrissaient en le front (bug du détaché). On masque
+  # de task/l'automation atterrissaient dans agents (bug du détaché). On masque
   # l'appartenance à la session le temps de l'attach → zellij croit qu'on est dehors.
   #
   # setsid : le fantôme devient CHEF DE GROUPE → kill_phantom tue tout le GROUPE
@@ -166,11 +212,11 @@ agent_alive() {
   pgrep -f -- "$cmd" >/dev/null 2>&1
 }
 
-# --- Welcome pane : masqué quand ≥1 soutien tourne, réaffiché quand la sandbox se vide ---
-# Le pane welcome n'est PAS dans le registre : il publie son id (garnison écrit
+# --- Welcome pane : masqué quand ≥1 job tourne, réaffiché quand la sandbox se vide ---
+# Le pane welcome n'est PAS dans le registre : il publie son id (jobs-pane écrit
 # $WELCOME_ID). On le ferme par id, on le respawn via la machinerie de ciblage normale.
 
-# Nombre d'agents (soutiens) actuellement vivants dans le registre.
+# Nombre d'agents (jobs) actuellement vivants dans le registre.
 live_count() {
   local n rest c=0
   while IFS=$'\t' read -r n rest; do
@@ -188,8 +234,8 @@ hide_welcome() {
   rm -f "$WELCOME_ID"
 }
 
-# Réaffiche welcome SI plus aucun soutien vivant ET welcome absent. Réutilise le
-# ciblage d'onglet de cmd_run (client fantôme garnison + retour à l'onglet d'origine).
+# Réaffiche welcome SI plus aucun job vivant ET welcome absent. Réutilise le
+# ciblage d'onglet de cmd_run (client fantôme headless + retour à l'onglet d'origine).
 show_welcome() {
   [ "$(live_count)" -eq 0 ] || return 0
   [ -f "$WELCOME_ID" ] && return 0
@@ -197,7 +243,7 @@ show_welcome() {
   client_attached || { ensure_client && attached=1 || attached=0; }
   origin=$(current_tab); [ -z "$origin" ] && origin="$HOME_TAB"
   ensure_tab "$DEFAULT_TAB"
-  zellij run --name garnison -- "$HOME/.local/bin/garnison" >/dev/null 2>&1
+  zellij run --name welcome -- "$HOME/.local/bin/jobs-pane" >/dev/null 2>&1
   [ "$attached" != 0 ] && zellij action go-to-tab-name "$origin" >/dev/null 2>&1
   kill_phantom
 }
@@ -217,31 +263,31 @@ cmd_run() {
       --floating) floating="--floating"; shift ;;
       -c|--close|--close-on-exit) closeonexit="--close-on-exit"; shift ;;  # pane éphémère : se ferme seul à la fin de la commande
       --) shift; cmd_args=("$@"); break ;;
-      -*) die "Option inconnue : $1" ;;
+      -*) die "Unknown option: $1" ;;
       *) [ -z "$name" ] && name="$1" || cmd_args+=("$1"); shift ;;
     esac
   done
 
-  [ -z "$name" ] && die "Usage: soutien <name> -- <cmd>"
-  [ ${#cmd_args[@]} -eq 0 ] && die "Pas de commande spécifiée (ajoute -- <cmd>)"
+  [ -z "$name" ] && die "Usage: job <name> -- <cmd>"
+  [ ${#cmd_args[@]} -eq 0 ] && die "No command given (add -- <cmd>)"
 
-  # Anti-doublon : un AUTRE agent tourne déjà la même commande (typiquement une
+  # Anti-doublon : un AUTRE job tourne déjà la même commande (typiquement une
   # relance sous un nouveau nom → panes qui s'empilent). On prévient pour qu'on
   # réutilise son nom ou qu'on le tue, au lieu d'accumuler.
   local dup
   dup=$(awk -F'\t' -v c="${cmd_args[*]}" -v n="$name" '$5==c && $1!=n {print $1; exit}' "$REGISTRY")
-  [ -n "$dup" ] && warn "doublon : l'agent '$dup' tourne déjà cette commande — réutilise ce nom ('soutien $dup -- …') ou 'soutien kill $dup' plutôt que d'empiler."
+  [ -n "$dup" ] && warn "duplicate: job '$dup' already runs this command, reuse that name ('job $dup -- …') or 'job kill $dup' instead of stacking."
 
   # Dedup : kill old if exists
   if [ -n "$(reg_lookup "$name")" ]; then
-    warn "Agent '$name' existe déjà — remplacement…"
+    warn "Job '$name' already exists, replacing…"
     cmd_kill_silent "$name"
     sleep 0.2
   fi
 
   local origin attached=1
   if ! client_attached; then
-    # Session garnison : on tente un client fantôme éphémère pour cibler l'onglet.
+    # Session headless : on tente un client fantôme éphémère pour cibler l'onglet.
     ensure_client && attached=1 || attached=0
   fi
   origin=$(current_tab)
@@ -261,11 +307,11 @@ cmd_run() {
 echo \$\$ > '$pidfile'
 exec \"\$@\""
 
-  # Dans « le camp », on EMPILE le soutien (--stacked) au-dessus de la garnison au
-  # lieu de la fermer : la garnison reste l'ANCRE permanente de l'onglet → il ne se
-  # vide (et ne disparaît) JAMAIS quand un soutien se termine ou qu'on le quitte. Un
-  # seul soutien s'affiche quand même « plein écran » (garnison repliée en tête de
-  # stack). Hors du camp (--tab X) ou en flottant : pas d'empilement.
+  # Dans « jobs », on EMPILE le job (--stacked) au-dessus du pane d'accueil au
+  # lieu de la fermer : le pane d'accueil reste l'ANCRE permanente de l'onglet → il ne se
+  # vide (et ne disparaît) JAMAIS quand un job se termine ou qu'on le quitte. Un
+  # seul job s'affiche quand même « plein écran » (pane d'accueil replié en tête de
+  # stack). Hors de jobs (--tab X) ou en flottant : pas d'empilement.
   local stacked=""
   [ -z "$floating" ] && [ "$tab" = "$DEFAULT_TAB" ] && stacked="--stacked"
 
@@ -283,20 +329,20 @@ exec \"\$@\""
   if [ "$attached" != 0 ]; then
     zellij action go-to-tab-name "$origin" 2>/dev/null || true
     kill_phantom
-    ok "agent '$name' démarré dans tab '$tab' (pane $pane_id)"
+    ok "job '$name' started in tab '$tab' (pane $pane_id)"
   else
-    # Fantôme indispo (script absent ?) : on ne peut pas cibler l'onglet garnison.
+    # Fantôme indispo (script absent ?) : on ne peut pas cibler l'onglet en headless.
     kill_phantom
-    warn "session détachée et client fantôme indisponible (script(1) absent ou attach refusé) :"
-    warn "  le pane '$name' a été créé hors de l'onglet '$tab' — réorganise au réattachement."
-    info "agent '$name' démarré (pane $pane_id)"
+    warn "detached session and phantom client unavailable (script(1) missing or attach refused):"
+    warn "  pane '$name' was created outside tab '$tab', rearrange it when you reattach."
+    info "job '$name' started (pane $pane_id)"
   fi
   printf '   cmd: %s\n' "${cmd_args[*]}"
 }
 
 cmd_list() {
   if [ ! -s "$REGISTRY" ]; then
-    echo "Aucun agent enregistré."
+    echo "No job registered."
     return
   fi
   printf '%-20s %-10s %-12s %-15s %s\n' "NAME" "TAB" "PANE" "STARTED" "CMD"
@@ -320,14 +366,14 @@ cmd_kill_silent() {
 
   # Garde-fou absolu : ne JAMAIS agir sur l'onglet protégé (claude / éditeur).
   if [ "$tab" = "$HOME_TAB" ]; then
-    warn "refus : '$name' est enregistré dans l'onglet protégé '$HOME_TAB' — rien fermé."
+    warn "refused: '$name' is registered in the protected tab '$HOME_TAB', nothing closed."
     reg_remove "$name"
     return 0
   fi
 
   # 1) Tuer le PROCESSUS via son pidfile (correctness : marche à travers les forks
   #    npm/yarn). 2) Fermer le PANE par son id avec `close-pane -p` — sûr pour
-  #    claude : son pane (page `le front`) est créé au démarrage du layout, jamais
+  #    claude : son pane (page `agents`) est créé au démarrage du layout, jamais
   #    fermé → son id n'est jamais réattribué, donc fermer un id d'agent ne peut
   #    pas le viser. (L'ancien drame venait du close par *focus*, pas par id.)
   local pidfile="$PID_DIR/$name.pid" pid=""
@@ -343,16 +389,16 @@ cmd_kill_silent() {
 
 cmd_kill() {
   local name="${1:-}"
-  [ -z "$name" ] && die "Usage: soutien kill <name>"
-  [ -z "$(reg_lookup "$name")" ] && die "Aucun agent nommé '$name'."
+  [ -z "$name" ] && die "Usage: job kill <name>"
+  [ -z "$(reg_lookup "$name")" ] && die "No job named '$name'."
   cmd_kill_silent "$name"
-  show_welcome   # sandbox vide ? le pane de garnison revient
-  ok "agent '$name' tué."
+  show_welcome   # sandbox vide ? le pane d'accueil revient
+  ok "job '$name' killed."
 }
 
 cmd_cleanup() {
   if [ ! -s "$REGISTRY" ]; then
-    echo "Rien à nettoyer."
+    echo "Nothing to clean up."
     return
   fi
   local closed=0
@@ -360,7 +406,7 @@ cmd_cleanup() {
   while IFS=$'\t' read -r name tab pane_id started cmd; do
     [ -z "$name" ] && continue
     if ! agent_alive "$name"; then
-      info "fermé : $name (process introuvable)"
+      info "closed: $name (process not found)"
       # Ferme aussi le pane mort (sauf onglet protégé) pour ne pas laisser de
       # panes fantômes s'empiler sur la sandbox.
       [ "$tab" != "$HOME_TAB" ] && [ -n "$pane_id" ] && [ "$pane_id" != "unknown" ] && \
@@ -372,61 +418,139 @@ cmd_cleanup() {
   done <<< "$entries"
 
   if [ "$closed" -eq 0 ]; then
-    ok "Tous les agents sont vivants."
+    ok "All jobs are alive."
   else
-    show_welcome   # sandbox vidée ? le pane de garnison revient
-    ok "$closed agent(s) nettoyé(s)."
+    show_welcome   # sandbox vidée ? le pane d'accueil revient
+    ok "$closed job(s) cleaned up."
   fi
 }
 
-# Lit l'écran du pane d'un agent (vivant OU mort : le pane reste ouvert avec sa
-# sortie). Sert à diagnostiquer un agent qui a échoué SANS le relancer à l'aveugle.
+# Lit l'écran du pane d'un job (vivant OU mort : le pane reste ouvert avec sa
+# sortie). Sert à diagnostiquer un job qui a échoué SANS le relancer à l'aveugle.
 cmd_logs() {
   local name="${1:-}"
-  [ -z "$name" ] && die "Usage: soutien logs <name>"
+  [ -z "$name" ] && die "Usage: job logs <name>"
   local entry; entry=$(reg_lookup "$name")
-  [ -z "$entry" ] && die "Aucun agent nommé '$name'."
+  [ -z "$entry" ] && die "No job named '$name'."
   local tab pane_id origin out
   tab=$(printf '%s' "$entry" | cut -f2)
   pane_id=$(printf '%s' "$entry" | cut -f3)
-  [ "$pane_id" = "unknown" ] && die "pane_id inconnu pour '$name'."
+  [ "$pane_id" = "unknown" ] && die "unknown pane_id for '$name'."
   origin=$(current_tab)
   out=$(mktemp)
   zellij action go-to-tab-name "$tab"    >/dev/null 2>&1
   zellij action focus-pane-id "$pane_id" >/dev/null 2>&1
   sleep 0.2
-  zellij action dump-screen "$out"       >/dev/null 2>&1
+  # zellij ≥ 0.45 : le chemin passe par --path (positionnel refusé) ; ≤ 0.44 l'inverse.
+  if zellij action dump-screen --help 2>&1 | grep -q -- '--path'; then
+    zellij action dump-screen --path "$out" >/dev/null 2>&1
+  else
+    zellij action dump-screen "$out"       >/dev/null 2>&1
+  fi
   [ -n "$origin" ] && zellij action go-to-tab-name "$origin" >/dev/null 2>&1
   if [ -s "$out" ]; then
-    info "écran du pane $pane_id (agent '$name') :"
+    info "screen of pane $pane_id (job '$name'):"
     cat "$out"
   else
-    warn "rien à lire (pane fermé/vide) — rejoue la commande inline avec 2>&1 pour voir l'erreur."
+    warn "nothing to read (pane closed/empty): rerun the command inline with 2>&1 to see the error."
   fi
   rm -f "$out"
 }
 
+
+# --- fix-tabs : ranger les onglets homonymes ---------------------------------
+# Quand `dump-layout` sortait vide, ensure_tab recréait un onglet déjà là. Le
+# durcissement empêche que ça recommence ; cette commande répare l'existant.
+cmd_fix_tabs() {
+  local merge=0
+  [ "${1:-}" = "--merge" ] && merge=1
+
+  local -a names
+  mapfile -t names < <(tab_names)
+  [ "${#names[@]}" -gt 0 ] || die "zellij layout unreadable (server busy), try again in a moment."
+
+  local -A premier=()
+  local -a doublons=()
+  local i n
+  for i in "${!names[@]}"; do
+    n="${names[$i]}"
+    if [ -z "${premier[$n]:-}" ]; then
+      premier[$n]=$(( i + 1 ))                       # 1ʳᵉ occurrence = l'onglet légitime
+    else
+      doublons+=( "$(( i + 1 ))|$n|${premier[$n]}" )
+    fi
+  done
+
+  info "session tabs:"
+  for i in "${!names[@]}"; do
+    if [ "${premier[${names[$i]}]}" -ne $(( i + 1 )) ]; then
+      printf '  %d  %s  \033[1;33m← duplicate\033[0m\n' "$(( i + 1 ))" "${names[$i]}"
+    else
+      printf '  %d  %s\n' "$(( i + 1 ))" "${names[$i]}"
+    fi
+  done
+
+  if [ "${#doublons[@]}" -eq 0 ]; then
+    ok "no duplicate tab."
+    return 0
+  fi
+
+  warn "${#doublons[@]} duplicate tab(s)."
+  if [ "$merge" -eq 0 ]; then
+    info "to merge: job fix-tabs --merge"
+    info "  (panes of the duplicates are moved into the first tab with the same"
+    info "   name; zellij closes the emptied tab on its own)"
+    return 0
+  fi
+
+  client_attached || die "no zellij client attached: attach to the session to merge."
+
+  # Du dernier doublon vers le premier : vider un onglet décale les index suivants.
+  local d idx rest nom cible steps k garde
+  for (( d=${#doublons[@]}-1; d>=0; d-- )); do
+    idx="${doublons[$d]%%|*}"; rest="${doublons[$d]#*|}"
+    nom="${rest%%|*}"; cible="${rest##*|}"
+    steps=$(( idx - cible ))
+    info "tab $idx ('$nom') → tab $cible"
+    garde=0
+    while [ "$garde" -lt 12 ]; do
+      garde=$(( garde + 1 ))
+      zellij action go-to-tab "$idx" >/dev/null 2>&1
+      sleep 0.25
+      [ "$(current_tab)" = "$nom" ] || break        # onglet disparu → plus rien à sortir
+      # break-pane-left pousse le pane focus dans l'onglet de gauche, et le
+      # focus le suit : on répète jusqu'à l'onglet cible.
+      for (( k=0; k<steps; k++ )); do
+        zellij action break-pane-left >/dev/null 2>&1
+        sleep 0.3
+      done
+    done
+  done
+  ok "merge done, check the tab order."
+}
+
 usage() {
   cat <<'EOF'
-soutien — gestion des panes de la sandbox (zellij)
+job: manage the panes of the jobs page (zellij)
 
 Usage:
-  soutien <name> -- <cmd>              # lance dans la sandbox par défaut
-  soutien --tab <tab> <name> -- <cmd>  # tab custom (créée si absente)
-  soutien --floating <name> -- <cmd>   # pane flottant
-  soutien --close <name> -- <cmd>      # pane éphémère : se ferme seul à la fin (-c)
-  soutien list                         # liste les agents (● vivant, ○ mort)
-  soutien logs <name>                  # lit l'écran d'un agent (diagnostiquer un mort)
-  soutien kill <name>                  # tue un agent par nom
-  soutien cleanup                      # ferme les panes morts
+  job <name> -- <cmd>              # run in the jobs page (default)
+  job --tab <tab> <name> -- <cmd>  # custom tab (created if missing)
+  job --floating <name> -- <cmd>   # floating pane
+  job --close <name> -- <cmd>      # ephemeral pane: closes itself at the end (-c)
+  job list                         # list jobs (● alive, ○ dead)
+  job logs <name>                  # read a job's screen (diagnose a dead one)
+  job kill <name>                  # kill a job by name
+  job cleanup                      # close dead panes
+  job fix-tabs [--merge]           # same-name tabs: diagnose, then merge
 
-Exemples:
-  soutien dev-server -- npm run dev
-  soutien --tab logs tail-app -- tail -f /var/log/app.log
-  soutien --floating htop -- htop
-  soutien list
-  soutien logs dev-server
-  soutien kill dev-server
+Examples:
+  job dev-server -- npm run dev
+  job --tab logs tail-app -- tail -f /var/log/app.log
+  job --floating htop -- htop
+  job list
+  job logs dev-server
+  job kill dev-server
 EOF
 }
 
@@ -435,7 +559,8 @@ case "${1:-}" in
   logs)    shift; cmd_logs "$@" ;;
   kill)    shift; cmd_kill "$@" ;;
   cleanup) cmd_cleanup ;;
-  alive)   shift; agent_alive "${1:-}" ;;   # exit 0 si l'agent <name> tourne encore
+  fix-tabs) shift; cmd_fix_tabs "$@" ;;
+  alive)   shift; agent_alive "${1:-}" ;;   # exit 0 si le job <name> tourne encore
   -h|--help) usage ;;
   "") usage; exit 1 ;;
   *) cmd_run "$@" ;;

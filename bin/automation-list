@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# @thedev liens état de la garde thedev de CETTE machine (timers systemd --user)
-# garde-list — une ligne TSV par garde : <état>\t<nom>\t<prochain>\t<dernier>
-#   état : running (une mission feed tourne) · active (timer planifié) · inactive (arrêté)
-# Convention : une garde thedev = un TIMER systemd --user dont le service activé a
+# @thedev liens state of the thedev automations on THIS machine (systemd --user timers)
+# automation-list — une ligne TSV par automation : <état>\t<nom>\t<prochain>\t<dernier>
+#   état : running (une task feed tourne) · active (timer planifié) · inactive (arrêté)
+# Convention : une automation thedev = un TIMER systemd --user dont le service activé a
 # une Description contenant « thedev ». → tout nouveau feed apparaît tout seul, zéro liste à tenir.
-# Lu par thedev-status ET l'etat-major (écran infos), en local et via ssh.
+# Lu par thedev-status ET l'home (écran infos), en local et via ssh.
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 ROOT="$HOME/.cache/thedev"
 command -v systemctl >/dev/null 2>&1 || exit 0
@@ -16,7 +16,7 @@ systemctl --user list-unit-files --type=timer --no-legend 2>/dev/null | awk '{pr
   case "$desc" in *[Tt]hedev*) ;; *) continue ;; esac
   name="${svc%.service}"
 
-  # en cours ? une mission feed-<name>-* encore dans work/
+  # en cours ? une task feed-<name>-* encore dans work/
   running=""
   for w in "$ROOT"/spaces/*/work/feed-"$name"-*; do [ -d "$w" ] && { running=1; break; }; done
 
@@ -33,11 +33,11 @@ systemctl --user list-unit-files --type=timer --no-legend 2>/dev/null | awk '{pr
     ne=$(date -d "$nval" +%s 2>/dev/null)
     if [ -n "$ne" ]; then
       rem=$(( ne - $(date +%s) ))
-      if   [ "$rem" -gt 86400 ]; then left="$((rem/86400))j"
+      if   [ "$rem" -gt 86400 ]; then left="$((rem/86400))d"
       elif [ "$rem" -gt 3600 ];  then left="$((rem/3600))h"
       elif [ "$rem" -gt 60 ];    then left="$((rem/60))min"
-      else                            left="bientôt"; fi
-      next="$(date -d "$nval" '+%a %H:%M' 2>/dev/null) (dans $left)"
+      else                            left="soon"; fi
+      next="$(date -d "$nval" '+%a %H:%M' 2>/dev/null) (in $left)"
     fi
   fi
 
@@ -49,19 +49,19 @@ systemctl --user list-unit-files --type=timer --no-legend 2>/dev/null | awk '{pr
     [ -n "$last" ] || last="?"
   fi
 
-  # equipe cible : d'abord l'equipe ÉPINGLÉE dans l'ExecStart (« feed <name> <equipe> »),
-  # qui est le lien réel et déterministe ; sinon, déduit de l'historique des missions.
+  # workspace cible : d'abord le workspace ÉPINGLÉE dans l'ExecStart (« feed <name> <workspace> »),
+  # qui est le lien réel et déterministe ; sinon, déduit de l'historique des tasks.
   eq=""
   argv=$(systemctl --user show "$svc" -p ExecStart --value 2>/dev/null | sed -n 's/.*argv\[\]=\([^;]*\).*/\1/p')
-  eq=$(printf '%s' "$argv" | awk 'NF>=3{print $3}')   # « feed <name> <equipe> » → $3
+  eq=$(printf '%s' "$argv" | awk 'NF>=3{print $3}')   # « feed <name> <workspace> » → $3
   if [ -z "$eq" ]; then
     ep=$(ls -dt "$ROOT"/spaces/*/done/feed-"$name"-* "$ROOT"/spaces/*/work/feed-"$name"-* "$ROOT"/spaces/*/inbox/feed-"$name"-*.mission 2>/dev/null | head -1)
     [ -n "$ep" ] && { eq="${ep#"$ROOT"/spaces/}"; eq="${eq%%/*}"; }
   fi
 
-  # EQUIPE OUVERTE ? = watcher vivant (links/<eq> présent ET son watcher_pid en vie).
-  # cwd = où relancer un thedev pour réactiver la garde : depuis links/ si ouvert, sinon
-  # depuis le run.sh d'une mission archivée (on sait donc OÙ même quand l'equipe est fermée).
+  # WORKSPACE OUVERTE ? = watcher vivant (links/<eq> présent ET son watcher_pid en vie).
+  # cwd = où relancer un thedev pour réactiver l'automation : depuis links/ si ouvert, sinon
+  # depuis le run.sh d'une task archivée (on sait donc OÙ même quand le workspace est fermée).
   open=0; cwd=""
   if [ -n "$eq" ] && [ -f "$ROOT/links/$eq" ]; then
     cwd=$(sed -n 's/^cwd=//p' "$ROOT/links/$eq" 2>/dev/null | head -1)
@@ -72,10 +72,10 @@ systemctl --user list-unit-files --type=timer --no-legend 2>/dev/null | awk '{pr
     rs=$(ls -dt "$ROOT"/spaces/"$eq"/done/feed-"$name"-*/run.sh 2>/dev/null | head -1)
     [ -n "$rs" ] && cwd=$(sed -n 's/^cd \(.*\) || exit.*/\1/p' "$rs" 2>/dev/null | head -1)
   fi
-  # Dernier recours : equipe fermée ET jamais de mission archivée (ex. veille qui n'a
+  # Dernier recours : workspace fermée ET jamais de task archivée (ex. veille qui n'a
   # pas encore tourné) → retrouver le dossier par son NOM, sinon « relancer » depuis
-  # l'etat-major ne sait pas OÙ rouvrir le thedev (cwd « ? », Entrée sans effet).
-  #   1) $HOME/<eq> (cas courant : l'equipe est un dossier direct du home),
+  # l'home ne sait pas OÙ rouvrir le thedev (cwd « ? », Entrée sans effet).
+  #   1) $HOME/<eq> (cas courant : le workspace est un dossier direct du home),
   #   2) sinon un cwd de transcript Claude dont le basename == eq ET qui existe encore.
   if [ -z "$cwd" ] && [ -n "$eq" ]; then
     if [ -d "$HOME/$eq" ]; then

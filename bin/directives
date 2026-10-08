@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# @thedev org directives: the directives RECEIVED from the owner (target machine side)
+# L'owner dépose sur le sommet (`directive`) ; ici, CETTE machine vient CHERCHER ses
+# directives (modèle PULL : une feuille — un laptop — n'est pas joignable depuis le VPS,
+# elle tire ses directives à son réveil). Axe descendant de la couche org.
+#
+#   directives              liste les directives en attente pour cette machine (tire du sommet)
+#   directives pull         tire les directives du sommet dans la file locale (ordres-in/)
+#   directives apply <id>   ouvre le workspace cible, agent briefé sur la directive, puis archive
+#
+# File distante : <sommet>:~/.cache/thedev/command/ordres/<machine>/. File locale (tirée) :
+# ~/.cache/thedev/command/ordres-in/. Consommer une directive = l'appliquer puis l'archiver.
+set -u
+me="$( { cat "$HOME/.config/dev-vps" 2>/dev/null || hostname -s; } )"
+sommet="$(grep -vE '^\s*#|^\s*$' "$HOME/.config/thedev-sommet" 2>/dev/null | head -n1 | tr -d '[:space:]')"
+IN="$HOME/.cache/thedev/command/ordres-in"; mkdir -p "$IN" 2>/dev/null
+SSH="ssh -o ConnectTimeout=10"
+
+_fld() { sed -n "s/^$2: //p" "$1" | head -n1; }   # $1=fichier $2=champ
+_body(){ awk 'b{print} /^$/{b=1}' "$1"; }         # corps après la 1re ligne vide
+
+cmd_pull() {
+  [ -n "$sommet" ] || { echo "directives: no top declared (~/.config/thedev-sommet)"; return 1; }
+  if [ "$me" = "$sommet" ] || [ "$(hostname -s)" = "$sommet" ]; then
+    # on EST le sommet : la file locale est déjà là (rien à tirer par SSH)
+    local d="$HOME/.cache/thedev/command/ordres/$me"
+    [ -d "$d" ] && cp -f "$d"/*.ordre "$IN/" 2>/dev/null
+    return 0
+  fi
+  # rsync des directives de CETTE machine depuis le sommet (sans --delete : on archive localement)
+  rsync -az -e "$SSH" "$sommet:.cache/thedev/command/ordres/$me/" "$IN/" 2>/dev/null \
+    || { echo "directives: top '$sommet' unreachable, retry later."; return 0; }
+}
+
+cmd_list() {
+  shopt -s nullglob
+  local f n=0
+  for f in "$IN"/*.ordre; do
+    printf '  ● %-10s  %s/%s  «%s»\n' "$(basename "$f" .ordre)" "$me" "$(_fld "$f" Target)" \
+      "$(_body "$f" | tr '\n' ' ' | cut -c1-60)"
+    n=$((n+1))
+  done
+  [ "$n" = 0 ] && echo "  (no pending directive for $me)"
+}
+
+cmd_apply() {
+  local id="$1" f="$IN/$1.ordre"
+  [ -n "$id" ] && [ -f "$f" ] || { echo "directives: directive '$id' not found (did you run 'directives pull'?)"; return 1; }
+  local workspace cwd card task
+  workspace="$(_fld "$f" Target)"; task="$(_body "$f")"
+  # résout le cwd du workspace via sa carte d'org (workspace card y écrit cwd)
+  card="$HOME/.cache/thedev/command/workspaces/$(printf '%s' "$me" | tr -c 'A-Za-z0-9._-' '_')__$(printf '%s' "$workspace" | tr -c 'A-Za-z0-9._-' '_').md"
+  cwd="$(_fld "$card" cwd)"
+  [ -n "$cwd" ] && [ -d "$cwd" ] || { echo "directives: cwd of '$workspace' not found (workspace never opened here?), open it once then retry."; return 1; }
+  # ouvre le workspace, agent principal briefé sur la directive (réutilise le lanceur dev)
+  local launcher="$HOME/jlal_perso/config/bash/dev-launcher.sh"
+  [ -f "$launcher" ] || launcher="$HOME/config/bash/dev-launcher.sh"
+  # shellcheck disable=SC1090
+  . "$launcher" 2>/dev/null || { echo "directives: dev-launcher not found, open '$workspace' by hand with the context above."; return 1; }
+  local bf; bf=$(mktemp)
+  printf '[DIRECTIVE from the owner] %s\n' "$task" > "$bf"
+  mkdir -p "$HOME/.cache/thedev/command/ordres-done"
+  mv "$f" "$HOME/.cache/thedev/command/ordres-done/" 2>/dev/null   # archive AVANT d'ouvrir (pas de double-apply)
+  echo "→ opening $workspace, agent briefed on the directive…"
+  CLAUDE_PANE_INIT_FILE="$bf" _dev_launch "$cwd" ""
+}
+
+case "${1:-}" in
+  pull)  cmd_pull ;;
+  apply) shift; cmd_apply "${1:-}" ;;
+  ""|list) cmd_pull; cmd_list ;;
+  *) echo "usage: directives [pull|list|apply <id>]" >&2; exit 1 ;;
+esac

@@ -1,57 +1,90 @@
-# Vocabulaire thedev — la grammaire d'armée
+# thedev glossary
 
-Langue commune de thedev. À utiliser partout — code, commits, échanges, docs.
-Doctrine complète : [`VISION.md`](VISION.md) §« Diriger une armée d'agents ».
+The shared vocabulary of thedev. Use it everywhere: code, commits, docs, conversations.
 
-## Le principe
+## Structure
 
-- **Le plat est la loi *dans* une équipe** : les soldats d'une même équipe sont **pairs**, ils bossent ensemble sans chef interne.
-- **La hiérarchie est l'axe vertical *entre* équipes** : un **chef** est au-dessus d'une ou plusieurs équipes, **jamais dedans**.
-- **Toi = le général**, la racine de tout. Tu peux court-circuiter n'importe quel niveau ; la chaîne s'informe, elle ne t'autorise pas.
+**Runtime:** thedev → machine → **workspace** → pages → panes
+**Org:** owner → lead → workspace → agent
 
-## Hiérarchie
-
-**Substrat :** thedev → machine → **équipe** → pages → panes
-**Commandement :** général → chef → équipe → soldat
-
-| Terme | Définition | (ancien nom) |
+| Term | Meaning | Command |
 |---|---|---|
-| **thedev** | L'app elle-même (lancée par `dev`). Nom du produit — ne change pas. | — |
-| **machine** | Une bécane qui fait tourner thedev : local, jlax, indice. | — |
-| **équipe** | Une instance de thedev = **1 projet sur 1 machine**. Un groupe de **soldats pairs**. | espace |
-| **soldat** | Une instance d'agent (Claude) qui bosse dans une équipe. Tous **pairs** au sein de l'équipe. *(« Claude » reste le nom du moteur ; « soldat » = l'instance qui bosse.)* | un Claude |
-| **chef** | Commande des équipes sur l'axe vertical — au-dessus, **jamais dedans**. | *(nouveau)* |
-| **état-major** | L'écran d'accueil (le picker). Là où le général voit toutes les équipes avant d'entrer. Modes : **Équipes** / **Fichiers** / **Infos**. | accueil / dev-picker |
-| **page** | Un onglet (tab zellij) d'une équipe. Trois pages : **le front** + **le camp** + **la tente**. | page |
-| **pane** | Une zone dans une page (terme zellij conservé). | — |
-| **soutien** | Un process long lancé dans **le camp** (un serveur, un watcher, un agent…). Commande : `soutien` (alias `crun` **permanent**). | crun |
+| **thedev** | The app itself, started with `dev`. | `dev` |
+| **machine** | A computer running thedev: your laptop, a server. | |
+| **workspace** | One project on one machine: a zellij session holding a group of peer agents. | `workspace` |
+| **agent** | One Claude Code instance working in a workspace. Agents in a workspace are peers. | |
+| **home** | The start screen: workspaces, folders, infos, automations. | `home` |
+| **page** | A tab of a workspace. Every workspace has three: **agents**, **jobs**, **shell**. | |
+| **pane** | An area inside a page (zellij term). | |
+| **job** | A long-running process (dev server, watcher, build) started in the **jobs** page. | `job` |
+| **spawn** | Add one more agent to the current workspace. | `spawn` |
+| **automation** | A scheduled task that drops work into a workspace (systemd timer). | `automation-list` |
+| **headless** | A workspace running with no client attached (server, closed laptop). | `headless-run` |
 
-## La couche commandement
+## The three pages of a workspace
 
-| Terme | Sens |
+- **agents**: where the AI works. The sidebar on the left, the stack of agents on the right, and the `+` bar to spawn one more.
+- **jobs**: every long-running process started with `job` lands here, isolated from the agents page.
+- **shell**: your own terminals (`shell` and `git`). Agents do not drive these panes.
+
+## Workspace memory
+
+Each workspace keeps a shared, living context that every agent feeds as it works.
+
+| Term | Meaning | Command |
+|---|---|---|
+| **note** | Present state: short lines describing where things stand. Kept up to date, not stacked. | `note` |
+| **summary** | The one or two sentences a lead reads to understand the workspace at a glance. | `summary` |
+| **milestone** | Past: a dated, signed event (a delivery, a decision). Commits are added automatically. | `milestone` |
+| **blocker** | Waiting: what is stuck and on what. Shown first to leads until resolved. | `blocker` |
+
+## Between workspaces
+
+| Term | Meaning | Command |
+|---|---|---|
+| **link** | A workspace opened to incoming tasks from other machines. | `thedev-link` |
+| **task** | Work delegated to an agent in a workspace on another machine (peer to peer). | `delegate` |
+| **report** | What comes back from a task, or from a workspace when it closes. | |
+
+## The org
+
+Inside a workspace, agents are peers. The hierarchy runs **between** workspaces.
+
+| Term | Meaning | Command |
+|---|---|---|
+| **owner** | You, the root of everything. You can bypass any level. | |
+| **lead** | Sits above one or more workspaces, never inside one. Reads their summaries, sends directives. | `lead` |
+| **directive** | A top-down instruction from a lead to a workspace. | `directive`, `directives` |
+| **org tree** | The tree of leads, domains and workspaces, with their state. | `org-tree`, `org-nav` |
+| **partition** | Grouping a machine's workspaces into a few themed domains, so no lead has too many. | `partition` |
+| **sync up** | Sending this machine's workspace cards and reports up to the top machine. | `sync-up` |
+
+> Flat and vertical coexist. Two sibling workspaces stay peers (neither commands the
+> other); they both report to a lead, which belongs to another level.
+
+## Renamed in October 2026
+
+The previous vocabulary was military. If you meet an old name in an old note or
+transcript, here is its new one:
+
+| Old | New |
 |---|---|
-| **général** | Toi. Seul donneur d'intention au sommet. |
-| **soldat** | Une instance qui bosse dans une équipe (pairs entre eux). |
-| **équipe** | Une session = unité plate de soldats pairs. |
-| **chef** | Commande des équipes (axe vertical). Commande : `chef`. |
-| **ordre** | Directive descendante d'un chef vers une équipe. Commande : `ordre`. |
-| **raid** | La présence du général *dans* une équipe (alias de `dev`). |
-| **débrief** | La remontée à la sortie d'un raid ou d'une mission. |
-| **garde** | Les automatisations distantes (timers) — les rondes qui se répètent. |
-| **garnison** | Le mode headless — un soldat qui tient la position sans interface. |
-| **état-major** | L'accueil / la vue de flotte. |
+| équipe | workspace |
+| soldat | agent |
+| général | owner |
+| chef | lead |
+| état-major (`etat-major`) | home (`home`) |
+| le front / le camp / la tente | agents / jobs / shell |
+| soutien (`soutien`, `crun`) | job (`job`) |
+| renfort (`renfort`) | spawn (`spawn`) |
+| garde | automation |
+| garnison | headless, or the welcome pane of the jobs page |
+| mission (`mission`) | task (`delegate`) |
+| ordre (`ordre`, `ordres`) | directive (`directive`, `directives`) |
+| débrief | report |
+| jalon / blocage / résumé (`jalon`, `blocage`, `resume`) | milestone / blocker / summary |
+| commandement, arbre (`arbre`, `carte`) | org, org tree (`org-tree`) |
+| remonter | sync up (`sync-up`) |
 
-## Les trois pages d'une équipe
-
-- **le front** — le travail piloté par l'IA. Panes : éditeur (nvim) + les soldats (+ barre ＋ pour appeler un **renfort**). *(ancien : code page)*
-- **le camp** — là où tournent tous les **soutiens** (serveurs, watchers, agents lancés, watcher de liens). *(ancien : sandbox)*
-- **la tente** — les terminaux perso du général, à la main : **shell** + **git**. Territoire humain, hors de portée des soldats. *(ancien : my space)*
-
-## Entre équipes (réseau + commandement)
-
-- **lien** — connexion entre deux équipes.
-- **mission** — un objectif confié à une équipe distante (délégation **horizontale**, de pair à pair).
-- **débrief** — ce que l'équipe distante renvoie (la remontée). *(ancien : résultat)*
-- **ordre** — directive **descendante** d'un chef (axe **vertical**), distincte de la mission.
-
-> **Le plat et le vertical coexistent.** Deux équipes sœurs restent **pairs** (elles ne se commandent pas l'une l'autre) ; elles reportent à un **chef**, d'un autre rang. La grammaire d'armée **ajoute** l'axe vertical au modèle plat horizontal — elle ne le remplace pas.
+Migration for an existing install: `migrations/2026-10-english-names.sh`, run by
+`install.sh`.

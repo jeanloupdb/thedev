@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# @thedev infra genere le manifest de thedev depuis les tags @thedev des scripts bin/
+# @thedev infra generates the thedev manifest from the @thedev tags of the bin/ scripts
 # thedev-manifest — SOURCE DE VÉRITÉ unique de l'app thedev, dérivée des en-têtes.
 #
 # Chaque script thedev porte une ligne `# @thedev <categorie> <description>`.
@@ -21,17 +21,18 @@ BIN="$REPO/bin"
 export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"
 
 # Ordre d'affichage des catégories + libellé humain.
-CAT_ORDER="etat-major session naming registry run liens liens-deprecated expose infra"
+CAT_ORDER="home session org naming registry run liens liens-deprecated expose infra"
 cat_label() {
   case "$1" in
-    etat-major)        echo "Lancement (etat-major)";;
+    home)        echo "Launch (home)";;
     session)           echo "Session & panes";;
-    naming)            echo "Nommage";;
-    registry)          echo "Registre";;
-    run)               echo "Exécution (soutien)";;
-    liens)             echo "Liens cross-machine";;
-    liens-deprecated)  echo "Liens — déprécié";;
-    expose)            echo "Exposition réseau";;
+    org)               echo "Org (leads, summaries, directives)";;
+    naming)            echo "Naming";;
+    registry)          echo "Registry";;
+    run)               echo "Run (job)";;
+    liens)             echo "Cross-machine links";;
+    liens-deprecated)  echo "Links (deprecated)";;
+    expose)            echo "Network exposure";;
     infra)             echo "Infra";;
     *)                 echo "$1";;
   esac
@@ -70,35 +71,35 @@ cmd_scripts() { _rows | cut -f2 | sort; }
 
 cmd_check_deps() {
   local row cmd pkg scope opt miss=0
-  printf '%s\n' "Dépendances externes de thedev :"
+  printf '%s\n' "thedev external dependencies:"
   while IFS='|' read -r cmd pkg scope opt; do
     [ -n "$cmd" ] || continue
     if command -v "$cmd" >/dev/null 2>&1; then
       printf '  ● %-13s %s\n' "$cmd" "($scope)"
     elif [ "$opt" = "1" ]; then
-      printf '  ○ %-13s %s — optionnel, absent\n' "$cmd" "($scope, $pkg)"
+      printf '  ○ %-13s %s: optional, missing\n' "$cmd" "($scope, $pkg)"
     else
-      printf '  ✗ %-13s %s — MANQUANT (%s)\n' "$cmd" "($scope)" "$pkg"; miss=1
+      printf '  ✗ %-13s %s: MISSING (%s)\n' "$cmd" "($scope)" "$pkg"; miss=1
     fi
   done <<< "$(printf '%s\n' "$DEPS" | sed '/^$/d')"
-  [ "$miss" = 0 ] && echo "→ tout le nécessaire est présent." || echo "→ des dépendances manquent (cf. ✗)."
+  [ "$miss" = 0 ] && echo "→ everything needed is present." || echo "→ some dependencies are missing (see ✗)."
   return "$miss"
 }
 
 cmd_render() {
   local nscripts; nscripts=$(_rows | wc -l | tr -d ' ')
   cat <<EOF
-# thedev — manifest
+# thedev: manifest
 
-> **Généré** par \`thedev-manifest\` depuis les tags \`# @thedev\` des scripts \`bin/\`.
-> Ne pas éditer à la main. Régénérer : \`thedev-manifest --write\`. ${nscripts} commandes.
+> **Generated** by \`thedev-manifest\` from the \`# @thedev\` tags of the \`bin/\` scripts.
+> Do not edit by hand. Regenerate: \`thedev-manifest --write\`. ${nscripts} commands.
 
-## Modèle mental
+## Mental model
 
-**machine** → **equipe** (1 projet × 1 machine, tous pairs) → **pages** (\`le front\` = la sidebar + la stack des soldats · \`le camp\` = territoire la garde/soutiens · \`la tente\` = terminaux humains) → **panes**.
-Un **soutien** = un pane long-running lancé dans le camp. Les equipes s'échangent des **missions** cross-machine (interactif, sur l'abonnement). Vocabulaire complet : \`NAMING.md\` · liens : \`plans/thedev-liens.md\`.
+**machine** → **workspace** (1 project × 1 machine, all peers) → **pages** (\`agents\` = the sidebar + the agent stack, \`jobs\` = automations/jobs area, \`shell\` = human terminals) → **panes**.
+A **job** = a long-running pane started in jobs. Workspaces exchange cross-machine **tasks** (\`delegate\`, interactive, on the subscription). The **owner** sits at the root, **leads** above workspaces (\`org-tree\`). Full vocabulary: \`NAMING.md\`, links: \`plans/thedev-liens.md\`.
 
-## Commandes
+## Commands
 EOF
   local cat name desc seen=""
   for cat in $CAT_ORDER; do
@@ -116,37 +117,37 @@ EOF
   _rows | awk -F'\t' -v known=" $CAT_ORDER " '{ if (index(known, " " $1 " ")==0) print }' | sort | {
     local first=1
     while IFS=$'\t' read -r cat name desc; do
-      if [ "$first" = 1 ]; then printf '\n### Autres\n'; first=0; fi
+      if [ "$first" = 1 ]; then printf '\n### Other\n'; first=0; fi
       printf -- '- **%s** (%s) — %s\n' "$name" "$cat" "$desc"
     done
   }
   cat <<'EOF'
 
-## Dépendances externes
+## External dependencies
 
-| Commande | Paquet | Portée | |
+| Command | Package | Scope | |
 |---|---|---|---|
 EOF
   while IFS='|' read -r cmd pkg scope opt; do
     [ -n "$cmd" ] || continue
-    local mark="requis"; [ "$opt" = "1" ] && mark="optionnel"
+    local mark="required"; [ "$opt" = "1" ] && mark="optional"
     printf '| `%s` | %s | %s | %s |\n' "$cmd" "$pkg" "$scope" "$mark"
   done <<< "$(printf '%s\n' "$DEPS" | sed '/^$/d')"
   cat <<'EOF'
 
 ## Installation
 
-- **Globale** (config perso complète) : `./install.sh [--with-deps] [--gnome] [--vps=<label>]`
-- **thedev seul** (sans toucher .bashrc/.claude perso) : `./install-dev.sh [--vps=<label>]`
-  — la liste des scripts installés est dérivée de ce manifest (`thedev-manifest --scripts`).
-- **Vérifier les dépendances** : `thedev-manifest --check-deps`
+- **Global** (full personal config): `./install.sh [--with-deps] [--gnome] [--vps=<label>]`
+- **thedev only** (without touching the personal .bashrc/.claude): `./install-dev.sh [--vps=<label>]`
+  (the list of installed scripts is derived from this manifest: `thedev-manifest --scripts`).
+- **Check dependencies**: `thedev-manifest --check-deps`
 EOF
 }
 
 case "${1:-}" in
   --scripts)     cmd_scripts ;;
   --check-deps)  cmd_check_deps ;;
-  --write)       cmd_render > "$REPO/MANIFEST.md" && echo "✓ $REPO/MANIFEST.md ($(_rows | wc -l | tr -d ' ') commandes)" ;;
+  --write)       cmd_render > "$REPO/MANIFEST.md" && echo "✓ $REPO/MANIFEST.md ($(_rows | wc -l | tr -d ' ') commands)" ;;
   ""|--render)   cmd_render ;;
   -h|--help)     sed -n '2,18p' "$SELF" ;;
   *) echo "usage: thedev-manifest [--render|--write|--scripts|--check-deps]" >&2; exit 1 ;;

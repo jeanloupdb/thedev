@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# @thedev liens board cross-machine compact (equipes ouvertes, missions en cours, soutiens)
+# @thedev liens compact cross-machine board (open workspaces, running tasks, jobs)
 # thedev-status — tableau de bord cross-machine de thedev, pour l'orchestrateur.
 # Fan-out ssh sur chaque machine connue (+ local), digère l'état SUR PLACE et
 # n'en ramène qu'un résumé DENSE : but explicite = polluer un minimum le
 # contexte du Claude qui l'appelle. Read-only.
 #
 #   thedev-status        board compact (défaut) — 1 ligne/machine au repos
-#   thedev-status -v     verbeux : noms des soutiens vivants en plus (pour TOI, pas pour l'orchestrateur)
+#   thedev-status -v     verbeux : noms des jobs vivants en plus (pour TOI, pas pour l'orchestrateur)
 #   thedev-status __probe   interne : état machine-local compact (appelé via ssh)
 #
 # Sources : ~/.config/thedev-machines (1 hôte ssh par ligne, # = commentaire).
@@ -18,27 +18,27 @@ MACHINES_FILE="$HOME/.config/thedev-machines"
 THEDEV="$HOME/.cache/thedev"
 selfname="$(cat "$HOME/.config/dev-vps" 2>/dev/null || echo local)"
 
-human_age() {  # secondes → "12m" / "3h" / "2j"
+human_age() {  # secondes → "12m" / "3h" / "2d"
   local s="$1"
   if   [ "$s" -lt 3600 ];   then echo "$((s/60))m"
   elif [ "$s" -lt 86400 ];  then echo "$((s/3600))h"
-  else echo "$((s/86400))j"; fi
+  else echo "$((s/86400))d"; fi
 }
 
 # ── PROBE : tourne SUR une machine, émet des lignes taguées compactes ─────────
 #   S <open_csv> <n_miss> <n_alive> <n_dead>
-#   M <id> <age> <equipe>          (1 par mission en cours)
-#   C <●|○> <name>                 (1 par soutien)
+#   M <id> <age> <workspace>          (1 par task en cours)
+#   C <●|○> <name>                 (1 par job)
 cmd_probe() {
   local now; now=$(date +%s)
   shopt -s nullglob
 
-  # equipes ouvertes
+  # workspaces ouvertes
   local open=() f
   for f in "$THEDEV"/links/*; do open+=("$(basename "$f")"); done
   local open_csv="-"; [ "${#open[@]}" -gt 0 ] && open_csv=$(IFS=,; echo "${open[*]}")
 
-  # missions en cours : spaces/<eq>/work/<id>/ (pas encore déplacées en done/)
+  # tasks en cours : spaces/<eq>/work/<id>/ (pas encore déplacées en done/)
   local n_miss=0 d id eq age
   for d in "$THEDEV"/spaces/*/work/*/; do
     [ -d "$d" ] || continue
@@ -48,15 +48,15 @@ cmd_probe() {
     n_miss=$((n_miss+1))
   done
 
-  # soutiens : registre soutien + vivacité (soutien alive)
-  # chemin absolu : le probe tourne en ssh non-interactif → soutien pas dans le PATH
-  local soutien="$HOME/.local/bin/soutien" n_alive=0 n_dead=0 name mark
-  if [ -f "$HOME/.cache/thedev-soutien" ]; then
+  # jobs : registre job + vivacité (job alive)
+  # chemin absolu : le probe tourne en ssh non-interactif → job pas dans le PATH
+  local job="$HOME/.local/bin/job" n_alive=0 n_dead=0 name mark
+  if [ -f "$HOME/.cache/thedev-jobs" ]; then
     while IFS=$'\t' read -r name _; do
       [ -n "$name" ] || continue
-      if "$soutien" alive "$name" 2>/dev/null; then mark="●"; n_alive=$((n_alive+1)); else mark="○"; n_dead=$((n_dead+1)); fi
+      if "$job" alive "$name" 2>/dev/null; then mark="●"; n_alive=$((n_alive+1)); else mark="○"; n_dead=$((n_dead+1)); fi
       printf 'C\t%s\t%s\n' "$mark" "$name"
-    done < "$HOME/.cache/thedev-soutien"
+    done < "$HOME/.cache/thedev-jobs"
   fi
 
   printf 'S\t%s\t%s\t%s\t%s\n' "$open_csv" "$n_miss" "$n_alive" "$n_dead"
@@ -67,7 +67,7 @@ cmd_probe() {
 render_machine() {
   local machine="$1" pf="$2" verbose="$3"
   if [ ! -s "$pf" ]; then
-    printf '%-9s ✗ injoignable\n' "$machine"; return
+    printf '%-9s ✗ unreachable\n' "$machine"; return
   fi
   local S; S=$(grep '^S' "$pf" | head -1)
   local open n_miss n_alive n_dead
@@ -78,17 +78,17 @@ render_machine() {
   if [ "$open" = "-" ] && [ "$n_miss" = "0" ] && [ "$n_alive" = "0" ] && [ "$n_dead" = "0" ]; then
     printf '%-9s idle\n' "$machine"; return
   fi
-  printf '%-9s eq:%-14s miss:%s  soutien:●%s ○%s\n' "$machine" "$open" "$n_miss" "$n_alive" "$n_dead"
+  printf '%-9s ws:%-14s tasks:%s  job:●%s ○%s\n' "$machine" "$open" "$n_miss" "$n_alive" "$n_dead"
 
-  # détails toujours utiles : missions en cours + soutiens MORTS (= un truc a cassé)
+  # détails toujours utiles : tasks en cours + jobs MORTS (= un truc a cassé)
   local id age eq m mk nm
   while IFS=$'\t' read -r _ id age eq; do
     [ -n "$id" ] && printf '            ↳ %s  (%s, %s)\n' "$id" "$eq" "$age"
   done < <(grep '^M' "$pf")
   while IFS=$'\t' read -r _ mk nm; do
-    [ "$mk" = "○" ] && printf '            ↳ ○ %s (mort)\n' "$nm"
+    [ "$mk" = "○" ] && printf '            ↳ ○ %s (dead)\n' "$nm"
   done < <(grep '^C' "$pf")
-  # noms des soutiens vivants : seulement en -v (sinon on pollue)
+  # noms des jobs vivants : seulement en -v (sinon on pollue)
   if [ "$verbose" = "1" ]; then
     while IFS=$'\t' read -r _ mk nm; do
       [ "$mk" = "●" ] && printf '            ↳ ● %s\n' "$nm"
@@ -133,6 +133,6 @@ case "${1:-}" in
   __probe) cmd_probe ;;
   -v)      cmd_board -v ;;
   "")      cmd_board ;;
-  -h|--help) printf 'usage: %s [-v]\n  board cross-machine compact (defaut)\n  -v : + noms des soutiens vivants\n' "$me" ;;
+  -h|--help) printf 'usage: %s [-v]\n  compact cross-machine board (default)\n  -v : + names of live jobs\n' "$me" ;;
   *)       printf 'usage: %s [-v]\n' "$me"; exit 1 ;;
 esac

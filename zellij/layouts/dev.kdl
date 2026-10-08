@@ -10,6 +10,7 @@ layout {
                 format_right "#[bg=#000000]{mode}#[bg=#000000,fg=#607a60,bold] {swap_layout} "
                 format_space "#[bg=#000000]"
                 border_enabled "false"
+                pane_frame_style "full"   // zjstatus 0.25 : doit refléter config.kdl (défaut « titles » sinon)
 
                 // Alerte rouge « ⚠ action t'attend · Alt+W » poussée par wait-bar via
                 // `zellij pipe` quand un Claude de la session est bloqué sur un QCM.
@@ -27,8 +28,8 @@ layout {
         }
     }
 
-    // Page 1 — le front : sidebar+editor (stack) | claude (stack des claudes) + barre ＋
-    tab name="le front" focus=true {
+    // Page 1 — agents : sidebar+editor (stack) | claude (stack des claudes) + barre ＋
+    tab name="agents" focus=true {
         pane split_direction="vertical" {
             // Colonne de gauche = la sidebar, SEULE. Pas de nvim empilé ici :
             // 20 % de large, c'est ~35 colonnes — inéditable, donc le pane
@@ -49,18 +50,18 @@ layout {
         }
     }
 
-    // Page 2 — le camp (territoire de Claude, peuplé via `soutien`)
-    // La garnison est la BASE d'une stack : les soutiens s'empilent dessus
-    // (`soutien` → `zellij run --stacked`). La garnison ne se ferme jamais → l'onglet
-    // « le camp » ne se vide (ni ne disparaît) pas quand un soutien se termine.
-    tab name="le camp" {
+    // Page 2 — jobs (territoire de Claude, peuplé via `job`)
+    // Le pane d'accueil est la BASE d'une stack : les jobs s'empilent dessus
+    // (`job` → `zellij run --stacked`). Le pane d'accueil ne se ferme jamais → l'onglet
+    // « jobs » ne se vide (ni ne disparaît) pas quand un job se termine.
+    tab name="jobs" {
         pane stacked=true {
-            pane name="garnison" command="~/.local/bin/garnison"
+            pane name="welcome" command="~/.local/bin/jobs-pane"
         }
     }
 
-    // Page 3 — la tente : shell + git (terminaux perso, côte à côte)
-    tab name="la tente" {
+    // Page 3 — shell : shell + git (terminaux perso, côte à côte)
+    tab name="shell" {
         pane split_direction="vertical" {
             pane name="shell" command="~/.local/bin/shell-pane"
             pane name="git" command="~/.local/bin/git-pane"

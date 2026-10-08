@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# @thedev veille déclenche un feed (cron-as-mission) : dépose une mission locale dans l'inbox
-# feed <nom> [espace]  — dépose feeds/<nom>.prompt comme MISSION LOCALE dans l'inbox d'un
+# @thedev veille triggers a feed (cron-as-task): drops a local task in the inbox
+# feed <nom> [espace]  — dépose feeds/<nom>.prompt comme TASK LOCALE dans l'inbox d'un
 #                        espace ouvert → le watcher thedev-link la traite (Claude INTERACTIF =
 #                        abonnement, jamais claude -p). Pensé pour un timer systemd --user.
 #
@@ -11,11 +11,11 @@
 # continuité du feed vit dans ~/.cache/thedev/feeds/<nom>.md (lue/écrite par le Claude).
 set -u
 name="${1:-}"
-[ -n "$name" ] || { echo "usage: feed <nom> [espace]" >&2; exit 1; }
+[ -n "$name" ] || { echo "usage: feed <name> [workspace]" >&2; exit 1; }
 ROOT="$HOME/.cache/thedev"
 REPO="$HOME/jlal_perso/config"
 prompt_file="$REPO/feeds/$name.prompt"
-[ -f "$prompt_file" ] || { echo "feed: prompt introuvable : $prompt_file" >&2; exit 1; }
+[ -f "$prompt_file" ] || { echo "feed: prompt not found: $prompt_file" >&2; exit 1; }
 
 # Un espace est OUVERT seulement si son watcher est VIVANT (kill -0 sur watcher_pid).
 # Un link fantôme (watcher mort sans nettoyer son trap : kill -9, OOM, reboot) ne compte
@@ -31,11 +31,11 @@ _alive() {
 # Espace cible : argument explicite, sinon le 1er espace réellement OUVERT (watcher vivant).
 esp="${2:-}"
 if [ -n "$esp" ]; then
-  _alive "$esp" || { echo "feed: espace '$esp' fermé (watcher mort) — relance un thedev à son emplacement" >&2; exit 1; }
+  _alive "$esp" || { echo "feed: workspace '$esp' closed (watcher dead), restart a thedev in its folder" >&2; exit 1; }
 else
   for f in "$ROOT"/links/*; do [ -e "$f" ] && _alive "$(basename "$f")" && { esp=$(basename "$f"); break; }; done
 fi
-[ -n "$esp" ] || { echo "feed: aucun espace ouvert ici (lance 'thedev-link open' dans un espace)" >&2; exit 1; }
+[ -n "$esp" ] || { echo "feed: no open workspace here (run 'thedev-link open' in a workspace)" >&2; exit 1; }
 
 inbox="$ROOT/spaces/$esp/inbox"
 mkdir -p "$inbox" "$ROOT/feeds"
@@ -45,4 +45,4 @@ id="feed-$name-$(date +%Y%m%d-%H%M%S)"
   printf 'From: feed/%s\nCreated: %s\nTimeout: 0\n\n' "$name" "$(date -Iseconds)"
   cat "$prompt_file"
 } > "$inbox/$id.mission.tmp" && mv "$inbox/$id.mission.tmp" "$inbox/$id.mission"
-echo "✓ feed '$name' déposé → espace '$esp' (mission $id)"
+echo "✓ feed '$name' dropped → workspace '$esp' (task $id)"

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# @thedev session barre + pour ajouter un soldat aside a la stack
+# @thedev session + bar to add an aside agent to the stack
 # aside-button — barre "＋" fixe en bas de la colonne droite (toujours sous tous
-# les soldats). Tu y vas avec Alt+↓ ; Entrée ouvre un nouveau soldat qui rejoint
+# les agents). Tu y vas avec Alt+↓ ; Entrée ouvre un nouveau agent qui rejoint
 # la stack au-dessus.
 #
 # Deux états VISUELS, pour qu'on voie quand la ligne est sélectionnée :
-#   - au REPOS (pane non focus) : « ＋ Nouveau soldat » + métriques limitantes à droite ;
+#   - au REPOS (pane non focus) : « ＋ New agent » + métriques limitantes à droite ;
 #   - SÉLECTIONNÉ (pane focus) : métriques MASQUÉES + action mise en évidence (inversé).
 # Détection du focus via les événements terminaux focus-in/out (CSI I / CSI O,
 # demandés par \033[?1004h, transmis par zellij). Si non transmis → reste au repos.
@@ -18,7 +18,7 @@ focused=0
 render() {
   if [ "$focused" = 1 ]; then
     # sélectionné : pas de métriques (bruit), action claire et surlignée
-    printf '\r\033[K %s%s  ＋  Nouveau soldat  —  Entrée pour ouvrir  %s' "$rev" "$g" "$r"
+    printf '\r\033[K %s%s  ＋  New agent  -  Enter to open  %s' "$rev" "$g" "$r"
   else
     # au repos : action discrète + métriques limitantes COLLÉES au bord droit
     # (source thedev-metrics). Largeur visible = métriques sans les ANSI ;
@@ -28,7 +28,7 @@ render() {
     plain=$(printf '%s' "$metrics" | sed 's/\x1b\[[0-9;]*m//g')
     w=$(tput cols 2>/dev/null); w=${w:-${COLUMNS:-80}}
     col=$(( w - ${#plain} ))
-    printf '\r\033[K %s＋ Nouveau soldat%s  %s[Entrée]%s' "$g" "$r" "$d" "$r"
+    printf '\r\033[K %s＋ New agent%s  %s[Enter]%s' "$g" "$r" "$d" "$r"
     if [ -n "$metrics" ]; then
       if [ "$col" -gt 32 ]; then printf '\033[%dG%s' "$col" "$metrics"
       else printf '   %s' "$metrics"; fi
@@ -46,9 +46,9 @@ while :; do
         IFS= read -t 0.08 -rsN2 seq 2>/dev/null
         case "$seq" in '[I') focused=1 ;; '[O') focused=0 ;; esac
         ;;
-      $'\r'|$'\n')                              # Entrée → ouvrir un nouveau soldat
+      $'\r'|$'\n')                              # Entrée → ouvrir un nouveau agent
         zellij action move-focus up 2>/dev/null
-        renfort
+        spawn
         ;;
       q|Q) : ;;
     esac

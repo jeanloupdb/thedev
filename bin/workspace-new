@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# @thedev session creates a new project by handing the bootstrap to a remote agent (auto VPS)
+# workspace-new — orchestrateur de création de projet. Choisit un VPS (le moins chargé), ouvre
+# un workspace détaché via `workspace-open` avec un agent briefé pour scaffolder le projet, et
+# inscrit l'entrée dans PROJECTS.md (registre local). Couche cadrage = skill `/new-project`.
+#
+#   workspace-new <nom> [--machine <host>] [--local] [--stack "<s>"] [--goal "<g>"] [--desc "<d>"]
+#
+#   <nom>       nom du projet (= workspace zellij). alphanum . _ -
+#   --machine   force le VPS cible (sinon auto : le moins chargé de ~/.config/thedev-machines)
+#   --local     crée sur la machine locale (exception ; défaut = VPS)
+#   --stack     stack souhaitée (sinon l'agent distant propose selon l'objectif)
+#   --goal      objectif du projet (1 phrase)
+#   --desc      description courte (pour PROJECTS.md)
+#
+# Délégation : c'est l'agent distant qui fait git init / CLAUDE.md / scaffold / `/start`.
+set -euo pipefail
+
+die() { echo "workspace-new: $*" >&2; exit 1; }
+
+[ $# -ge 1 ] || die "usage: workspace-new <name> [--machine <host>] [--local] [--stack \"…\"] [--goal \"…\"] [--desc \"…\"]"
+nom="$1"; shift
+machine=""; want_local=""; stack=""; goal=""; desc=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --machine) machine="${2:-}"; shift 2 ;;
+    --local)   want_local=1; shift ;;
+    --stack)   stack="${2:-}"; shift 2 ;;
+    --goal)    goal="${2:-}"; shift 2 ;;
+    --desc)    desc="${2:-}"; shift 2 ;;
+    *) die "unknown option: $1" ;;
+  esac
+done
+
+[[ "$nom" =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid name: '$nom' (alphanumerics . _ - only)"
+
+PROJECTS_MD="${PROJECTS_MD:-${DEV_ROOT:-$HOME/jlal_perso}/projets/PROJECTS.md}"
+# Garde-fou : pas de doublon dans le registre
+if [ -f "$PROJECTS_MD" ] && grep -qE "^### $nom( |\$)" "$PROJECTS_MD"; then
+  die "a project '### $nom' is already in the registry ($PROJECTS_MD)"
+fi
+
+# --- 1. Cible (machine) -------------------------------------------------------
+if [ -n "$want_local" ]; then
+  machine=local
+elif [ -z "$machine" ]; then
+  # Auto : sonde chaque VPS de thedev-machines, choisit la charge (miss+jobs) minimale.
+  machines_file="$HOME/.config/thedev-machines"
+  [ -f "$machines_file" ] || die "cannot auto-pick: $machines_file missing (use --machine or --local)"
+  best=""; best_load=999999
+  echo "→ picking a VPS (thedev-status probe)…" >&2
+  while IFS= read -r m; do
+    m="${m%%#*}"; m="$(echo "$m" | xargs)"   # strip commentaire + espaces
+    [ -n "$m" ] || continue
+    # -n : ne pas consommer le stdin de la boucle (le fichier des machines)
+    load=$(ssh -n -o ConnectTimeout=8 "$m" "bash -lic 'thedev-status __probe'" 2>/dev/null \
+            | awk -F'\t' '$1=="S"{print $3+$4; exit}')
+    if [ -z "$load" ]; then
+      echo "   $m: unreachable, skipped" >&2; continue
+    fi
+    echo "   $m: load $load" >&2
+    if [ "$load" -lt "$best_load" ]; then best_load="$load"; best="$m"; fi
+  done < "$machines_file"
+  [ -n "$best" ] || die "no reachable VPS (use --local to create locally)"
+  machine="$best"
+  echo "→ chosen VPS: $machine (load $best_load)" >&2
+fi
+
+# --- 2. Brief de l'agent distant ----------------------------------------------
+brief=$(mktemp "${TMPDIR:-/tmp}/newproj-brief.XXXXXX")
+trap 'rm -f "$brief"' EXIT
+{
+  echo "You are starting a NEW project \"$nom\" in the current (empty) folder on this machine."
+  [ -n "$stack" ] && echo "Requested stack: $stack." || echo "Stack: up to you, propose the best fit for the goal."
+  [ -n "$goal" ] && echo "Goal: $goal."
+  [ -n "$desc" ] && echo "Description: $desc."
+  cat <<'EOF'
+
+Your task is the project BOOTSTRAP (a clean start, NOT a complete feature):
+1. git init.
+2. Create a CLAUDE.md at the root (project goal, stack, how to run it). Convention: every active project has its CLAUDE.md.
+3. Minimal scaffold for the stack (tree, config files, base dependencies).
+4. Run the /start command to generate .claude/rules/start.md (stack + launch commands).
+5. Leave at least one clear "next step" todo (in the CLAUDE.md or a TODO).
+Make a first commit when it is ready. Stay SYNCHRONOUS (never a detached Workflow/agent).
+Do not deploy anything and do not start a server until asked to.
+EOF
+} > "$brief"
+
+# --- 3. Ouvre le workspace détaché briefé ----------------------------------------
+command -v workspace-open >/dev/null || die "'workspace-open' not found (PATH)"
+workspace-open "$machine" "$nom" --init-file "$brief"
+
+# --- 4. Inscrit PROJECTS.md (registre local) ---------------------------------
+if [ -f "$PROJECTS_MD" ]; then
+  if [ "$machine" = local ]; then chemin="~/projects/$nom"; else chemin="$machine:~/projects/$nom"; fi
+  entryf=$(mktemp "${TMPDIR:-/tmp}/newproj-entry.XXXXXX")
+  {
+    echo "### $nom"
+    echo "- **Chemin** : \`$chemin\`"
+    echo "- **Stack** : ${stack:-à définir (bootstrap en cours)}"
+    echo "- **Description** : ${desc:-${goal:-Nouveau projet (bootstrap en cours).}}"
+    [ -n "$goal" ] && echo "- **Objectif actuel** : $goal"
+    echo "- **Statut** : \`actif\`"
+    echo "- **Avancement** : 0%"
+    echo "- **Todo** :"
+    echo "  - [ ] Bootstrap en cours sur $machine (scaffold + /start) — vérifier puis affiner"
+  } > "$entryf"
+  tmp=$(mktemp)
+  awk -v ef="$entryf" '
+    { print }
+    /^## Projets actifs$/ && !done {
+      print ""
+      while ((getline line < ef) > 0) print line
+      done=1
+    }
+  ' "$PROJECTS_MD" > "$tmp" 2>/dev/null && mv "$tmp" "$PROJECTS_MD" \
+    && echo "✓ added to PROJECTS.md (### $nom)" \
+    || echo "⚠ PROJECTS.md update failed, add it by hand" >&2
+  rm -f "$entryf" "$tmp" 2>/dev/null || true
+else
+  echo "⚠ $PROJECTS_MD missing, entry not added" >&2
+fi
+
+echo "✓ project '$nom' started on '$machine'."

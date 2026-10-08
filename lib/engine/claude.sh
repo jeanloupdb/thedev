@@ -2,14 +2,14 @@
 # Backend « claude » de l'adaptateur moteur (cf. bin/engine, ENGINE-ADAPTER.md).
 # Sourcé par bin/engine quand THEDEV_ENGINE=claude (défaut). Implémente le contrat
 # moteur en enveloppant le comportement Claude Code ACTUEL (transcripts JSONL,
-# registre reg-soldat, marqueurs busy, claude-window-usage). Premier jet :
+# registre agent-register, marqueurs busy, claude-window-usage). Premier jet :
 # wrapper fidèle, les call-sites historiques ne sont pas encore re-routés ici.
 
 ENGINE_PROC_NAME=claude
 CC_PROJECTS="$HOME/.claude/projects"
-CC_BUSY_DIR="$HOME/.cache/soldat-busy"
-CC_NUDGE_DIR="$HOME/.cache/soldat-nudge"
-CC_WAITING_DIR="$HOME/.cache/soldat-waiting"   # Soldat bloqué sur une question/permission
+CC_BUSY_DIR="$HOME/.cache/agent-busy"
+CC_NUDGE_DIR="$HOME/.cache/agent-nudge"
+CC_WAITING_DIR="$HOME/.cache/agent-waiting"   # Agent bloqué sur une question/permission
 
 # Chemin du transcript .jsonl d'une session (id = basename sans extension).
 _cc_transcript_for() {   # $1=id  → chemin sur stdout, exit 1 si introuvable
@@ -21,7 +21,7 @@ _cc_transcript_for() {   # $1=id  → chemin sur stdout, exit 1 si introuvable
 }
 
 # (cwd, titre, mtime_epoch) d'un transcript sans tout lire (head/tail), comme le
-# fait etat-major (session_info) : cwd en tête, ai-title en queue, repli sur le 1er
+# fait home (session_info) : cwd en tête, ai-title en queue, repli sur le 1er
 # message utilisateur « humain ».
 _cc_session_info() {   # $1=path  → "cwd\ttitle\tmtime" sur stdout, exit 1 sinon
   local path="$1" head tail cwd title first mtime
@@ -57,13 +57,13 @@ engine_launch() {
   [ -n "$init" ]     && export CLAUDE_PANE_INIT="$init"
   [ -n "$initfile" ] && export CLAUDE_PANE_INIT_FILE="$initfile"
   # NB : --remote-control (auto sur VPS) et --append-system-prompt (prompt zellij)
-  # sont gérés nativement par soldat-pane → on lui délègue.
-  exec soldat-pane "$@"
+  # sont gérés nativement par agent-pane → on lui délègue.
+  exec agent-pane "$@"
 }
 
-# Liste les sessions. all=1 → une equipe par dossier (realpath, id = dernière conv) ;
+# Liste les sessions. all=1 → un workspace par dossier (realpath, id = dernière conv) ;
 # sinon toutes les sessions du cwd demandé. Sortie TSV (ou JSON-lines si json=1).
-# Implémenté en UN seul process python3 (et non bash+jq par fichier) : l'etat-major
+# Implémenté en UN seul process python3 (et non bash+jq par fichier) : l'home
 # l'appelle au démarrage, la latence compte — le bash par-fichier coûtait ~5 s.
 engine_list() {   # $1=want_cwd  $2=all  $3=json
   python3 - "$1" "$2" "$3" "$CC_PROJECTS" "$CC_BUSY_DIR" <<'PY'
@@ -80,7 +80,7 @@ def flatten(content):
 
 def session_info(path):
     """(cwd, titre, mtime) sans tout lire (têtes/queues) — logique reprise telle
-    quelle de l'ancien etat-major."""
+    quelle de l'ancien home."""
     try:
         size = os.path.getsize(path)
         with open(path, "rb") as f:
@@ -151,15 +151,15 @@ PY
 }
 
 # Lit le(s) message(s) d'une session. last=1 → dernier seulement ; role filtre.
-# Reproduit le jq de thedev-link (capture déterministe du résultat de mission).
+# Reproduit le jq de thedev-link (capture déterministe du résultat de task).
 engine_read() {   # $1=id  $2=last  $3=role  $4=json  $5=ref (chemin transcript, optionnel)
   local id="$1" last="$2" role="$3" json="$4" ref="${5:-}" tp lastjson=false
   if [ -n "$ref" ]; then
-    tp="$ref"; [ -f "$tp" ] || { echo "engine: transcript '$tp' introuvable" >&2; return 1; }
+    tp="$ref"; [ -f "$tp" ] || { echo "engine: transcript '$tp' not found" >&2; return 1; }
   else
-    tp=$(_cc_transcript_for "$id") || { echo "engine: session '$id' introuvable" >&2; return 1; }
+    tp=$(_cc_transcript_for "$id") || { echo "engine: session '$id' not found" >&2; return 1; }
   fi
-  command -v jq >/dev/null 2>&1 || { echo "engine: jq requis" >&2; return 1; }
+  command -v jq >/dev/null 2>&1 || { echo "engine: jq required" >&2; return 1; }
   [ "$last" = 1 ] && lastjson=true
   if [ "$json" = 1 ]; then
     jq -c --arg role "$role" '
@@ -196,7 +196,7 @@ engine_usage() {   # $1=json
 }
 
 # Vérité terrain des process. Sans id : nombre de moteurs vivants. Avec id : 0/1
-# selon qu'un process tourne dans le cwd de cette session (comme etat-major).
+# selon qu'un process tourne dans le cwd de cette session (comme home).
 engine_running() {   # $1=id (optionnel)
   local id="$1" tp info cwd real n=0 p pc
   if [ -z "$id" ]; then
@@ -215,7 +215,7 @@ engine_running() {   # $1=id (optionnel)
 }
 
 # Puits d'événements normalisés (le pivot entrant). Tient l'ÉTAT thedev : registre
-# (reg-soldat), marqueurs busy, et sentinelles de mission (transcript_path /
+# (agent-register), marqueurs busy, et sentinelles de task (transcript_path /
 # turn-ended, lues par le watcher de thedev-link). Les extras spécifiques Claude
 # (rôle, nom de pane, session zellij) sont lus dans l'env du hook, comme avant.
 # Le rename du pane et le nudge pane-name restent côté hook (mécanismes propres au
@@ -227,10 +227,10 @@ engine_event() {   # $1=type $2=session $3=cwd $4=title $5=transcript
       role="main"; [ -n "${CLAUDE_PANE_ONCE:-}" ] && role="aside"
       def="${CLAUDE_PANE_NAME:-claude}"
       case "$def" in
-        mission-*)
-          # Mission (thedev-link) : pas de registre ; on enregistre le
+        task-*)
+          # Task (thedev-link) : pas de registre ; on enregistre le
           # transcript_path dans le work-dir (source de vérité du résultat).
-          mid="${def#mission-}"
+          mid="${def#task-}"
           if [ -n "$tp" ]; then
             for w in "$HOME"/.cache/thedev/spaces/*/work/"$mid"; do
               [ -d "$w" ] && printf '%s\n' "$tp" > "$w/transcript_path" 2>/dev/null
@@ -238,8 +238,8 @@ engine_event() {   # $1=type $2=session $3=cwd $4=title $5=transcript
           fi
           return 0 ;;
       esac
-      name=$(reg-soldat upsert "$sid" "$cwd" "$role" "${ZELLIJ_SESSION_NAME:-}" "$def" 2>/dev/null)
-      reg-soldat gc 14 2>/dev/null     # housekeeping : purge > 14 j
+      name=$(agent-register upsert "$sid" "$cwd" "$role" "${ZELLIJ_SESSION_NAME:-}" "$def" 2>/dev/null)
+      agent-register gc 14 2>/dev/null     # housekeeping : purge > 14 j
       printf '%s' "$name"                  # → l'appelant (hook) renomme le pane
       ;;
     busy)
@@ -249,10 +249,10 @@ engine_event() {   # $1=type $2=session $3=cwd $4=title $5=transcript
     turn-end)
       rm -f "$CC_BUSY_DIR/$sid" 2>/dev/null
       case "${CLAUDE_PANE_NAME:-}" in
-        mission-*)
-          # Fin de tour déterministe d'une mission : sentinelle turn-ended (+
+        task-*)
+          # Fin de tour déterministe d'une task : sentinelle turn-ended (+
           # transcript_path en filet), lue par le watcher de thedev-link.
-          mid="${CLAUDE_PANE_NAME#mission-}"
+          mid="${CLAUDE_PANE_NAME#task-}"
           for w in "$HOME"/.cache/thedev/spaces/*/work/"$mid"; do
             [ -d "$w" ] || continue
             date -Iseconds > "$w/turn-ended" 2>/dev/null
@@ -263,28 +263,28 @@ engine_event() {   # $1=type $2=session $3=cwd $4=title $5=transcript
       ;;
     session-end)
       rm -f "$CC_BUSY_DIR/$sid" "$CC_NUDGE_DIR/$sid" "$CC_WAITING_DIR/$sid" 2>/dev/null
-      reg-soldat markend "$sid" 2>/dev/null
+      agent-register markend "$sid" 2>/dev/null
       ;;
     waiting)
-      # Le soldat attend une réponse/permission (hook Notification) → état « t'attend » :
+      # L'agent attend une réponse/permission (hook Notification) → état « t'attend » :
       # marqueur waiting, et on retire busy (il ne CALCULE plus, il te bloque).
       mkdir -p "$CC_WAITING_DIR" 2>/dev/null && : > "$CC_WAITING_DIR/$sid" 2>/dev/null
       rm -f "$CC_BUSY_DIR/$sid" 2>/dev/null
       ;;
     *)
-      echo "engine event: type inconnu '$type'" >&2; return 1 ;;
+      echo "engine event: unknown type '$type'" >&2; return 1 ;;
   esac
 }
 
 # Décrit le câblage cible des hooks natifs vers `engine event`. Ne modifie PAS
-# settings.json (la migration depuis soldat-track.sh est une étape séparée).
+# settings.json (la migration depuis agent-track.sh est une étape séparée).
 engine_install_hooks() {
   cat <<'MAP'
-claude → engine event (mapping cible) :
+claude → engine event (target mapping):
   SessionStart     → engine event session-start --session <id> --cwd <cwd> [--transcript <tp>]
   UserPromptSubmit → engine event busy          --session <id> --cwd <cwd>
   Stop             → engine event turn-end       --session <id> --cwd <cwd>
   SessionEnd       → engine event session-end    --session <id> --cwd <cwd>
-Câblage actuel : install.sh → claude/hooks/soldat-track.sh (pas encore re-routé).
+Current wiring: install.sh → claude/hooks/agent-track.sh (not rerouted yet).
 MAP
 }

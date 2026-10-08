@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# @thedev veille envoie texte/photo sur Telegram (Bot API, curl) — livraison des feeds & alertes
-# tg — pousse un message ou une photo sur Telegram via l'API Bot. Zéro dépendance (curl).
-# Pensé pour des digests en PLUSIEURS messages courts + images (un appel = un message).
-# Réessaie tout seul sur le flood-control Telegram (« retry after N ») → fiable non surveillé.
+# @thedev veille sends text/photo to Telegram (Bot API, curl): delivery of feeds & alerts
+# tg: pushes a message or a photo to Telegram through the Bot API. Zero dependency (curl).
+# Built for digests in SEVERAL short messages + images (one call = one message).
+# Retries on its own on Telegram flood control ("retry after N") → reliable unattended.
 #
-#   tg "<texte markdown>"                    → message (parse_mode Markdown)
-#   tg --photo <url|fichier> ["<légende>"]   → photo (URL distante OU fichier local), légende Markdown
-#   tg --audio <fichier> ["<légende>"]       → fichier audio (mp3) : lecteur Telegram avec durée
-#   tg --plain "<texte>"                     → message sans formatage (aucun parse_mode)
+#   tg "<markdown text>"                     → message (parse_mode Markdown)
+#   tg --photo <url|file> ["<caption>"]      → photo (remote URL OR local file), Markdown caption
+#   tg --audio <file> ["<caption>"]          → audio file (mp3): Telegram player with duration
+#   tg --plain "<text>"                      → message without formatting (no parse_mode)
 #
-# Config (fichiers SOURCÉS, jamais affichés ; chaque fichier complète les variables) :
-#   ~/.config/thedev/telegram.env · ~/.config/heartbeat/heartbeat.env · ~/.claude/channels/telegram/.env
-#   → TELEGRAM_BOT_TOKEN (obligatoire) · TELEGRAM_CHAT_ID (destinataire)
+# Config (SOURCED files, never printed; each file completes the variables):
+#   ~/.config/thedev/telegram.env, ~/.config/heartbeat/heartbeat.env, ~/.claude/channels/telegram/.env
+#   → TELEGRAM_BOT_TOKEN (required), TELEGRAM_CHAT_ID (recipient)
 set -u
 
 for f in "$HOME/.config/thedev/telegram.env" "$HOME/.config/heartbeat/heartbeat.env" "$HOME/.claude/channels/telegram/.env"; do
@@ -20,7 +20,7 @@ for f in "$HOME/.config/thedev/telegram.env" "$HOME/.config/heartbeat/heartbeat.
 done
 : "${TELEGRAM_BOT_TOKEN:=}"; : "${TELEGRAM_CHAT_ID:=}"
 [ -n "$TELEGRAM_BOT_TOKEN" ] && [ -n "$TELEGRAM_CHAT_ID" ] || {
-  echo "tg: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID manquants (cf. ~/.config/thedev/telegram.env)" >&2; exit 1; }
+  echo "tg: TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID missing (see ~/.config/thedev/telegram.env)" >&2; exit 1; }
 API="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}"
 
 # Envoi avec réessai auto sur flood-control (« retry after N »). Le token n'apparaît
@@ -35,10 +35,10 @@ send() {  # send <endpoint> <curl-args…>
       *'retry after'*)
         delay=$(printf '%s' "$out" | grep -oE 'retry after [0-9]+' | grep -oE '[0-9]+$')
         sleep "$(( ${delay:-3} + 1 ))" ;;
-      *) echo "tg: échec — $(printf '%s' "$out" | grep -oE '"description":"[^"]*"' | head -1)" >&2; return 1 ;;
+      *) echo "tg: failed: $(printf '%s' "$out" | grep -oE '"description":"[^"]*"' | head -1)" >&2; return 1 ;;
     esac
   done
-  echo "tg: échec après réessais (flood control)" >&2; return 1
+  echo "tg: failed after retries (flood control)" >&2; return 1
 }
 
 case "${1:-}" in
@@ -46,7 +46,7 @@ case "${1:-}" in
 
   --photo)
     src="${2:-}"; cap="${3:-}"
-    [ -n "$src" ] || { echo "tg --photo : url ou fichier requis" >&2; exit 1; }
+    [ -n "$src" ] || { echo "tg --photo: url or file required" >&2; exit 1; }
     if [ -f "$src" ]; then
       send sendPhoto -F "chat_id=$TELEGRAM_CHAT_ID" -F "photo=@$src" \
         -F "caption=$cap" -F "parse_mode=Markdown"
@@ -58,7 +58,7 @@ case "${1:-}" in
 
   --audio)
     src="${2:-}"; cap="${3:-}"
-    [ -f "$src" ] || { echo "tg --audio : fichier requis" >&2; exit 1; }
+    [ -f "$src" ] || { echo "tg --audio: file required" >&2; exit 1; }
     send sendAudio -F "chat_id=$TELEGRAM_CHAT_ID" -F "audio=@$src" \
       -F "caption=$cap" -F "parse_mode=Markdown" ;;
 

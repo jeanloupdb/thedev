@@ -1,34 +1,34 @@
 #!/usr/bin/env bash
-# @thedev commandement carte d'equipe + debrief-au-quit (brique 1 du plan commandement)
-# equipe — lit/derive la CARTE d'une equipe et flushe un DEBRIEF minimal a la sortie.
-# Voir plans/commandement.md. Namespace cache neuf : ~/.cache/thedev/command/.
+# @thedev org workspace card + report on quit (brick 1 of the org plan)
+# workspace — lit/derive la CARTE d'un workspace et flushe un REPORT minimal a la sortie.
+# Voir plans/org.md. Namespace cache neuf : ~/.cache/thedev/command/.
 # (les spaces/ et links/ de thedev-link ne bougent pas.)
 #
-#   equipe card [--cwd C]                        (re)construit le miroir runtime de la carte
-#   equipe show [--cwd C]                         affiche le miroir (le construit si absent)
-#   equipe debrief [--reason R] [--session S] [--cwd C] [--transcript T]
-#                                                 flushe un debrief minimal (derive, zero IA)
+#   workspace card [--cwd C]                        (re)construit le miroir runtime de la carte
+#   workspace show [--cwd C]                         affiche le miroir (le construit si absent)
+#   workspace report [--reason R] [--session S] [--cwd C] [--transcript T]
+#                                                 flushe un report minimal (derive, zero IA)
 #
-# Source de verite de la carte : .thedev/equipe.md a la racine du projet (in-repo,
+# Source de verite de la carte : .thedev/workspace.md a la racine du projet (in-repo,
 # OPTIONNEL). Absente → carte minimale derivee (nom + machine + cwd + branche). Le
-# miroir (jetable) vit dans le cache ; il fait autorite pour les chefs / le general.
-# Identite d'equipe (cle du noeud, jamais declaree) : <machine>/<equipe>, meme
-# resolution que thedev-link / soldat-track — on ne reinvente pas.
+# miroir (jetable) vit dans le cache ; il fait autorite pour les leads / l'owner.
+# Identite de workspace (cle du noeud, jamais declaree) : <machine>/<workspace>, meme
+# resolution que thedev-link / agent-track — on ne reinvente pas.
 set -u
 
 ROOT="$HOME/.cache/thedev/command"
 
-equipe_name()  { printf '%s' "${ZELLIJ_SESSION_NAME:-$(basename "$(pwd -P)")}"; }
+workspace_name()  { printf '%s' "${ZELLIJ_SESSION_NAME:-$(basename "$(pwd -P)")}"; }
 machine_name() {
   local m; m="$(head -n1 "$HOME/.config/dev-vps" 2>/dev/null)"
   [ -n "$m" ] || m="$(hostname -s)"
   printf '%s' "$m"
 }
-# cle <machine>__<equipe> assainie pour un nom de fichier
+# cle <machine>__<workspace> assainie pour un nom de fichier
 node_key() {
   printf '%s__%s' \
     "$(machine_name | tr -c 'A-Za-z0-9._-' '_')" \
-    "$(equipe_name  | tr -c 'A-Za-z0-9._-' '_')"
+    "$(workspace_name  | tr -c 'A-Za-z0-9._-' '_')"
 }
 
 # --- lecture du frontmatter YAML (1er bloc --- … ---) : champs key: value simples --
@@ -47,16 +47,16 @@ _body() { # $1=file : corps apres le frontmatter (ou fichier entier si pas de FM
   fi
 }
 
-# ── equipe card : (re)construit le miroir de la carte ────────────────────────
+# ── workspace card : (re)construit le miroir de la carte ────────────────────────
 cmd_card() {
   local cwd; cwd="$(pwd -P)"
   while [ $# -gt 0 ]; do case "$1" in --cwd) cwd="${2:-$cwd}"; shift 2 ;; *) shift ;; esac; done
 
   local eq mc key out src cwd_real branch domaine statut tags summary declared
-  eq="$(equipe_name)"; mc="$(machine_name)"; key="$(node_key)"
-  mkdir -p "$ROOT/equipes" || return 0
-  out="$ROOT/equipes/$key.md"
-  src="$cwd/.thedev/equipe.md"
+  eq="$(workspace_name)"; mc="$(machine_name)"; key="$(node_key)"
+  mkdir -p "$ROOT/workspaces" || return 0
+  out="$ROOT/workspaces/$key.md"
+  src="$cwd/.thedev/workspace.md"
   cwd_real="$(cd "$cwd" 2>/dev/null && pwd -P || printf '%s' "$cwd")"
   branch="$(git -C "$cwd" symbolic-ref --quiet --short HEAD 2>/dev/null)"; [ -n "$branch" ] || branch="-"
 
@@ -70,11 +70,11 @@ cmd_card() {
     fi
     summary="$(_body "$src")"
   fi
-  [ -n "$domaine" ] || domaine="$eq"   # defaut : le nom d'equipe fait office de domaine
+  [ -n "$domaine" ] || domaine="$eq"   # defaut : le nom de workspace fait office de domaine
 
   {
     printf -- '---\n'
-    printf 'equipe: %s/%s\n' "$mc" "$eq"
+    printf 'workspace: %s/%s\n' "$mc" "$eq"
     printf 'machine: %s\n'   "$mc"
     printf 'cwd: %s\n'       "$cwd_real"
     printf 'branche: %s\n'   "$branch"
@@ -91,12 +91,12 @@ cmd_card() {
 }
 
 cmd_show() {
-  local out; out="$ROOT/equipes/$(node_key).md"
+  local out; out="$ROOT/workspaces/$(node_key).md"
   [ -f "$out" ] || out="$(cmd_card "$@")"
   [ -f "$out" ] && cat "$out"
 }
 
-# ── equipe debrief : flush minimal derive a la sortie ────────────────────────
+# ── workspace report : flush minimal derive a la sortie ────────────────────────
 cmd_debrief() {
   local reason="quit" sid="" tp="" cwd; cwd="$(pwd -P)"
   while [ $# -gt 0 ]; do
@@ -113,27 +113,27 @@ cmd_debrief() {
   case "$reason" in detach|quit|crash) ;; *) reason="quit" ;; esac
 
   local eq mc key dir ts out cwd_real branch subject changed
-  eq="$(equipe_name)"; mc="$(machine_name)"; key="$(node_key)"
+  eq="$(workspace_name)"; mc="$(machine_name)"; key="$(node_key)"
   dir="$ROOT/debriefs/$key"; mkdir -p "$dir" || return 0
   ts="$(date +%Y%m%dT%H%M%S)"; out="$dir/$ts.md"
   cwd_real="$(cd "$cwd" 2>/dev/null && pwd -P || printf '%s' "$cwd")"
   branch="$(git -C "$cwd" symbolic-ref --quiet --short HEAD 2>/dev/null)"; [ -n "$branch" ] || branch="-"
 
-  # dernier sujet = nom de pane du soldat dans le registre (~/.cache/soldats)
+  # dernier sujet = nom de pane de l'agent dans le registre (~/.cache/agents)
   subject=""
-  [ -n "$sid" ] && subject="$(reg-soldat get "$sid" 2>/dev/null | cut -f4)"
-  subject="${subject#◆ }"; [ -n "$subject" ] || subject="(sans sujet)"
+  [ -n "$sid" ] && subject="$(agent-register get "$sid" 2>/dev/null | cut -f4)"
+  subject="${subject#◆ }"; [ -n "$subject" ] || subject="(no subject)"
   changed="$(git -C "$cwd" status --short 2>/dev/null)"
 
-  # Débrief RICHE : si debrief-menu a capturé un résumé du soldat (pending-etat, écrit
+  # Report RICHE : si quit-menu a capturé un résumé de l'agent (pending-etat, écrit
   # par l'option « r » avant fermeture), il PRIME sur le sujet de pane. Consommé (one-shot).
   local niveau="minimal" pend="$ROOT/pending-etat/$key" live_etat="$ROOT/etat-live/$key" rich=""
-  # état de SUIVI : le soldat l'a enrichi en pleine action (`equipe etat`) → prime sur le titre
+  # état de SUIVI : l'agent l'a enrichi en pleine action (`workspace state`) → prime sur le titre
   if [ -f "$live_etat" ]; then
     local e; e="$(grep -v '^[[:space:]]*$' "$live_etat" 2>/dev/null | tail -1)"
     [ -n "$e" ] && { subject="$e"; niveau="suivi"; }
   fi
-  # résumé RICHE au close (debrief-menu « f ») → prime sur tout
+  # résumé RICHE au close (quit-menu « f ») → prime sur tout
   if [ -f "$pend" ]; then
     rich="$(cat "$pend" 2>/dev/null)"; rm -f "$pend" 2>/dev/null
     [ -n "$rich" ] && { subject="$rich"; niveau="riche"; }
@@ -142,7 +142,7 @@ cmd_debrief() {
 
   {
     printf -- '---\n'
-    printf 'equipe: %s/%s\n' "$mc" "$eq"
+    printf 'workspace: %s/%s\n' "$mc" "$eq"
     printf 'quand: %s\n'     "$(date -Iseconds)"
     printf 'raison: %s\n'    "$reason"
     printf 'session: %s\n'   "$sid"
@@ -152,8 +152,8 @@ cmd_debrief() {
     printf '## Etat\n%s\n\n' "$subject"
     printf '## Change\n'
     if [ -n "$changed" ]; then printf '```\n%s\n```\n\n' "$changed"
-    else printf 'rien (arbre git propre ou hors git)\n\n'; fi
-    printf '## Ordres en cours\naucun\n\n'
+    else printf 'nothing (clean git tree or outside git)\n\n'; fi
+    printf '## Ordres en cours\nnone\n\n'
     printf '## Artefacts\n'
     [ -n "$tp" ] && printf -- '- transcript : %s\n' "$tp"
     printf -- '- cwd        : %s\n' "$cwd_real"
@@ -161,26 +161,26 @@ cmd_debrief() {
   printf '%s\n' "$out"
 }
 
-# ── equipe etat : le soldat enrichit son état de SUIVI en pleine action ───────
-# Appelé par le soldat lui-même pendant qu'il bosse. Chaque appel AJOUTE une ligne au
-# suivi vivant ; `carte` (équipe ouverte) et le débrief-au-quit affichent la DERNIÈRE.
+# ── workspace state : l'agent enrichit son état de SUIVI en pleine action ───────
+# Appelé par l'agent lui-même pendant qu'il bosse. Chaque appel AJOUTE une ligne au
+# suivi vivant ; `org-tree` (workspace ouvert) et le report-au-quit affichent la DERNIÈRE.
 # Pas besoin d'attendre la fermeture pour que l'état soit à jour.
 cmd_etat() {
   local txt="$*"
-  [ -n "$txt" ] || { echo "usage: equipe etat \"<ligne d'état>\"" >&2; return 1; }
+  [ -n "$txt" ] || { echo "usage: workspace state \"<state line>\"" >&2; return 1; }
   local dir="$ROOT/etat-live"; mkdir -p "$dir" || return 0
   printf '%s\n' "$txt" >> "$dir/$(node_key)"
-  echo "✓ état de suivi mis à jour."
+  echo "✓ tracking state updated."
 }
 
-# ── equipe sweep : matérialise les cartes MANQUANTES des équipes locales récentes ─
-# La carte est l'unité qui REMONTE au sommet (donc à l'accueil/Commandement). Or elle
-# n'était créée qu'au SessionStart d'un soldat géré : une équipe créée hors de ce
-# chemin (ou avant l'arrivée du commandement) reste SANS carte → absente de l'arbre,
-# « sous la tutelle d'aucun chef ». Le sweep aligne l'arbre sur la liste ÉQUIPES de
-# l'accueil (même source : `engine list`) : toute équipe active depuis ≤ N jours et
-# dont le dossier existe reçoit une carte minimale sous son chef-machine (1 machine =
-# 1 chef). Idempotent (ne touche pas les cartes existantes → resume/domaine préservés).
+# ── workspace sweep : matérialise les cartes MANQUANTES des workspaces locaux récents ─
+# La carte est l'unité qui REMONTE au sommet (donc au home/org). Or elle
+# n'était créée qu'au SessionStart d'un agent géré : un workspace créé hors de ce
+# chemin (ou avant l'arrivée de l'org) reste SANS carte → absente de l'arbre,
+# « sous la tutelle d'aucun lead ». Le sweep aligne l'arbre sur la liste WORKSPACES du
+# home (même source : `engine list`) ; tout workspace actif depuis ≤ N jours et
+# dont le dossier existe reçoit une carte minimale sous son lead-machine (1 machine =
+# 1 lead). Idempotent (ne touche pas les cartes existantes → summary/domaine préservés).
 # Best-effort ; appelé au SessionStart (arrière-plan) et lançable à la main.
 cmd_sweep() {
   local days="${THEDEV_ARBRE_DAYS:-10}" me eng now cwd mts base key out branch dom g ts
@@ -189,7 +189,7 @@ cmd_sweep() {
   [ -x "$eng" ] || eng="$(command -v engine 2>/dev/null)"
   [ -n "$eng" ] && [ -x "$eng" ] || return 0
   command -v jq >/dev/null 2>&1 || return 0
-  mkdir -p "$ROOT/equipes" || return 0
+  mkdir -p "$ROOT/workspaces" || return 0
   now="$(date +%s)"
   "$eng" list --all --json 2>/dev/null \
     | jq -rc 'select(.cwd) | [.cwd, (.mtime // "")] | @tsv' 2>/dev/null \
@@ -199,7 +199,7 @@ cmd_sweep() {
         key="$(printf '%s__%s' \
                  "$(printf '%s' "$me"   | tr -c 'A-Za-z0-9._-' '_')" \
                  "$(printf '%s' "$base" | tr -c 'A-Za-z0-9._-' '_')")"
-        out="$ROOT/equipes/$key.md"
+        out="$ROOT/workspaces/$key.md"
         [ -f "$out" ] && continue                       # déjà cartée → on ne touche pas
         ts="$(date -d "$mts" +%s 2>/dev/null || echo 0)"
         [ $(( (now - ts) / 86400 )) -le "$days" ] || continue
@@ -208,7 +208,7 @@ cmd_sweep() {
         [ -f "$ROOT/grouping/$key" ] && { g="$(head -n1 "$ROOT/grouping/$key" 2>/dev/null)"; [ -n "$g" ] && dom="$g"; }
         {
           printf -- '---\n'
-          printf 'equipe: %s/%s\n' "$me" "$base"
+          printf 'workspace: %s/%s\n' "$me" "$base"
           printf 'machine: %s\n'   "$me"
           printf 'cwd: %s\n'       "$cwd"
           printf 'branche: %s\n'   "$branch"
@@ -218,7 +218,7 @@ cmd_sweep() {
           printf 'carte_declaree: non\n'
           printf 'genere_le: %s\n' "$(date -Iseconds)"
           printf -- '---\n\n'
-        } > "$out" 2>/dev/null && printf 'carte créée : %s\n' "$key"
+        } > "$out" 2>/dev/null && printf 'card created: %s\n' "$key"
       done
 }
 
@@ -226,8 +226,8 @@ cmd="${1:-}"; shift 2>/dev/null || true
 case "$cmd" in
   card)    cmd_card    "$@" ;;
   show)    cmd_show    "$@" ;;
-  debrief) cmd_debrief "$@" ;;
-  etat)    cmd_etat    "$@" ;;
+  report)  cmd_debrief "$@" ;;
+  state)   cmd_etat    "$@" ;;
   sweep)   cmd_sweep   "$@" ;;
-  *) echo "usage: equipe card|show|debrief|etat|sweep …" >&2; exit 1 ;;
+  *) echo "usage: workspace card|show|report|state|sweep ..." >&2; exit 1 ;;
 esac

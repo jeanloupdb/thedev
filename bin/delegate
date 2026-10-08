@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# @thedev liens sends a task to a remote workspace (async by default, result/list/cancel)
+# delegate — envoie une TASK à un WORKSPACE distant (lien thedev) et récupère le RÉSULTAT.
+# Voir NAMING.md + plans/thedev-liens.md. CÔTÉ ÉMETTEUR (cross-machine, via SSH).
+#
+#   delegate [--model <m>] [--wait] <machine>/<workspace> "<texte>"
+#                                   envoie une task. Par DÉFAUT ASYNCHRONE : dépose,
+#                                   rend la main, affiche l'id. --wait = bloque jusqu'au
+#                                   résultat (pratique pour relayer dans la foulée).
+#   delegate result <machine> <id>   récupère le résultat (ou l'état : en attente / en cours)
+#   delegate list   <machine>        liste les tasks et leur état sur la machine
+#   delegate cancel <machine> <id>   annule une task EN ATTENTE (pas encore prise)
+#   delegate ls     <machine>        liste les workspaces ouvertes aux tasks
+#
+# Async par défaut → on n'est plus OTAGE de la connexion SSH : le résultat est écrit
+# côté serveur et reste récupérable plus tard via `delegate result`, même si le laptop
+# se ferme ou que le wifi saute entre-temps.
+# Réglages : TIMEOUT=<sec> = plafond DUR optionnel (défaut 0 = pas de plafond ; la fin
+# de task est détectée par vivacité du pane + sentinelle ⭐2, avec un hardcap 6 h côté
+# watcher). --model <m> = modèle de l'agent de task. Le workspace doit être OUVERTE.
+set -u
+me="$(basename "$0")"
+from="$( { cat "$HOME/.config/dev-vps" 2>/dev/null || hostname -s; } )/${ZELLIJ_SESSION_NAME:-shell}"
+SSH="ssh -o ConnectTimeout=10"
+
+cmd_ls() {
+  local machine="$1"
+  echo "Workspaces reachable on $machine:"
+  $SSH "$machine" 'shopt -s nullglob; n=0; for f in ~/.cache/thedev/links/*; do e=$(basename "$f"); c=$(sed -n "s/^cwd=//p" "$f"); printf "  ● %s  (%s)\n" "$e" "$c"; n=$((n+1)); done; if [ $n -eq 0 ]; then echo "  (no open workspace)"; fi; exit 0' 2>/dev/null \
+    || { echo "  ✗ unreachable (ssh $machine)"; return 1; }
+}
+
+# Liste les tasks de TOUTES les workspaces de la machine + leur état (file/en cours/fini).
+cmd_list() {
+  local machine="$1"
+  $SSH "$machine" '
+    base="$HOME/.cache/thedev/spaces"; shopt -s nullglob
+    emit(){ rel="${1#$base/}"; eq="${rel%%/*}"; printf "  %-30s  %-11s  %s\n" "$2" "$3" "$eq"; }
+    n=0
+    printf "  %-30s  %-11s  %s\n" TASK STATE WORKSPACE
+    for f in "$base"/*/inbox/*.mission;  do emit "$f" "$(basename "$f" .mission)" "queued"; n=$((n+1)); done
+    for d in "$base"/*/work/*;           do [ -d "$d" ] && { emit "$d" "$(basename "$d")" "running"; n=$((n+1)); }; done
+    for f in "$base"/*/outbox/*.result;  do emit "$f" "$(basename "$f" .result)" "done"; n=$((n+1)); done
+    [ "$n" -eq 0 ] && echo "  (no task)"
+    exit 0' 2>/dev/null \
+    || { echo "  ✗ unreachable (ssh $machine)"; return 1; }
+}
+
+# Récupère le résultat d'une task par id (cherche dans toutes les workspaces).
+cmd_result() {
+  local machine="$1" id="$2"
+  $SSH "$machine" "
+    base=\"\$HOME/.cache/thedev/spaces\"; shopt -s nullglob
+    for f in \"\$base\"/*/outbox/$id.result;  do echo '──────── RESULT ────────'; cat \"\$f\"; exit 0; done
+    for d in \"\$base\"/*/work/$id;           do [ -d \"\$d\" ] && { echo '⏳ running…'; exit 0; }; done
+    for f in \"\$base\"/*/inbox/$id.mission;  do echo '⏸ waiting in the queue'; exit 0; done
+    echo '✗ task not found: $id'; exit 1" 2>/dev/null \
+    || { echo "✗ unreachable or task not found (ssh $machine)"; return 1; }
+}
+
+# Annule une task EN ATTENTE (retire de l'inbox avant qu'elle soit prise).
+cmd_cancel() {
+  local machine="$1" id="$2"
+  $SSH "$machine" "
+    base=\"\$HOME/.cache/thedev/spaces\"; shopt -s nullglob
+    for f in \"\$base\"/*/inbox/$id.mission;  do rm -f \"\$f\" && echo '✓ task cancelled (was queued)'; exit 0; done
+    for d in \"\$base\"/*/work/$id;           do [ -d \"\$d\" ] && { echo '✗ already RUNNING, cannot be cancelled cleanly, let it finish.'; exit 0; }; done
+    for f in \"\$base\"/*/outbox/$id.result;  do echo 'ℹ already DONE.'; exit 0; done
+    echo '✗ task not found: $id'; exit 1" 2>/dev/null \
+    || { echo "✗ unreachable (ssh $machine)"; return 1; }
+}
+
+cmd_send() {
+  local addr="$1" text="$2" model="$3" wait_flag="$4"
+  local machine="${addr%%/*}" workspace="${addr#*/}"
+  [ "$machine" = "$addr" ] && { echo "✗ format: <machine>/<workspace>"; exit 1; }
+  local id="m-$(date +%Y%m%d-%H%M%S)-$RANDOM"
+  local plafond="${TIMEOUT:-0}"
+  local model_hdr=""; [ -n "$model" ] && model_hdr="Model: $model"$'\n'
+  # 1. le workspace est-elle ouverte ?
+  if ! $SSH "$machine" "[ -f \$HOME/.cache/thedev/links/$workspace ]" 2>/dev/null; then
+    echo "✗ '$workspace' is not open to tasks on $machine."
+    echo "  (over there, in the workspace: thedev-link open; here: delegate ls $machine)"
+    exit 1
+  fi
+  # 2. dépôt ATOMIQUE : on écrit en .tmp puis `mv` (atomique) → le watcher, qui
+  #    globe inbox/*.mission, ne peut JAMAIS tomber sur un fichier à moitié écrit.
+  printf 'From: %s\nCreated: %s\nTimeout: %s\n%s\n%s\n' \
+      "$from" "$(date -Iseconds)" "$plafond" "$model_hdr" "$text" \
+    | $SSH "$machine" "d=\$HOME/.cache/thedev/spaces/$workspace/inbox; mkdir -p \"\$d\"
+        cat > \"\$d/$id.mission.tmp\" && mv \"\$d/$id.mission.tmp\" \"\$d/$id.mission\"" \
+    || { echo "✗ failed to drop the task"; exit 1; }
+  # 3a. ASYNC (défaut) : on rend la main, le résultat se récupère plus tard.
+  if [ -z "$wait_flag" ]; then
+    echo "→ task $id dropped → $addr"
+    echo "  result: delegate result $machine $id   ·   queue: delegate list $machine"
+    return 0
+  fi
+  # 3b. --wait : bloque jusqu'au résultat (une seule connexion). Si elle saute, le
+  #     résultat reste récupérable via 'delegate result' (le workspace l'a écrit côté serveur).
+  echo "→ task $id → $addr, waiting for the result (--wait)…"
+  local loops; if [ "$plafond" -eq 0 ] 2>/dev/null; then loops=$((21600/3)); else loops=$(( (plafond+60)/3 )); fi
+  $SSH "$machine" "f=\$HOME/.cache/thedev/spaces/$workspace/outbox/$id.result
+    for i in \$(seq 1 $loops); do [ -f \"\$f\" ] && { echo '──────── RESULT ────────'; cat \"\$f\"; exit 0; }; sleep 3; done
+    exit 7" \
+    || { echo "✗ no result in time, fetch it later: delegate result $machine $id"; exit 1; }
+}
+
+# ── dispatch ────────────────────────────────────────────────────────────────
+case "${1:-}" in
+  ls)     shift; [ -n "${1:-}" ] || { echo "usage: $me ls <machine>"; exit 1; };     cmd_ls "$1";     exit $? ;;
+  list)   shift; [ -n "${1:-}" ] || { echo "usage: $me list <machine>"; exit 1; };   cmd_list "$1";   exit $? ;;
+  result) shift; { [ -n "${1:-}" ] && [ -n "${2:-}" ]; } || { echo "usage: $me result <machine> <id>"; exit 1; }; cmd_result "$1" "$2"; exit $? ;;
+  cancel) shift; { [ -n "${1:-}" ] && [ -n "${2:-}" ]; } || { echo "usage: $me cancel <machine> <id>"; exit 1; }; cmd_cancel "$1" "$2"; exit $? ;;
+esac
+
+# envoi : --model / --wait optionnels avant <machine>/<workspace> "<texte>"
+model=""; wait_flag=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --model|-m) model="${2:-}"; shift 2 ;;
+    --wait|-w)  wait_flag=1; shift ;;
+    *) break ;;
+  esac
+done
+if [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
+  printf 'usage:\n  %s [--model <m>] [--wait] <machine>/<workspace> "<text>"\n  %s result|cancel <machine> <id>\n  %s list|ls <machine>\n' "$me" "$me" "$me"
+  exit 1
+fi
+cmd_send "$1" "$2" "$model" "$wait_flag"

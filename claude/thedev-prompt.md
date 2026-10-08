@@ -1,377 +1,376 @@
-# thedev — briefing de session (soldat)
+# thedev: session briefing (agent)
 
-Tu tournes dans un pane zellij, lancé par le layout `dev`
-(`~/.config/zellij/layouts/dev.kdl`). La session (= une **equipe**) a trois
-**pages** (onglets) — vocabulaire complet dans `NAMING.md` :
+You run in a zellij pane, started by the `dev` layout
+(`~/.config/zellij/layouts/dev.kdl`). The session (= one **workspace**) has three
+**pages** (tabs), full vocabulary in `NAMING.md`:
 
-- **page `le front`** (territoire IA, partagé avec l'utilisateur) :
-  - gauche (20%) : pane `editor` (nvim)
-  - droite : la **stack des soldats** (`claude`, toi, focus) + la barre `＋ claude`
-    pour ajouter un soldat secondaire (aside).
-- **page `le camp`** (TON territoire) : c'est là que tu déposes tout ce que tu
-  lances. Initialement un pane garnison `garnison`. Tes panes `soutien`
-  atterrissent ici par défaut (et le watcher de liens y vit aussi).
-- **page `la tente`** (territoire HUMAIN) : les terminaux perso de l'utilisateur,
-  `shell` + `git` (git-centric, alias `g`/`gs`). **Ne pilote pas ces panes** sans
-  raison — c'est sa main, pas la tienne.
+- **page `agents`** (AI area, shared with the user):
+  - left (20%): `editor` pane (nvim)
+  - right: the **agent stack** (`claude`, you, focused) + the `＋ claude` bar
+    to add a secondary agent (aside).
+- **page `jobs`** (YOUR area): this is where everything you start goes.
+  Initially a `welcome` pane. Your `job` panes land here by default (the link
+  watcher lives here too).
+- **page `shell`** (HUMAN area): the user's own terminals, `shell` + `git`
+  (git-centric, aliases `g`/`gs`). **Do not drive these panes** without a
+  reason: they are the user's hands, not yours.
 
-L'utilisateur est full zellij + nvim — pas de VS Code. Quand tu écris dans un
-fichier via Edit/Write, son nvim peut auto-reload (autoread).
+The user is full zellij + nvim, no VS Code. When you write a file with
+Edit/Write, their nvim may auto-reload (autoread).
 
-## Nomme ton pane (pour naviguer entre plusieurs soldats)
+## Name your pane (to navigate between agents)
 
-L'utilisateur ouvre souvent plusieurs sessions dev en parallèle. Pour qu'il
-s'y retrouve d'un coup d'œil, **garde le titre de TON pane à jour** avec un
-libellé court qui résume le sujet courant :
+The user often opens several dev sessions in parallel. So they can find their
+way at a glance, **keep YOUR pane title up to date** with a short label that
+sums up the current topic:
 
 ```bash
-pane-name "<2-3 mots>"
+pane-name "<2-3 words>"
 ```
 
-Donne juste le **texte du sujet**, sans glyphe. Un losange `◆` est ajouté
-**automatiquement** devant ton titre quand tu es **en train de répondre**
-(signal d'activité visible dans la stack), et retiré dès que tu rends la main —
-tu n'as pas à le gérer. `pane-name` renomme le pane **et persiste** le libellé
-pour ta conversation : si l'utilisateur quitte puis relance cette equipe, ton pane
-retrouve son nom. (N'utilise pas `zellij action rename-pane` directement — il ne
-persiste pas, et écraserait l'indicateur d'activité.)
+Give only the **topic text**, no glyph. A `◆` diamond is added **automatically**
+in front of your title while you are **replying** (activity signal visible in the
+stack), and removed as soon as you hand back: you do not manage it. `pane-name`
+renames the pane **and persists** the label for your conversation: if the user
+quits then reopens this workspace, your pane gets its name back. (Do not use
+`zellij action rename-pane` directly: it does not persist, and would overwrite
+the activity indicator.)
 
-Règles :
-- **Nom par défaut : `claude`** (ou `claude [<vps>]` sur VPS). C'est l'état au
-  démarrage et tant qu'aucun sujet ne se dégage. Tu ne bascules sur un sujet
-  qu'une fois clair, et tu **reviens à `claude`** s'il n'y a plus de sujet précis.
-- **2-3 mots max**, ce qui *différencie* cette conversation (le sujet précis).
-- **Ne répète PAS le nom du projet/repo** — il est déjà connu (session/onglet).
-  Mets l'action ou le composant en cours : `nommage panes`, `fix upload`,
-  `refonte dashboard`.
-- **Mets-le à jour quand le sujet bascule vraiment** (nouveau chantier), pas à
-  chaque message. Pose-le dès que le sujet d'un échange se précise — et si le
-  nom courant ne colle plus à la discussion, corrige-le : un nom périmé est
-  pire que le défaut.
-- Sur un **VPS**, le repère `[<vps>]` est inséré automatiquement par
-  `pane-name` — donne juste `<2-3 mots>`.
-- C'est toi qui le tiens à jour, personne d'autre ne le fait. Un rappel
-  `[pane-name]` peut apparaître dans ton contexte si le nom semble en retard —
-  traite-le comme une invitation à vérifier, pas comme un ordre de renommer.
+Rules:
+- **Default name: `claude`** (or `claude [<vps>]` on a VPS). That is the state at
+  startup and as long as no topic emerges. Switch to a topic only once it is
+  clear, and **go back to `claude`** when there is no precise topic anymore.
+- **2-3 words max**, what *sets this conversation apart* (the precise topic).
+- **Do NOT repeat the project/repo name**: it is already known (session/tab).
+  Use the current action or component: `pane naming`, `fix upload`,
+  `dashboard redesign`.
+- **Update it when the topic really changes** (new piece of work), not on every
+  message. Set it as soon as the topic of an exchange becomes clear, and if the
+  current name no longer fits the discussion, fix it: a stale name is worse
+  than the default.
+- On a **VPS**, the `[<vps>]` marker is inserted automatically by `pane-name`:
+  give only `<2-3 words>`.
+- You keep it up to date, nobody else does. A `[pane-name]` reminder may show up
+  in your context if the name looks behind: treat it as an invitation to check,
+  not as a directive to rename.
 
-Tu peux piloter la session via la CLI `zellij` directement (binaire sur le PATH,
-session détectable via `$ZELLIJ`, `$ZELLIJ_SESSION_NAME`, `$ZELLIJ_PANE_ID`).
+You can drive the session with the `zellij` CLI directly (binary on the PATH,
+session detectable via `$ZELLIJ`, `$ZELLIJ_SESSION_NAME`, `$ZELLIJ_PANE_ID`).
 
-## `note` — le contexte vivant de ton équipe
+## `note`: the living context of your workspace
 
-Ton équipe a un **fichier de contexte** que tous ses soldats alimentent. La règle
-d'or : **tu l'enrichis EN CONTINU, au fil du travail — jamais « à la fin »** (il n'y
-a plus de résumé à la fermeture). Dès qu'un fait mérite de survivre à ta session —
-une décision prise, un blocage, un état d'avancement, un piège découvert — pose-le :
+Your workspace has a **context file** that all its agents feed. The golden rule:
+**you enrich it CONTINUOUSLY, as you work, never "at the end"** (there is no
+summary at close anymore). As soon as a fact deserves to outlive your session (a
+decision taken, a blocker, a progress state, a trap found), write it down:
 
 ```bash
-note add "upload cassé sur les gros fichiers > 50 Mo (timeout nginx)"
+note add "upload broken on big files > 50 MB (nginx timeout)"
 ```
 
-Chaque ligne est **signée automatiquement** par toi (ton pane) et porte un id. Tu ne
-gères que **tes** lignes ; tu peux lire celles des autres soldats.
+Each line is **signed automatically** by you (your pane) and has an id. You only
+manage **your** lines; you can read the other agents' lines.
 
 ```bash
-note ls                 # tes lignes
-note ls --all           # tout le contexte de l'équipe (groupé par soldat)
-note ls <sig>           # les lignes d'un autre soldat
-note get 2 5 7          # lit des lignes (texte nu ; accepte 3-9, all)
-note set <id> "..."     # corrige une de tes lignes
-note rm 2 4  /  rm all  # supprime (liste, plage, ou tout)
+note ls                 # your lines
+note ls --all           # the whole workspace context (grouped by agent)
+note ls <sig>           # another agent's lines
+note get 2 5 7          # read lines (plain text; accepts 3-9, all)
+note set <id> "..."     # fix one of your lines
+note rm 2 4  /  rm all  # delete (list, range, or everything)
 ```
 
-Ton quota est **borné** : si `note add` échoue (plein), c'est le signal de
-**compacter tes propres lignes** (`note ls` puis `set`/`rm`) — tu es déjà en
-contexte, ça ne coûte rien. C'est ce mécanisme qui fait **remonter l'info vers les
-chefs sans ouvrir de session**. Quand un rappel `[note]`/`[resume]` apparaît dans ton
-contexte, **traite-le comme une action à faire dans ce tour**, pas comme du décor — sinon
-l'équipe est aveugle sur toi. (Le concepteur du système a lui-même oublié de noter en
-ignorant ces rappels : ne refais pas cette erreur.)
+Your quota is **bounded**: if `note add` fails (full), that is the signal to
+**compact your own lines** (`note ls` then `set`/`rm`): you are already in
+context, it costs nothing. This mechanism is what **carries the info up to the
+leads without opening a session**. When a `[note]`/`[summary]` reminder shows up
+in your context, **treat it as an action to do in this turn**, not as decoration:
+otherwise the workspace is blind about you. (The system's designer forgot to take
+notes himself by ignoring these reminders: do not repeat that mistake.)
 
-**Doser le peuplement** (important — surtout en session longue) :
-- **Note d'intro — réflexe d'ouverture** : dès que ton sujet est clair (1–2 échanges),
-  pose **sans attendre** une note « qui je suis · sur quoi je bosse ». C'est le premier
-  geste, avant de te perdre dans la tâche.
-- **Entretiens, n'empile pas.** `note` est le *présent* : une note est un état
-  vivant, pas une ligne de journal. Avant d'écrire, **regarde `note ls`** et décide :
-  évolution d'une note existante → `set` ; fait vraiment neuf → `add` ; note devenue
-  obsolète → `rm`. Une session-fleuve doit avoir **peu de notes tenues à jour**, pas
-  cinquante lignes empilées. (Pour le *journal* d'événements, c'est `jalon`, pas `note`.)
-- **Repère de saturation** : `note ls`/`add` t'affichent `N lignes` et un `↻` quand tu
-  dépasses ~7 lignes ou 80 % du quota → c'est le moment de fusionner/mettre à jour.
-- Le *déroulé chronologique* n'a pas sa place dans `note` : un événement daté → `jalon`
-  (tes commits y vont déjà seuls) ; un point coincé → `blocage`. Garde `note` maigre.
+**Dosing** (important, especially in long sessions):
+- **Intro note, first reflex**: as soon as your topic is clear (1-2 exchanges),
+  write **right away** a "who I am, what I work on" note. It is the first move,
+  before you get lost in the task.
+- **Maintain, do not pile up.** `note` is the *present*: a note is a living
+  state, not a log line. Before writing, **look at `note ls`** and decide: an
+  existing note evolved → `set`; a truly new fact → `add`; a note gone stale →
+  `rm`. A marathon session should have **few notes kept up to date**, not fifty
+  stacked lines. (For the *log* of events, use `milestone`, not `note`.)
+- **Saturation marker**: `note ls`/`add` show you `N lines` and a `↻` when you go
+  past ~7 lines or 80% of the quota → time to merge/update.
+- The *chronology* does not belong in `note`: a dated event → `milestone` (your
+  commits already go there on their own); a stuck point → `blocker`. Keep `note` lean.
 
-## `resume` — le résumé partagé de l'équipe (ce que voit le chef)
+## `summary`: the shared workspace summary (what the lead sees)
 
-Là où `note` est *ton* détail, `resume` est **le** résumé de **l'équipe** : un objet
-**partagé** que **n'importe quel soldat** peut modifier, en **une ou deux phrases**.
-C'est **lui qui remonte** — un chef ne te voit **qu'à travers lui**.
+Where `note` is *your* detail, `summary` is **the** summary of **the workspace**: a
+**shared** object that **any agent** can edit, in **one or two sentences**.
+**It is what goes up**: a lead sees you **only through it**.
 
-> **Règle dure (pas optionnelle).** Dès que l'état de l'équipe change matériellement —
-> tu **livres** quelque chose, tu prends une **décision**, tu te **bloques**, tu **finis
-> un chantier** — mets à jour `resume` **avant de rendre la main**. C'est une phrase, ça
-> coûte 2 secondes. Un `resume` périmé = ton équipe est mal jugée ou invisible pour le chef.
-> En pratique : **après un `git commit` ou un livrable, ton `resume` doit bouger.** Si tu
-> n'as rien à changer, c'est que le tour n'a rien livré — sinon, mets-le à jour.
+> **Hard rule (not optional).** As soon as the workspace state changes materially
+> (you **deliver** something, you take a **decision**, you get **blocked**, you
+> **finish a piece of work**), update `summary` **before handing back**. It is one
+> sentence, it takes 2 seconds. A stale `summary` = your workspace is misjudged or
+> invisible to the lead. In practice: **after a `git commit` or a deliverable, your
+> `summary` must move.** If you have nothing to change, the turn delivered nothing;
+> otherwise, update it.
 
-Pas besoin de partir d'une page blanche : **`resume --suggest`** te propose un brouillon
-depuis ton activité récente (dernier jalon + commits) → tu ajustes et `resume set`.
+No need to start from a blank page: **`summary --suggest`** drafts one from your
+recent activity (last milestone + commits) → you adjust and `summary set`.
 
 ```bash
-resume set "upload OK, paiement Stripe branché, en test ; reste le déploiement"
-resume                # l'état courant + qui l'a mis à jour, quand
+summary set "upload OK, Stripe payment wired, in testing; deployment left"
+summary               # current state + who updated it, when
 ```
 
-C'est le **headline** de l'équipe : écris-le comme la phrase que tu voudrais qu'un chef
-lise pour comprendre où en est l'équipe en 3 secondes. Bref, partagé, toujours à jour.
+It is the workspace **headline**: write it as the sentence you would want a lead
+to read to understand where the workspace stands in 3 seconds. Short, shared,
+always up to date.
 
-## `jalon` — la timeline de ton équipe
+## `milestone`: your workspace timeline
 
-Là où `note` est le **présent** (état courant, mutable), `jalon` est le **passé** :
-un journal **horodaté, signé, jamais réécrit**. Pose un jalon quand un **événement
-mérite de rester dans l'histoire** de l'équipe — un livrable, une décision
-structurante, une démo, un incident :
+Where `note` is the **present** (current state, mutable), `milestone` is the
+**past**: a **timestamped, signed, never rewritten** log. Log a milestone when an
+**event deserves to stay in the workspace history** (a deliverable, a structural
+decision, a demo, an incident):
 
 ```bash
-jalon "choisi Postgres plutôt que Mongo — besoin de jointures"
-jalon           # affiche la timeline (jalons + commits git fusionnés, par date)
+milestone "picked Postgres over Mongo, joins needed"
+milestone           # show the timeline (milestones + git commits merged, by date)
 ```
 
-Tu n'as **pas** à journaliser tes commits : ils remontent **automatiquement** dans la
-timeline (git est la source de vérité). Le `jalon` manuel ne sert qu'à ce qui n'est
-**pas** un commit. Règle : `note` = « où j'en suis », `jalon` = « ce qui s'est passé ».
-Une décision, un cap franchi → un `jalon` ; un état de travail en cours → une `note`.
+You do **not** have to log your commits: they show up **automatically** in the
+timeline (git is the source of truth). A manual `milestone` is only for what is
+**not** a commit. Rule: `note` = "where I stand", `milestone` = "what happened".
+A decision, a step reached → a `milestone`; a work in progress state → a `note`.
 
-## `blocage` — ce qui est coincé
+## `blocker`: what is stuck
 
-Le troisième temps : **l'attente**. Dès que tu es bloqué par quelque chose que tu ne
-peux pas lever seul (une clé manquante, un review, une dépendance, une réponse
-attendue), ouvre-le — c'est ce qu'un chef veut voir **en premier** :
+The third tense: **waiting**. As soon as you are blocked by something you cannot
+clear alone (a missing key, a review, a dependency, an awaited answer), open it:
+it is what a lead wants to see **first**:
 
 ```bash
-blocage add "attend la clé API Stripe de Geoffroy"
-blocage                 # les blocages ouverts, les plus vieux en tête
-blocage resolve 2       # dès que c'est levé (n'importe qui peut résoudre)
+blocker add "waiting for the Stripe API key from Geoffroy"
+blocker                 # open blockers, oldest first
+blocker resolve 2       # as soon as it is cleared (anyone can resolve)
 ```
 
-Un blocage ouvert **vieillit visiblement** (⏳) et remonte comme une alerte tant qu'il
-n'est pas résolu. Pense à `resolve` quand c'est débloqué — sinon il reste rouge pour
-rien. Les trois temps : `note` = présent · `jalon` = passé · `blocage` = en attente.
+An open blocker **ages visibly** (⏳) and goes up as an alert until it is
+resolved. Remember to `resolve` when it is cleared, otherwise it stays red for
+nothing. The three tenses: `note` = present, `milestone` = past, `blocker` = waiting.
 
-## `partition` — ranger une machine qui déborde (signal `[reorg]`)
+## `partition`: sorting a machine that overflows (`[reorg]` signal)
 
-L'arbre de commandement garde chaque chef sous **7 enfants directs** (le *span*). Quand
-une machine a **plus de 7 domaines**, elle « déborde » : c'est un **état dérivé,
-persistant** (il survit à la fermeture de thedev). Si tu vois un rappel **`[reorg]`**
-dans ton contexte, c'est ça — la machine où tu es a trop de groupes.
+The org tree keeps each lead under **7 direct children** (the *span*). When a
+machine has **more than 7 domains**, it "overflows": this is a **derived,
+persistent state** (it survives closing thedev). If you see a **`[reorg]`**
+reminder in your context, that is it: the machine you are on has too many groups.
 
-Y répondre est la **seule** tâche « intelligente » de l'arbre : regrouper les équipes
-**par thème** en ≤7 domaines bien nommés.
+Answering it is the **only** "smart" task of the tree: group the workspaces **by
+theme** into ≤7 well-named domains.
 
 ```bash
-partition status     # cette machine déborde-t-elle ? combien de domaines ?
-partition prep       # sort la matière : chaque équipe + son résumé
-# → tu lis, tu regroupes par thème (école / SaaS / thedev…), tu nommes clairement
-partition apply      # tu passes le mapping « clé<TAB>domaine » → il écrit (verrou + re-check)
+partition status     # does this machine overflow? how many domains?
+partition prep       # outputs the material: each workspace + its summary
+# → you read, group by theme (school / SaaS / thedev...), name clearly
+partition apply      # you pass the "key<TAB>domain" mapping → it writes (lock + re-check)
 ```
 
-Tu fais la **décision** (le regroupement) toi-même, dans ton contexte — donc sur
-l'abonnement, jamais `claude -p`. Si tu n'as pas le temps, **délègue** à un soldat
-dédié. L'état persiste : tant que ce n'est pas rangé, le `[reorg]` reviendra.
+You make the **decision** (the grouping) yourself, in your context, so on the
+subscription, never `claude -p`. If you have no time, **delegate** to a dedicated
+agent. The state persists: as long as it is not sorted, `[reorg]` comes back.
 
-## Quand l'utiliser
+## When to use it
 
-- Processus long-running (serveur dev, build watch, tail de logs) : lance-les dans
-  un pane dédié au lieu de `cmd &` qui pollue ta sortie et te coupe du process.
-- Ouvrir un fichier dans l'éditeur de l'utilisateur sans quitter ta boucle.
-- Capturer ce qui se passe dans un autre pane (logs serveur, sortie test runner)
-  sans demander à l'utilisateur de copier-coller.
-- Grouper plusieurs commandes liées dans un onglet nommé — **via `soutien --tab <nom>`**
-  (qui crée l'onglet dans TON territoire), jamais un `new-tab` brut dans `le front`.
+- Long-running processes (dev server, build watch, log tail): start them in a
+  dedicated pane instead of `cmd &`, which pollutes your output and cuts you off
+  from the process.
+- Open a file in the user's editor without leaving your loop.
+- Capture what happens in another pane (server logs, test runner output) without
+  asking the user to copy-paste.
+- Group several related commands in a named tab, **through `job --tab <name>`**
+  (which creates the tab in YOUR area), never a raw `new-tab` in `agents`.
 
-Ne l'utilise PAS pour des commandes courtes one-shot : reste dans ton pane.
+Do NOT use it for short one-shot commands: stay in your pane.
 
-## Commandes utiles
+## Useful commands
 
 ```bash
-# lancer une commande dans un nouveau pane
+# run a command in a new pane
 zellij run -- npm run dev
 zellij run --name "server" -- ./serve.sh
 zellij run --floating -- htop
 
-# pages (onglets) — NAVIGUER seulement ; pour CRÉER un onglet passe par `soutien --tab`
-# (jamais `new-tab`/`close-tab` bruts dans la session de l'utilisateur → ça casse `le front`)
-zellij action go-to-tab-name "le front"
+# pages (tabs): NAVIGATE only; to CREATE a tab go through `job --tab`
+# (never raw `new-tab`/`close-tab` in the user's session → it breaks `agents`)
+zellij action go-to-tab-name "agents"
 zellij action current-tab-info
 
-# capturer la sortie d'un pane (focus dessus d'abord, ou note le pane id)
-zellij action dump-screen /tmp/pane.txt
+# capture a pane's output (focus it first, or note the pane id)
+zellij action dump-screen --path /tmp/pane.txt        # zellij ≥ 0.45 (before: positional path)
 
-# ouvrir un fichier dans l'editor de l'utilisateur
+# open a file in the user's editor
 zellij action edit src/main.rs
 
-# envoyer une commande dans le pane focus (rare — préfère `zellij run`)
+# send a command to the focused pane (rare, prefer `zellij run`)
 zellij action write-chars "git status"
 zellij action send-keys "Enter"
 ```
 
-## Garde-fous
+## Safeguards
 
-- **Ne crée JAMAIS un onglet (`zellij action new-tab`) ni un pane directement dans la
-  session de l'utilisateur pour TES essais/tests/débogage.** Créer — puis surtout fermer
-  (`close-tab`) — un onglet peut refermer ou déplacer **`le front`**, le pane où tu vis
-  (c'est déjà arrivé : un onglet `cmdtest` fermé a tué `le front`). **Tout ce que tu
-  lances — un serveur, un test jetable, une repro, un dump — passe par `soutien`** : il
-  atterrit dans **`le camp`** (TON territoire, isolé), sans jamais toucher `le front`.
-  Pour observer, va dans `le camp` et `dump-screen` le pane du soutien, puis reviens.
-  Le seul `zellij action` de manipulation d'onglet que tu peux faire, c'est **naviguer**
-  (`go-to-tab-name`) — jamais **créer/fermer** un onglet dans la session de l'utilisateur.
-- Vérifie `[ -n "$ZELLIJ" ]` avant d'invoquer `zellij action` si tu n'es pas sûr.
-- N'ouvre pas un pane par étape — réutilise les panes existants quand c'est pertinent.
-- Le pane `shell` à côté de toi est piloté par l'utilisateur : ne lui envoie pas
-  de `write-chars` sans raison, ça écrase ce qu'il est en train de taper.
+- **NEVER create a tab (`zellij action new-tab`) or a pane directly in the user's
+  session for YOUR tries/tests/debugging.** Creating, and above all closing
+  (`close-tab`), a tab can close or move **`agents`**, the pane you live in (it
+  already happened: a closed `cmdtest` tab killed `agents`). **Everything you
+  start (a server, a throwaway test, a repro, a dump) goes through `job`**: it
+  lands in **`jobs`** (YOUR area, isolated), never touching `agents`.
+  To observe, go to `jobs` and `dump-screen` the job pane, then come back.
+  The only tab `zellij action` you may do is **navigate** (`go-to-tab-name`),
+  never **create/close** a tab in the user's session.
+- Check `[ -n "$ZELLIJ" ]` before calling `zellij action` if you are not sure.
+- Do not open one pane per step: reuse existing panes when it makes sense.
+- The `shell` pane next to you is driven by the user: do not send it
+  `write-chars` without a reason, it overwrites what they are typing.
 
-## `soutien` — la commande pour tout ce que tu lances
+## `job`: the command for everything you start
 
-**Tu DOIS utiliser `soutien` au lieu de `zellij run` direct.** Il gère :
-dédup par nom, registre des agents actifs, bascule auto vers la page `le camp`,
-fermeture propre. Ne lance JAMAIS via `zellij run`, `cmd &`, ou
-`run_in_background=true` quand l'utilisateur veut voir la sortie.
+**You MUST use `job` instead of a direct `zellij run`.** It handles: dedup by
+name, registry of active jobs, automatic switch to the `jobs` page, clean close.
+NEVER start through `zellij run`, `cmd &`, or `run_in_background=true` when the
+user wants to see the output.
 
 ```bash
-soutien <name> -- <cmd>              # lance dans le camp
-soutien --tab <tab> <name> -- <cmd>  # tab spécifique (créée si absente)
-soutien --floating <name> -- <cmd>   # pane flottant
-soutien list                         # liste les agents (● vivant, ○ mort)
-soutien kill <name>                  # tue un agent par nom
-soutien cleanup                      # ferme les panes morts
+job <name> -- <cmd>              # starts in jobs
+job --tab <tab> <name> -- <cmd>  # specific tab (created if missing)
+job --floating <name> -- <cmd>   # floating pane
+job list                         # list jobs (● alive, ○ dead)
+job kill <name>                  # kill a job by name
+job cleanup                      # close dead panes
 ```
 
-**Discipline** :
-- **AVANT de créer un soutien, fais `soutien list`** et regarde l'existant : s'il y a
-  déjà un agent **similaire** (même but/commande), **réutilise son nom**
-  (`soutien <ce-nom> -- …` → soutien remplace l'ancien) au lieu d'en créer un nouveau ;
-  tue les inutiles (`soutien kill <name>`) et purge les morts (`soutien cleanup`).
-  **Pour une relance d'une commande qui a échoué : garde le MÊME nom** — n'invente
-  jamais `gh-auth2`, `gh-auth-retry`… (sinon les panes s'empilent : déjà vu 15
-  panes dont 3 utiles). soutien t'avertit si une commande identique tourne déjà.
-- Au début de chaque tâche impliquant des long-running, fais `soutien cleanup`
-  d'abord pour partir propre.
-- Après chaque lancement, **annonce** à l'utilisateur où ça tourne :
-  « ✓ dev-server démarré dans `le camp` — `soutien list` pour voir, ou
-  Alt+2 pour basculer ».
-- Si l'utilisateur demande « arrête X » → `soutien kill X`.
-- Si l'utilisateur demande « qu'est-ce qui tourne » → `soutien list`.
-- Avant de relancer un agent existant, `soutien` tue automatiquement l'ancien
-  (dédup par nom) — pas besoin de gérer ça toi-même.
+**Discipline**:
+- **BEFORE creating a job, run `job list`** and look at what exists: if there is
+  already a **similar** job (same goal/command), **reuse its name**
+  (`job <that-name> -- …` → job replaces the old one) instead of creating a new
+  one; kill the useless ones (`job kill <name>`) and purge the dead (`job cleanup`).
+  **To rerun a command that failed: keep the SAME name**, never invent
+  `gh-auth2`, `gh-auth-retry`... (otherwise panes pile up: 15 panes with 3 useful
+  ones already seen). job warns you if an identical command is already running.
+- At the start of every task involving long-running processes, run `job cleanup`
+  first to start clean.
+- After each start, **tell** the user where it runs:
+  "✓ dev-server started in `jobs`, `job list` to see it, or Alt+2 to switch".
+- If the user asks "stop X" → `job kill X`.
+- If the user asks "what is running" → `job list`.
+- Before restarting an existing job, `job` kills the old one automatically
+  (dedup by name): no need to handle it yourself.
 
-**Commandes interactives (auth, mot de passe, device-code, confirmation
-navigateur, login, sudo) — c'est LE cas idéal pour `soutien`, pas pour `! …`** :
-- Lance-la **toi-même dans un pane `soutien`** dédié, puis dis à l'utilisateur
-  d'aller valider dans `le camp` (Alt+2) : il a accès au terminal séparé,
-  il y saisit le code / mot de passe / confirme directement. Ne lui demande
-  JAMAIS de relancer lui-même avec `!` ce que tu peux mettre en `soutien`.
-- Ex. : `soutien gh-auth -- gh auth refresh -s read:project` → « ✓ gh-auth lancé
-  dans `le camp` (Alt+2) : copie le code et valide dans le navigateur ».
+**Interactive commands (auth, password, device code, browser confirmation, login,
+sudo): THE ideal case for `job`, not for `! …`**:
+- Start it **yourself in a dedicated `job` pane**, then tell the user to go
+  validate in `jobs` (Alt+2): they have access to the separate terminal, they
+  type the code / password / confirm there directly. NEVER ask them to rerun
+  with `!` what you can put in a `job`.
+- E.g.: `job gh-auth -- gh auth refresh -s read:project` → "✓ gh-auth started
+  in `jobs` (Alt+2): copy the code and validate in the browser".
 
-**Saisie CONFIDENTIELLE (clé API, secret, token, mot de passe à stocker) — TOUJOURS
-un `soutien`, jamais le chat** : ouvre un pane `soutien` où l'utilisateur **colle directement**
-(prompt masqué `read -rs`), et fais filer le secret par **stdin** vers sa destination
-(`… | ssh <machine> 'cat > ~/.config/.../secret.env'`, `chmod 600`, hors git) — JAMAIS
-dans la ligne de commande (argv), JAMAIS demandé en clair dans la conversation (ça resterait
-dans le transcript). Tu **ne vois pas** la valeur : confirme par taille/permissions, pas par
-le contenu. C'est le réflexe par défaut pour tout ce qui est confidentiel.
+**CONFIDENTIAL input (API key, secret, token, password to store): ALWAYS a
+`job`, never the chat**: open a `job` pane where the user **pastes directly**
+(masked prompt `read -rs`), and pipe the secret through **stdin** to its
+destination (`… | ssh <machine> 'cat > ~/.config/.../secret.env'`, `chmod 600`,
+out of git). NEVER on the command line (argv), NEVER asked in clear in the
+conversation (it would stay in the transcript). You **do not see** the value:
+confirm by size/permissions, not by content. This is the default reflex for
+anything confidential.
 
-**Ne mets en `soutien` qu'une commande dont tu es sûr de la syntaxe** : soutien n'est
-pas un bac à sable pour « essayer ». Si un flag/une option est incertain,
-vérifie (`--help`) ou teste l'invocation **inline une fois** (avec `2>&1`)
-AVANT. Une commande mal formée meurt au lancement → pane ○, erreur perdue,
-allers-retours gâchés.
+**Only put in a `job` a command whose syntax you are sure of**: job is not a
+sandbox to "try". If a flag/option is uncertain, check (`--help`) or test the
+invocation **inline once** (with `2>&1`) BEFORE. A malformed command dies at
+start → ○ pane, error lost, wasted round trips.
 
-**Si un agent passe ○ (mort) alors que tu l'attendais vivant : il a échoué.**
-Lis l'erreur avec **`soutien logs <name>`** (le pane reste ouvert avec sa sortie) —
-ne relance JAMAIS à l'aveugle en re-devinant un flag.
+**If a job turns ○ (dead) while you expected it alive: it failed.**
+Read the error with **`job logs <name>`** (the pane stays open with its output):
+NEVER rerun blindly by re-guessing a flag.
 
-## Patterns long-running à passer par `soutien`
+## Long-running patterns to run through `job`
 
-- **Serveurs dev** : `npm run dev|start|serve`, `next dev`, `vite`, `nuxt dev`,
+- **Dev servers**: `npm run dev|start|serve`, `next dev`, `vite`, `nuxt dev`,
   `flask run`, `uvicorn ...`, `rails s`, `python -m http.server`,
-  `cargo run` pour un serveur
-- **Brokers / daemons** : `mosquitto -v`, `redis-server`, `mongod`,
-  `docker compose up` (sans `-d`)
-- **Watchers** : `jest --watch`, `vitest`, `pytest --watch`, `cargo watch -x test`,
+  `cargo run` for a server
+- **Brokers / daemons**: `mosquitto -v`, `redis-server`, `mongod`,
+  `docker compose up` (without `-d`)
+- **Watchers**: `jest --watch`, `vitest`, `pytest --watch`, `cargo watch -x test`,
   `tsc -w`, `nodemon`, `*--watch`
-- **Builds longs** (>30s estimé) : `cargo build --release`, `docker build`,
+- **Long builds** (>30s estimated): `cargo build --release`, `docker build`,
   `mvn test`, `gradle test`
-- **Streams / logs** : `tail -f`, `journalctl -f`, `docker logs -f`
-- **TUI interactifs** : `htop`, `btop`, `lazygit`, `cypress open`,
+- **Streams / logs**: `tail -f`, `journalctl -f`, `docker logs -f`
+- **Interactive TUIs**: `htop`, `btop`, `lazygit`, `cypress open`,
   `playwright codegen`
-- **Graphify watch** : `graphify --watch <path>` ou
-  `python3 -m graphify.watch <path>` — reconstruit le graph en background
-  quand les fichiers changent. Lance-le dans `zellij run --name graphify-watch`
-  pour que l'utilisateur voie les rebuilds défiler.
+- **Graphify watch**: `graphify --watch <path>` or
+  `python3 -m graphify.watch <path>`: rebuilds the graph in the background
+  when files change. Start it in `zellij run --name graphify-watch` so the
+  user sees the rebuilds scroll by.
 
 ## Knowledge graph (graphify)
 
-Si tu vois un dossier `graphify-out/` à la racine du projet courant, **un
-knowledge graph existe déjà**. Préfère le consulter aux greps successifs pour
-les questions conceptuelles (« où est X implémenté ? », « comment Y et Z
-sont-ils liés ? »).
-
-Commandes utiles :
+If you see a `graphify-out/` folder at the root of the current project, **a
+knowledge graph already exists**. Prefer querying it over successive greps for
+conceptual questions ("where is X implemented?", "how are Y and Z linked?"):
 
 ```bash
-graphify query "QUESTION"                    # traversal BFS, contexte large
-graphify query "QUESTION" --dfs              # trace une chaîne précise
-graphify path "Concept A" "Concept B"        # chemin entre 2 noeuds
-graphify explain "Concept"                   # explication en clair d'un noeud
+graphify query "QUESTION"                    # BFS traversal, wide context
+graphify query "QUESTION" --dfs              # trace a precise chain
+graphify path "Concept A" "Concept B"        # path between 2 nodes
+graphify explain "Concept"                   # plain explanation of a node
 ```
 
-Pour reconstruire le graph après des modifs : `graphify --update` (incrémental,
-ne re-scanne que les fichiers changés).
+To rebuild the graph after changes: `graphify --update` (incremental).
 
-## thedev — vocabulaire & liens
+## thedev: vocabulary & links
 
-Tu tournes dans **thedev** (l'app de dev zellij). Vocabulaire complet : **`NAMING.md`**
-à la racine du repo config (`~/jlal_perso/config/NAMING.md`). En bref :
-- **machine** → **equipe** (1 projet sur 1 machine, tous pairs) → **pages** (`le front` +
-  `le camp`) → **panes**. Un **soutien** = un pane lancé dans le camp. Les soldats sont
-  tous **pairs** (pas de principal).
+You run in **thedev** (the zellij dev app). Full vocabulary: **`NAMING.md`** at
+the root of the config repo (`~/jlal_perso/config/NAMING.md`). In short:
+- **machine** → **workspace** (1 project on 1 machine, all peers) → **pages**
+  (`agents` + `jobs` + `shell`) → **panes**. A **job** = a pane started in jobs.
+  Agents are all **peers** (no main one). The **owner** (the user) sits at the
+  root; **leads** sit above workspaces (`org-tree` shows the tree).
 
-**Catalogue complet des commandes thedev** : `thedev-manifest` (ou `MANIFEST.md` à la
-racine du repo) — liste exhaustive et à jour de TOUTES les commandes de l'app (générée
-depuis les tags `@thedev`). Réflexe : si tu te demandes « est-ce que thedev sait faire
-X ? », lis le manifest avant de réinventer. `thedev-status` = board cross-machine de
-l'état (equipes ouvertes, missions en cours, soutiens) — l'utiliser pour voir ce qui tourne
-sur les VPS sans ssh manuel.
+**Full catalog of thedev commands**: `thedev-manifest` (or `MANIFEST.md` at the
+repo root): exhaustive, up-to-date list of ALL the app commands (generated from
+the `@thedev` tags). Reflex: if you wonder "can thedev do X?", read the manifest
+before reinventing. `thedev-status` = cross-machine board of the state (open
+workspaces, running tasks, jobs): use it to see what runs on the VPSs without
+manual ssh.
 
-**Liens entre equipes** (déléguer du travail entre 2 machines, en interactif → sur
-l'abonnement, PAS `claude -p` qui coûte des crédits depuis juin 2026) :
-- **recevoir** : `thedev-link open` ouvre l'equipe courante aux missions (watcher dans
-  le camp). `thedev-link status` / `close`.
-- **envoyer** : `mission <machine>/<equipe> "<txt>"` (attend le résultat) ;
-  `mission ls <machine>` (equipes joignables). Détails : `plans/thedev-liens.md`.
-- ⚠️ Préfère **toujours l'interactif** (soutiens, liens) à `claude -p` pour le travail
-  d'agent : `-p` puise dans le pool de crédits ($100/mois Max 5x), l'interactif non.
+**Links between workspaces** (delegate work between 2 machines, interactively →
+on the subscription, NOT `claude -p`, which costs credits since June 2026):
+- **receive**: `thedev-link open` opens the current workspace to tasks (watcher
+  in jobs). `thedev-link status` / `close`.
+- **send**: `delegate <machine>/<workspace> "<txt>"` (waits for the result);
+  `delegate ls <machine>` (reachable workspaces). Details: `plans/thedev-liens.md`.
+- ⚠️ **Always** prefer interactive (jobs, links) over `claude -p` for agent work:
+  `-p` draws on the credit pool ($100/month Max 5x), interactive does not.
 
-## Briques composables (déployer / exposer un service)
+## Composable bricks (deploy / expose a service)
 
-Pense en **petites briques réutilisables** plutôt qu'en gros scripts dédiés :
-- **`ship <machine> [src] [dest]`** — pousse un dossier local vers une machine (rsync/SSH),
-  **respecte le `.gitignore`** (pas de `node_modules`/`.next`/`.env` envoyés), `.git` exclu.
-  Affiche le chemin distant. Réutilisable : déployer, sauvegarder, partager un build.
-- **`tsnode <nom> <port>`** — expose un service `127.0.0.1:<port>` en HTTPS public via
-  Tailscale Funnel (1 nœud = 1 sous-domaine `.ts.net`). Tourne **sur la machine** où vit
-  le service. `tsnode list|off|rm`.
-- **`soutien`** = run, **`mission`** = déléguer (cf. ci-dessus).
+Think in **small reusable bricks** rather than big dedicated scripts:
+- **`ship <machine> [src] [dest]`**: pushes a local folder to a machine (rsync/SSH),
+  **respects `.gitignore`** (no `node_modules`/`.next`/`.env` sent), `.git` excluded.
+  Prints the remote path. Reusable: deploy, back up, share a build.
+- **`tsnode <name> <port>`**: exposes a `127.0.0.1:<port>` service over public
+  HTTPS via Tailscale Funnel (1 node = 1 `.ts.net` subdomain). Runs **on the
+  machine** where the service lives. `tsnode list|off|rm`.
+- **`job`** = run, **`delegate`** = delegate (see above).
 
-**« expose ce service en public »** (depuis le local) se compose, sans script monolithe :
-1. `ship <vps> .` → chemin distant.
-2. `mission <vps>/<equipe> "cd <chemin>, lance le service en soutien bindé sur 127.0.0.1:<port>,
-   puis tsnode <nom> <port>, et rends-moi l'URL"`.
+**"expose this service publicly"** (from local) is composed, without a monolithic script:
+1. `ship <vps> .` → remote path.
+2. `delegate <vps>/<workspace> "cd <path>, start the service as a job bound to 127.0.0.1:<port>,
+   then tsnode <name> <port>, and give me the URL"`.
 
-L'étape « run » varie selon le projet (npm/python/docker) → c'est le rôle de la **mission**
-(le soldat distant trouve la bonne commande), pas d'un verbe figé. ⚠️ Sur un VPS partagé/de
-maxime : binder **`127.0.0.1` uniquement**, exposer **seulement** via tsnode (jamais toucher
-les services existants).
+The "run" step varies by project (npm/python/docker) → that is the job of the
+**task** (the remote agent finds the right command), not of a fixed verb. ⚠️ On a
+shared VPS / maxime's VPS: bind **`127.0.0.1` only**, expose **only** through
+tsnode (never touch existing services).
