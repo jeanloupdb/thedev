@@ -44,13 +44,50 @@ srv() {
           # tout autre code non nul vient de la commande distante (session fermée,
           # erreur de zellij…). Les confondre faisait annoncer « injoignable » une
           # machine parfaitement joignable.
-          ssh -o ConnectTimeout=8 -t "$host" "bash -lic 'dev ${1:-}'"
-          local rc=$?
-          if [ "$rc" -eq 255 ]; then
-            echo "✗ $host unreachable (SSH connection failed), back to thedev home."; sleep 2
-          elif [ "$rc" -ne 0 ]; then
-            echo "✗ $host reached, but the remote session ended with an error (code $rc)."; sleep 2
-          fi ;;
+          # Boucle de reprise : une connexion qui TOMBE après avoir tenu un moment (PC
+          # mis en veille, changement de réseau) n'est pas un serveur injoignable. La
+          # session continue là-bas : on y revient seul dès que le réseau répond.
+          # Keepalive 10 s × 3 : une coupure franche (PC en veille, changement de réseau)
+          # est vue en ~30 s, mais un trou de 10-20 s sur une box qui perd des paquets
+          # ne tue plus la session (5 s × 2 coupait à la moindre micro-coupure).
+          local target="${1:-}" rc t0 key last log="$HOME/.cache/thedev/srv.log"
+          mkdir -p "${log%/*}"
+          while :; do
+            t0=$SECONDS
+            ssh -o ConnectTimeout=8 -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
+                -t "$host" "bash -lic 'dev $target'"
+            rc=$?
+            printf '%s %s rc=%s %ss\n' "$(date '+%F %T')" "$host" "$rc" "$((SECONDS - t0))" >> "$log"
+            if [ "$rc" -eq 255 ] && [ $((SECONDS - t0)) -ge 15 ]; then
+              # Le zellij distant est mort sans rendre le terminal : écran alternatif,
+              # souris et curseur caché restent actifs, et le message serait invisible.
+              printf '\033[?1000l\033[?1002l\033[?1003l\033[?1006l\033[?2004l\033[?1049l\033[?25h\033[0m'
+              stty sane 2>/dev/null; clear
+              printf '\033[1;33m⚠ connection to %s lost\033[0m (laptop asleep or network change).\n' "$host"
+              printf '  Your session keeps running on %s. Reconnecting as soon as it answers.\n' "$host"
+              printf '  \033[1mEsc\033[0m back to thedev home\n\n'
+              # Reconnexion automatique dès que le serveur répond ; Esc pour abandonner.
+              key=""
+              until ssh -o ConnectTimeout=4 -o BatchMode=yes "$host" true 2>/dev/null; do
+                printf '\r  waiting for the network to reach %s… ' "$host"
+                IFS= read -rsn1 -t 3 key && [ "$key" = $'\e' ] && break
+                key=""
+              done
+              [ "$key" = $'\e' ] && break
+              printf '\r\033[K'
+              # Reprendre la session où l'on était, même ouverte depuis l'accueil du
+              # serveur : celui-ci note la dernière session attachée (_dev_launch).
+              last=$(ssh -o ConnectTimeout=6 -o BatchMode=yes "$host" 'cat ~/.cache/thedev/last-attach 2>/dev/null')
+              [ -n "$last" ] && target="$last"
+              printf '\033[1;34m→ reconnecting to %s…\033[0m\n' "$host"
+              continue
+            elif [ "$rc" -eq 255 ]; then
+              echo "✗ $host unreachable (SSH connection failed), back to thedev home."; sleep 2
+            elif [ "$rc" -ne 0 ]; then
+              echo "✗ $host reached, but the remote session ended with an error (code $rc)."; sleep 2
+            fi
+            break
+          done ;;
   esac
 }
 
@@ -118,6 +155,8 @@ _dev_launch() {
   local target="$1" resume="$2" session
   cd "$target" || return
   session=$(basename "$PWD")
+  # Dernière session attachée : srv s'en sert pour y revenir après une coupure SSH.
+  mkdir -p "$HOME/.cache/thedev" && printf '%s\n' "$PWD" > "$HOME/.cache/thedev/last-attach"
 
   # Une session zellij VIVANTE porte déjà ce nom ? → on s'y rattache au lieu de
   # l'écraser (sinon `delete-session --force` tuerait le dev en cours, claude

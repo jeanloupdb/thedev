@@ -2954,7 +2954,24 @@ class Picker:
                 if nxt in (ord("i"), ord("I")):
                     self.enter_infos()
                     continue
-                if nxt != -1:
+                if nxt in (ord("["), ord("O")):
+                    # Séquence que curses n'a pas décodée : la molette dans zellij arrive
+                    # en flèches CSI (ESC [ A/B), pas sous la forme du terminfo. Traitée
+                    # comme un Esc, elle quittait le choix du dossier en pleine
+                    # navigation. On lit la séquence jusqu'au bout : flèche ou rien.
+                    seq = ""
+                    while True:
+                        c = self.scr.getch()
+                        if c == -1:
+                            break
+                        seq += chr(c)
+                        if 64 <= c <= 126:
+                            break
+                    ch = {"A": curses.KEY_UP, "B": curses.KEY_DOWN,
+                          "C": curses.KEY_RIGHT, "D": curses.KEY_LEFT}.get(seq[-1:])
+                    if ch is None:
+                        continue
+                elif nxt != -1:
                     curses.ungetch(nxt)
             if self.creating:                       # saisie inline du nom de dossier
                 if ch in (curses.KEY_ENTER, 10, 13):
