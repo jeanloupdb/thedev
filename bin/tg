@@ -7,6 +7,7 @@
 #   tg "<markdown text>"                     → message (parse_mode Markdown)
 #   tg --photo <url|file> ["<caption>"]      → photo (remote URL OR local file), Markdown caption
 #   tg --audio <file> ["<caption>"]          → audio file (mp3): Telegram player with duration
+#   tg --doc <file> ["<caption>"]            → any file (PDF, archive, log…) as a document
 #   tg --plain "<text>"                      → message without formatting (no parse_mode)
 #
 # Config (SOURCED files, never printed; each file completes the variables):
@@ -60,6 +61,12 @@ case "${1:-}" in
     src="${2:-}"; cap="${3:-}"
     [ -f "$src" ] || { echo "tg --audio: file required" >&2; exit 1; }
     send sendAudio -F "chat_id=$TELEGRAM_CHAT_ID" -F "audio=@$src" \
+      -F "caption=$cap" -F "parse_mode=Markdown" ;;
+
+  --doc)
+    src="${2:-}"; cap="${3:-}"
+    [ -f "$src" ] || { echo "tg --doc: file required" >&2; exit 1; }
+    send sendDocument -F "chat_id=$TELEGRAM_CHAT_ID" -F "document=@$src" \
       -F "caption=$cap" -F "parse_mode=Markdown" ;;
 
   --plain)

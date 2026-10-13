@@ -354,6 +354,24 @@ on the subscription, NOT `claude -p`, which costs credits since June 2026):
 - ⚠️ **Always** prefer interactive (jobs, links) over `claude -p` for agent work:
   `-p` draws on the credit pool ($100/month Max 5x), interactive does not.
 
+## `tg`: send something to the user's phone (Telegram)
+
+Works the same on the laptop and on every server. Use it when the user asks to
+receive something on Telegram, or to ping them when a long unattended piece of
+work finishes:
+
+```bash
+tg "build done, 3 tests failing"          # Markdown message
+tg --plain "text with *stars* kept as is"
+tg --photo shot.png "caption"             # image (file or URL)
+tg --doc report.pdf "caption"             # any file
+tg --audio podcast.mp3 "caption"
+```
+
+One-way only (it does not read replies). Config: `~/.config/thedev/telegram.env`
+(chmod 600, out of git). If it says the token is missing, the machine has not been
+set up: tell the user, never ask for the token in the chat.
+
 ## Composable bricks (deploy / expose a service)
 
 Think in **small reusable bricks** rather than big dedicated scripts:
