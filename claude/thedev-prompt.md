@@ -37,7 +37,7 @@ quits then reopens this workspace, your pane gets its name back. (Do not use
 the activity indicator.)
 
 Rules:
-- **Default name: `claude`** (or `claude [<vps>]` on a VPS). That is the state at
+- **Default name: `claude`**. That is the state at
   startup and as long as no topic emerges. Switch to a topic only once it is
   clear, and **go back to `claude`** when there is no precise topic anymore.
 - **2-3 words max**, what *sets this conversation apart* (the precise topic).
@@ -48,8 +48,8 @@ Rules:
   message. Set it as soon as the topic of an exchange becomes clear, and if the
   current name no longer fits the discussion, fix it: a stale name is worse
   than the default.
-- On a **VPS**, the `[<vps>]` marker is inserted automatically by `pane-name`:
-  give only `<2-3 words>`.
+- Never put the machine name in the title: on a server it is already shown at
+  the bottom left (`jlax.folder`).
 - You keep it up to date, nobody else does. A `[pane-name]` reminder may show up
   in your context if the name looks behind: treat it as an invitation to check,
   not as a directive to rename.

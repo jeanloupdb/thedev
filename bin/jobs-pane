@@ -1,19 +1,9 @@
 #!/usr/bin/env bash
-# @thedev session welcome pane of the jobs page (VPS badge)
+# @thedev session welcome pane of the jobs page
 # jobs-pane — pane d'accueil pour la page `jobs`.
 # Affiche un message statique et reste en bash interactif (le pane survit).
 # Quand job lance un vrai agent, il pourrait fermer ce pane, mais simplest :
 # il reste, juste comme un panneau d'info.
-
-# Sur un serveur distant : le titre du pane devient le marqueur VPS rouge
-# (🔴 <label>) au lieu de « welcome » — le 🔴 porte la couleur, zellij ne
-# colore pas le texte des titres de pane. No-op en local.
-if [ -f "$HOME/.config/dev-vps" ] && [ -n "${ZELLIJ_PANE_ID:-}" ]; then
-  vps_label="🔴 $(cat "$HOME/.config/dev-vps")"
-  zellij action rename-pane -p "$ZELLIJ_PANE_ID" "$vps_label" 2>/dev/null
-  # re-pose différée : un rename au spawn du layout peut être avalé (storm)
-  ( sleep 3; zellij action rename-pane -p "$ZELLIJ_PANE_ID" "$vps_label" 2>/dev/null ) &
-fi
 
 # Expose l'id de CE pane pour que job puisse le masquer (quand un job tourne)
 # et le réafficher (quand la sandbox se vide). Cf. job: hide_welcome/show_welcome.

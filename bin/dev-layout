@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# @thedev workspaces prints the zellij layout to open a workspace with (shows the server name on a VPS)
+# dev-layout : chemin du layout `dev` à utiliser pour ouvrir un workspace.
+# En local : le layout tel quel. Sur un serveur (~/.config/dev-vps) : une copie dont
+# la barre du bas affiche « <serveur>.<dossier> », le serveur en gris. C'est le seul
+# repère de machine (les titres de pane n'en portent plus) : régénérée à chaque
+# ouverture, pour suivre les mises à jour du layout.
+src="$HOME/.config/zellij/layouts/dev.kdl"
+vps=$(head -n1 "$HOME/.config/dev-vps" 2>/dev/null | tr -d '[:space:]')
+[ -n "$vps" ] || { printf '%s\n' "$src"; exit 0; }
+out="${XDG_CACHE_HOME:-$HOME/.cache}/thedev/dev-$vps.kdl"
+mkdir -p "${out%/*}"
+sed "s|󰉋 {session}|󰉋 #[bg=#000000,fg=#808080]$vps.#[bg=#000000,fg=#8ed68e,bold]{session}|" "$src" > "$out.tmp" \
+  && mv "$out.tmp" "$out"
+printf '%s\n' "$out"

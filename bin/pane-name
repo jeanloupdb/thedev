@@ -18,14 +18,11 @@ name=$(printf '%s' "$*" | tr '\t\n\r' '   ' | sed -e 's/  */ /g' -e 's/^ *//' -e
 # habitude / ancienne guidance), pour ne stocker que le nom nu.
 name=${name#◆ }
 
-# Sur un VPS : insère le repère [<vps>] automatiquement (« [indice] fix x »).
-# L'agent n'a plus à penser au préfixe ; pas de doublon s'il l'a déjà mis.
+# Plus de repère [<vps>] dans le titre : la machine s'affiche en bas à gauche
+# (« jlax.dossier », cf. dev-layout). On retire celui qu'un agent aurait encore mis.
 if [ -f "$HOME/.config/dev-vps" ]; then
-  vps=$(cat "$HOME/.config/dev-vps")
-  case "$name" in
-    *"[$vps]"*) ;;
-    *) name="[$vps] $name" ;;
-  esac
+  vps=$(head -n1 "$HOME/.config/dev-vps")
+  name=${name#"[$vps] "}; name=${name%" [$vps]"}
 fi
 
 # Si un tour est en cours (marqueur busy posé par le hook agent-track),

@@ -41,7 +41,7 @@ if [ -z "$init" ]; then
   fi
 fi
 
-layout="$HOME/.config/zellij/layouts/dev.kdl"
+layout="$(dev-layout)"
 
 if [ "$machine" = local ]; then
   cwd="${dir:-$HOME/projects/$proj}"
@@ -83,7 +83,7 @@ cd "$rdir"
 # Sans TTY (ssh sans -t) TERM est vide : le serveur zellij le transmet tel quel à tous les
 # panes → sidebar (curses) plante, claude rend en monochrome. Vécu jlax 14/09/2026.
 export TERM="\${TERM:-xterm-256color}"
-CLAUDE_PANE_INIT_FILE="\$f" zellij -l "\$HOME/.config/zellij/layouts/dev.kdl" attach '$proj' -b
+CLAUDE_PANE_INIT_FILE="\$f" zellij -l "\$(dev-layout)" attach '$proj' -b
 EOF
 )
 

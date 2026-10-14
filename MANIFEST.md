@@ -1,7 +1,7 @@
 # thedev: manifest
 
 > **Generated** by `thedev-manifest` from the `# @thedev` tags of the `bin/` scripts.
-> Do not edit by hand. Regenerate: `thedev-manifest --write`. 50 commands.
+> Do not edit by hand. Regenerate: `thedev-manifest --write`. 51 commands.
 
 ## Mental model
 
@@ -16,12 +16,12 @@ A **job** = a long-running pane started in jobs. Workspaces exchange cross-machi
 ### Session & panes
 - **agent-pane** — launches the main agent of a pane (prompt overlay, remote-control, link auto-open)
 - **aside-button** — + bar to add an aside agent to the stack
-- **editor-pane** — nvim pane of the code page (VPS badge)
+- **editor-pane** — nvim pane of the agents page
 - **git-pane** — git-centric pane (aliases g/gs)
-- **jobs-pane** — welcome pane of the jobs page (VPS badge)
+- **jobs-pane** — welcome pane of the jobs page
 - **quit-impact** — what closing this workspace will stop (Ctrl+Q), one fact per line
 - **quit-menu** — menu to cleanly close the session
-- **shell-pane** — personal shell pane of my space (VPS badge)
+- **shell-pane** — personal shell pane of the shell page
 - **sidebar** — sidebar: left column of the agents page, the file tree and a quit button
 - **spawn** — opens an extra stacked agent (aside) without touching the session
 - **workspace-new** — creates a new project by handing the bootstrap to a remote agent (auto VPS)
@@ -81,6 +81,7 @@ A **job** = a long-running pane started in jobs. Workspaces exchange cross-machi
 - **thedev-landing** (ui) — animated boot screen of a claude pane (nature island and birds)
 - **feed** (veille) — triggers a feed (cron-as-task): drops a local task in the inbox
 - **tg** (veille) — sends text/photo to Telegram (Bot API, curl): delivery of feeds & alerts
+- **dev-layout** (workspaces) — prints the zellij layout to open a workspace with (shows the server name on a VPS)
 
 ## External dependencies
 

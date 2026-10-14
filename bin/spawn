@@ -39,8 +39,6 @@ else
   count=$(zellij action dump-layout 2>/dev/null | grep -cE 'name="claude')
   [ "$count" -lt 1 ] 2>/dev/null && count=1
   name="claude $((count + 1))"
-  # Sur un VPS distant : même repère que l'agent principal (« claude N [indice] »).
-  [ -f "$HOME/.config/dev-vps" ] && name="$name [$(cat "$HOME/.config/dev-vps")]"
 fi
 
 # CLAUDE_PANE_ONCE=1 + --close-on-exit : pas de keep-alive → le pane se ferme

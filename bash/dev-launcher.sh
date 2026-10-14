@@ -147,7 +147,7 @@ _dev_spawn() {
   [ -n "$main_id" ] || main_id="$resume"
   zellij delete-session --force "$session" >/dev/null 2>&1
   CLAUDE_RESUME_ID="$main_id" DEV_RESTORE="$restore" \
-    zellij -n ~/.config/zellij/layouts/dev.kdl -s "$session"
+    zellij -n "$(dev-layout 2>/dev/null || echo ~/.config/zellij/layouts/dev.kdl)" -s "$session"
 }
 
 # cd vers la cible + (re)lance zellij. $2 = id de session à reprendre (ou "").

@@ -20,6 +20,10 @@ PANES_DIR="$HOME/.cache/agent-panes"      # sid → pane_id\tsession, PERSISTANT
 # settings.json → $0 = ce fichier ; ../../bin/engine = l'engine du repo). Pas de
 # dépendance au PATH (engine peut ne pas être symliqué).
 _self="$0"; case "$_self" in */*) ;; *) _self="$(command -v -- "$_self")" ;; esac
+# Ancien repère « [<vps>] » resté dans les noms enregistrés : la machine s'affiche
+# désormais en bas à gauche (dev-layout), plus dans les titres.
+VPS_TAG=$(head -n1 "$HOME/.config/dev-vps" 2>/dev/null)
+strip_vps() { local n="$1"; [ -n "$VPS_TAG" ] && { n=${n#"[$VPS_TAG] "}; n=${n%" [$VPS_TAG]"}; }; printf '%s' "$n"; }
 ENGINE="$(cd "$(dirname "$(readlink -f -- "$_self")")/../../bin" 2>/dev/null && pwd)/engine"
 
 payload=$(cat)
@@ -49,7 +53,7 @@ pane_busy_title() {   # $1 = 1 (en cours) | 0 (au repos)
   local nm
   nm=$(agent-register get "$sid" 2>/dev/null | cut -f4)
   [ -n "$nm" ] || nm="$CLAUDE_PANE_NAME"
-  nm=${nm#◆ }
+  nm=$(strip_vps "${nm#◆ }")
   [ "$1" = "1" ] && nm="◆ $nm"
   # timeout : sur une session en fermeture, le serveur zellij meurt → `zellij action`
   # peut hanger indéfiniment (attente d'un serveur mort). On borne à 2s pour ne jamais
@@ -77,7 +81,7 @@ case "$ev" in
     # GÉRÉS (un `claude` tapé à la main dans shell/git garde son nom).
     name=$("$ENGINE" event session-start --session "$sid" --cwd "$cwd" --transcript "$tp" 2>/dev/null)
     if [ -n "${CLAUDE_PANE_NAME:-}" ] && [ -n "$name" ]; then
-      zellij action rename-pane -p "$ZELLIJ_PANE_ID" "${name#◆ }" 2>/dev/null
+      zellij action rename-pane -p "$ZELLIJ_PANE_ID" "$(strip_vps "${name#◆ }")" 2>/dev/null
     fi
     # Où vit cet agent : sid → pane_id. C'est ce qui permet de lui SAUTER dessus
     # depuis la colonne de gauche (focus-pane-id), même quand il est au repos.
