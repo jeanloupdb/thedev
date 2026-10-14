@@ -231,6 +231,9 @@ _dev_update() {
   # on annule alors le rebase pour rendre le dépôt tel qu'il était.
   if git -C "$repo" -c advice.diverging=false pull --rebase --autostash -q; then
     [ -f "$repo/install-dev.sh" ] && bash "$repo/install-dev.sh" >/dev/null && echo "  symlinks/hooks resynced."
+    # Recharge les fonctions dev dans CE shell : sinon l'accueil continue d'ouvrir les
+    # sessions avec le code d'avant la mise à jour jusqu'au prochain terminal.
+    [ -f "$repo/bash/dev-launcher.sh" ] && . "$repo/bash/dev-launcher.sh"
     echo "✓ config up to date."
   else
     git -C "$repo" rebase --abort >/dev/null 2>&1
