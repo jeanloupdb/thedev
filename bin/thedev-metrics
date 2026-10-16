@@ -85,6 +85,24 @@ for _b in /sys/class/power_supply/BAT*; do
   fi
   break   # première batterie seulement
 done
+# --battery : la seule batterie locale (pct \t état \t temps), pour clip-serve qui
+# la sert aux serveurs.
+if [ "${1:-}" = "--battery" ]; then
+  [ -n "$BAT_PCT" ] && printf '%s\t%s\t%s\n' "$BAT_PCT" "$BAT_ST" "$BAT_TIME"
+  exit 0
+fi
+# Pas de batterie ici (serveur) : celle du PC, par le tunnel du presse-papiers
+# (clip-serve, socket posé à chaque connexion). Socket absent ou PC muet → rien.
+BAT_SRC=""
+_cs="$HOME/.cache/thedev/clip.sock"
+if [ -z "$BAT_PCT" ] && [ -S "$_cs" ]; then
+  _tok=$(cat "$HOME/.config/thedev/clip-token" 2>/dev/null)
+  _r=$(curl -sf -m 1 --unix-socket "$_cs" -H "X-Clip-Token: $_tok" http://pc/battery 2>/dev/null)
+  if [ -n "$_r" ]; then
+    IFS=$'\t' read -r BAT_PCT BAT_ST BAT_TIME <<< "$_r"
+    case "$BAT_PCT" in ''|*[!0-9]*) BAT_PCT="" ;; *) BAT_SRC=pc ;; esac
+  fi
+fi
 
 # Santé de la batterie = capacité pleine ACTUELLE / capacité pleine D'ORIGINE, telle
 # que le firmware les expose. Déterministe (une division, pas d'historique à tenir) et
@@ -325,7 +343,7 @@ if [ "${1:-}" = "--raw" ]; then
   for d in "${DISKS[@]}"; do printf 'DISK\t%s\t%s\n' "${d%%:*}" "${d##*:}"; done
   [ -n "$LOAD" ] && printf 'LOAD\t%s\t%s\n' "$LOAD" "$ncpu"
   [ -n "$TEMP" ] && printf 'TEMP\t%s\t%s\t%s\t%s\n' "$TEMP" "$TCRIT" "$FAN" "$TETOUF"
-  [ -n "$BAT_PCT" ] && printf 'BAT\t%s\t%s\t%s\n' "$BAT_PCT" "$BAT_ST" "$BAT_TIME"
+  [ -n "$BAT_PCT" ] && printf 'BAT\t%s\t%s\t%s\t%s\n' "$BAT_PCT" "$BAT_ST" "$BAT_TIME" "$BAT_SRC"
   [ -n "$BATH" ] && printf 'BATH\t%s\t%s\t%s\t%s\n' "$BATH" "$BATH_FULL" "$BATH_DES" "$BATH_CYC"
   exit 0
 fi
@@ -370,7 +388,7 @@ if [ -n "$BAT_PCT" ]; then
   bc=""
   if [ "$BAT_ST" = chg ]; then bc=$G
   elif [ "$BAT_PCT" -lt 15 ] 2>/dev/null; then bc=$R; fi
-  seg="${D}bat ${Z}${bc}${BAT_PCT}%${Z}"
+  seg="${D}${BAT_SRC:+$BAT_SRC }bat ${Z}${bc}${BAT_PCT}%${Z}"
   [ -n "$BAT_TIME" ] && seg+="${D} ${BAT_TIME}${Z}"
   add "$seg"
 fi

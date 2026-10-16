@@ -176,7 +176,7 @@ def parse_metrics(out):
                           int(p[3]) if p[3] else 0, p[4] == "1"))
             elif p[0] == "BAT" and len(p) >= 2:
                 m.append(("BAT", int(p[1]), p[2] if len(p) >= 3 else "",
-                          p[3] if len(p) >= 4 else ""))
+                          p[3] if len(p) >= 4 else "", p[4] if len(p) >= 5 else ""))
         except ValueError:
             continue
     return m
@@ -466,9 +466,10 @@ class Sidebar:
                 # faible. Le reste du temps le chiffre reste neutre — un niveau
                 # normal sur batterie n'est ni une bonne ni une mauvaise
                 # nouvelle. Pas de flèche : le temps restant dit déjà le sens.
-                p, st, tm = it[1], it[2], it[3]
+                p, st, tm, src = it[1], it[2], it[3], it[4]
                 c = self.GREEN if st == "chg" else (self.RED if p < 15 else 0)
-                out.append(("battery" + (("  " + tm) if tm else ""),
+                # Sur un serveur, c'est la batterie du PC (src = "pc") : on le dit.
+                out.append((("PC battery" if src else "battery") + (("  " + tm) if tm else ""),
                             "%d%%" % p, c))
         return out
 
